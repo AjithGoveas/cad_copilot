@@ -84,6 +84,27 @@ cad_copilot/
 
 ## Environment Variables
 
+This repository includes safe environment templates:
+
+- ai-engine/.env.example
+- web-ui/.env.example
+
+Create real env files from them before running the apps.
+
+Windows (PowerShell):
+
+```powershell
+Copy-Item ai-engine/.env.example ai-engine/.env
+Copy-Item web-ui/.env.example web-ui/.env
+```
+
+macOS/Linux:
+
+```bash
+cp ai-engine/.env.example ai-engine/.env
+cp web-ui/.env.example web-ui/.env
+```
+
 ### ai-engine/.env
 
 Required:
@@ -97,12 +118,17 @@ Optional tuning:
 - GENAI_RETRY_BASE_DELAY (default code fallback: 1.5)
 - GENAI_MAX_RETRY_DELAY (default code fallback: 60)
 
-### web-ui/.env.local
+### web-ui/.env
 
 Required:
 
 - FASTAPI_URL=http://127.0.0.1:8000/api/v1
 - DATABASE_URL=postgresql://cad_user:cad_pass@localhost:5432/cad_db?schema=public
+- NEXT_PUBLIC_FASTAPI_URL=http://127.0.0.1:8000/api/v1
+
+Note:
+
+- If you prefer `.env.local`, copy the same keys there as well.
 
 ## Quick Start (Local Development)
 
@@ -118,6 +144,7 @@ docker compose up -d
 
 ```bash
 cd ai-engine
+cp .env.example .env  # Windows: Copy-Item .env.example .env
 python -m venv .venv
 # Windows
 . .venv/Scripts/activate
@@ -137,6 +164,7 @@ curl http://127.0.0.1:8000/health
 
 ```bash
 cd web-ui
+cp .env.example .env  # Windows: Copy-Item .env.example .env
 npm install
 npm run prisma:generate
 npm run prisma:push
