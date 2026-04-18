@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cad_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cad_db
+      POSTGRES_USER: cad_user
+      POSTGRES_PASSWORD: cad_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - cad_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  cad_postgres_data:
