@@ -5,6 +5,62 @@ import { prisma } from '@/lib/prisma';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+type ErrorPayload = {
+	error: {
+		message: string;
+		hint?: string;
+	};
+	session_id?: string;
+};
+
+function buildError(message: string, hint?: string, sessionId?: string): ErrorPayload {
+	const payload: ErrorPayload = {
+		error: {
+			message,
+		},
+	};
+
+	if (hint) {
+		payload.error.hint = hint;
+	}
+
+	if (sessionId) {
+		payload.session_id = sessionId;
+	}
+
+	return payload;
+}
+
+function extractErrorFromUnknown(input: unknown, fallback: string): { message: string; hint?: string } {
+	if (input && typeof input === 'object') {
+		const candidate = input as {
+			error?: { message?: unknown; hint?: unknown };
+			detail?: unknown;
+			message?: unknown;
+		};
+
+		if (candidate.error && typeof candidate.error === 'object') {
+			const message = typeof candidate.error.message === 'string' ? candidate.error.message : fallback;
+			const hint = typeof candidate.error.hint === 'string' ? candidate.error.hint : undefined;
+			return { message, hint };
+		}
+
+		if (typeof candidate.message === 'string' && candidate.message.trim()) {
+			return { message: candidate.message.trim() };
+		}
+
+		if (typeof candidate.detail === 'string' && candidate.detail.trim()) {
+			return { message: candidate.detail.trim() };
+		}
+	}
+
+	if (typeof input === 'string' && input.trim()) {
+		return { message: input.trim() };
+	}
+
+	return { message: fallback };
+}
+
 function isSupportedUpload(upload: File): boolean {
 	const mimeType = upload.type.toLowerCase();
 	if (mimeType.startsWith('image/')) {
@@ -28,22 +84,22 @@ export async function POST(request: Request): Promise<Response> {
 	try {
 		formData = await request.clone().formData();
 	} catch {
-		return NextResponse.json({ error: 'Request must be multipart/form-data.' }, { status: 400 });
+		return NextResponse.json(buildError('Request must be multipart/form-data.'), { status: 400 });
 	}
 
 	const promptRaw = formData.get('prompt');
 	const prompt = typeof promptRaw === 'string' ? promptRaw.trim() : '';
 	if (!prompt) {
-		return NextResponse.json({ error: 'Missing required field: prompt' }, { status: 400 });
+		return NextResponse.json(buildError('Prompt is required.'), { status: 400 });
 	}
 
 	const upload = formData.get('image');
 	if (!(upload instanceof File)) {
-		return NextResponse.json({ error: 'Missing required file field: image.' }, { status: 400 });
+		return NextResponse.json(buildError('Image or PDF file is required.'), { status: 400 });
 	}
 
 	if (!isSupportedUpload(upload)) {
-		return NextResponse.json({ error: 'Uploaded file must be an image or PDF.' }, { status: 400 });
+		return NextResponse.json(buildError('Uploaded file must be an image or PDF.'), { status: 400 });
 	}
 
 	const modelRaw = formData.get('model_name');
@@ -68,24 +124,21 @@ export async function POST(request: Request): Promise<Response> {
 		});
 	} catch (error) {
 		return NextResponse.json(
-			{
-				error: 'Unable to connect to FastAPI generate endpoint.',
-				details: error instanceof Error ? error.message : String(error),
-			},
+			buildError(
+				'Unable to connect to AI engine.',
+				error instanceof Error ? error.message : undefined,
+				session.id
+			),
 			{ status: 502 }
 		);
 	}
 
 	if (!upstream.ok || !upstream.body) {
-		const details = await upstream.text().catch(() => '');
-		return NextResponse.json(
-			{
-				error: 'FastAPI generate endpoint failed.',
-				details,
-				session_id: session.id,
-			},
-			{ status: upstream.status || 502 }
-		);
+		const parsed = await upstream.json().catch(() => null);
+		const extracted = extractErrorFromUnknown(parsed, 'AI engine failed to generate script.');
+		return NextResponse.json(buildError(extracted.message, extracted.hint, session.id), {
+			status: upstream.status || 502,
+		});
 	}
 
 	const headers = new Headers();

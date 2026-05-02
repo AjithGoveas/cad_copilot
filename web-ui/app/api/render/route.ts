@@ -6,6 +6,13 @@ import { prisma } from '@/lib/prisma';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+type ErrorPayload = {
+	error: {
+		message: string;
+		hint?: string;
+	};
+};
+
 type LegacyRenderPayload = {
 	script?: unknown;
 	python_script?: unknown;
@@ -19,6 +26,50 @@ type FastApiRenderRequest = {
 	parameters: Record<string, unknown>;
 	session_id: string;
 };
+
+function buildError(message: string, hint?: string): ErrorPayload {
+	const payload: ErrorPayload = {
+		error: {
+			message,
+		},
+	};
+
+	if (hint) {
+		payload.error.hint = hint;
+	}
+
+	return payload;
+}
+
+function extractErrorFromUnknown(input: unknown, fallback: string): { message: string; hint?: string } {
+	if (input && typeof input === 'object') {
+		const candidate = input as {
+			error?: { message?: unknown; hint?: unknown };
+			detail?: unknown;
+			message?: unknown;
+		};
+
+		if (candidate.error && typeof candidate.error === 'object') {
+			const message = typeof candidate.error.message === 'string' ? candidate.error.message : fallback;
+			const hint = typeof candidate.error.hint === 'string' ? candidate.error.hint : undefined;
+			return { message, hint };
+		}
+
+		if (typeof candidate.message === 'string' && candidate.message.trim()) {
+			return { message: candidate.message.trim() };
+		}
+
+		if (typeof candidate.detail === 'string' && candidate.detail.trim()) {
+			return { message: candidate.detail.trim() };
+		}
+	}
+
+	if (typeof input === 'string' && input.trim()) {
+		return { message: input.trim() };
+	}
+
+	return { message: fallback };
+}
 
 function getFastApiUrl(): string {
 	const value = process.env.FASTAPI_URL?.trim();
@@ -77,9 +128,10 @@ export async function POST(request: Request): Promise<Response> {
 	const mappedPayload = toFastApiRenderRequest(body);
 	if (!mappedPayload) {
 		return NextResponse.json(
-			{
-				error: 'Request body must include script or python_script, a parameters object, and session_id/output_basename (or it will be generated).',
-			},
+			buildError(
+				'Request body must include python_script (or script) and a parameters object.',
+				'Provide session_id or output_basename, or let the server generate one.'
+			),
 			{ status: 400 }
 		);
 	}
@@ -98,23 +150,18 @@ export async function POST(request: Request): Promise<Response> {
 		});
 	} catch (error) {
 		return NextResponse.json(
-			{
-				error: 'Unable to connect to FastAPI render endpoint.',
-				details: error instanceof Error ? error.message : String(error),
-			},
+			buildError(
+				'Unable to connect to AI engine render endpoint.',
+				error instanceof Error ? error.message : undefined
+			),
 			{ status: 502 }
 		);
 	}
 
 	const upstreamData = await upstream.json().catch(() => null);
 	if (!upstream.ok || !upstreamData || typeof upstreamData !== 'object') {
-		return NextResponse.json(
-			{
-				error: 'FastAPI render endpoint failed.',
-				details: upstreamData,
-			},
-			{ status: upstream.status || 502 }
-		);
+		const extracted = extractErrorFromUnknown(upstreamData, 'AI engine failed to render CAD model.');
+		return NextResponse.json(buildError(extracted.message, extracted.hint), { status: upstream.status || 502 });
 	}
 
 	const data = upstreamData as Record<string, unknown>;

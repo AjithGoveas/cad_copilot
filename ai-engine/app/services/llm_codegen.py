@@ -1,6 +1,9 @@
 import os
 import re
 import time
+import json
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -15,75 +18,49 @@ except Exception:
     types = None
 
 
-SYSTEM_INSTRUCTION = """
-You are a strict Python code generator for build123d.
+CORE_INSTRUCTION = """
+# CAD COPILOT V6: Professional Engineering Protocol
+You are a Senior CAD Architect. Your mission is 100% feature-perfect `build123d` scripts.
 
-ABSOLUTE OUTPUT RULES:
-- Output ONLY raw Python source code.
-- Do NOT output markdown fences (no ``` blocks).
-- Do NOT output explanations, greetings, notes, or any conversational text.
-- Do NOT include prefixes like "Here is your code:".
-- Do NOT include trailing commentary.
+## MANDATORY CONTRACT
+1. **PARAMETERS**: Capture every dimension, tolerance, and quantity in `PARAMETERS = { ... }`.
+2. **FUNCTION**: `def build_model(params: dict) -> Part:` is the only entry point.
+3. **FEATURE PARITY**: If a feature is on the blueprint, it MUST be in the code. No omissions.
+4. **COMPACTNESS**: Chain operations like `(Part - Pocket).fillet()`. No comments allowed.
 
-CRITICAL DIMENSION & MATH RULES (PREVENT KERNEL CRASHES):
-1) Pay extreme attention to decimal points in drawings. Do not scale values up or down (e.g., 04.51 is 4.51mm, not 45.1mm).
-2) NEVER allow a calculated height or thickness to be zero or negative. Wrap subtractions in `abs()` or `max(0.1, ...)` (e.g., `height=abs(params['total_h'] - params['flange_h'])`).
-3) IGNORE TEXTUAL NOTES & TITLE BLOCKS: Ignore all manufacturing notes (e.g., 'Burrs and scratches not allowed', material specifications) and title block text. Only extract explicit mathematical dimensions, radii (R), and chamfers (C). Do NOT hallucinate structural features based on text descriptions.
+## TOPOLOGICAL PRECISION
+- **Face Selection**: Use `.faces().sort_by(Axis.Z)[-1]` for the top face or `[0]` for the bottom.
+- **Edge Selection**: Use `.edges().filter_by(GeomType.CIRCLE)` for hole fillets/chamfers.
+- **Sketching**: Use `with BuildSketch(my_part.faces().sort_by(Axis.Z)[-1]) as s:` for plane-perfect sketching.
+- **Patterns**: For hole arrays, use `Circle(r) * PolarLocation(R, n)` or `GridLocation(dx, dy, nx, ny)`.
 
-REQUIRED CODE CONTRACT:
-1) Import from build123d.
-2) YOU MUST DECLARE A TOP-LEVEL DICTIONARY NAMED EXACTLY 'PARAMETERS' (ALL CAPS). IF YOU DO NOT DO THIS, THE SYSTEM WILL CRASH.
-3) If the image lacks clear dimensions, INVENT reasonable placeholder variables (e.g., "width": 10.0) and put them in the PARAMETERS dictionary anyway. NEVER hardcode dimensions inside the functions.
-4) Define build_model(params: dict) -> Part that returns the final build123d shape.
+## GEOMETRY RULES
+- **Primitives**: Standalone constructors only: `Box()`, `Cylinder()`, `Rectangle()`, `Circle()`. 
+- **Rotation**: `Location((x,y,z), (rx,ry,rz))` only. NEVER use `.rotate()`.
+- **Robustness**: Mandatory `try: ... except: pass` for all `fillet()` and `chamfer()` operations.
+""".strip()
 
-STRICT STYLE RULES (NON-NEGOTIABLE):
-1) Use the Direct API (Algebra API) only.
-2) Do NOT use context managers (no "with BuildPart()", "with BuildSketch()", etc.).
-3) Do NOT use Builder pattern operations or builder-only helpers.
-4) Base primitive shapes are Capitalized constructors (Box, Cylinder, Sphere, Cone, etc.).
-5) GROUNDING: When creating base cylinders or boxes, ALWAYS anchor them to rest on the Z=0 plane using: `align=(Align.CENTER, Align.CENTER, Align.MIN)`.
-6) Modification operations are strictly lowercase functions (fillet(), chamfer(), offset(), etc.).
-7) EDGE SELECTION: Edge selection for circular rims MUST use `.edges().filter_by(GeomType.CIRCLE)`. NEVER use `filter_by(Axis.Z)` for circular edges.
-8) Boolean composition must use algebra operators (+, -, &) on Part/Solid objects.
-9) DEFENSIVE PROGRAMMING: You MUST wrap ALL edge selection logic AND fillet()/chamfer() operations inside a single `try...except Exception:` block. Catch all exceptions, `pass`, and return the unmodified body to prevent physics kernel crashes.
-10) Axis and vector components must be uppercase (Axis.X/Axis.Y/Axis.Z and .X/.Y/.Z, never .x/.y/.z).
-11) For translation/placement, use `.locate(Location(Vector(...)))` and NEVER call `.offset(...)` on Box/Cylinder/Sphere objects.
+SAFETY_INSTRUCTION = """
+# TOPOLOGICAL SAFETY
+- DIMS: Use `max(0.01, v)` for thin walls.
+- BOOLEANS: Use (+, -, &). Avoid `BuildPart` context.
+- TYPE: NEVER pass raw tuples where `Location` or `Vector` is expected.
+""".strip()
 
-GOLDEN EXAMPLE (COPY THIS PATTERN):
-```python
-from build123d import *
-PARAMETERS = {
-    "outer_dia": 10.0,
-    "inner_dia": 5.0,
-    "total_height": 10.0,
-    "flange_height": 2.0,
-    "fillet_rad": 1.0
-}
-def build_model(params: dict) -> Part:
-    # 1. Safe height math
-    flange_h = params["flange_height"]
-    top_h = max(0.1, params["total_height"] - flange_h)
+SUMMARISATION_INSTRUCTION = """
+## ARCHITECTURAL AUDIT (V6)
+Analyze the blueprint as a Lead Mechanical Engineer. 
 
-    # 2. Base shapes (Capitalized, Grounded to Z=0)
-    base = Cylinder(radius=params["outer_dia"]/2, height=flange_h, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    top = Cylinder(radius=params["inner_dia"]/2, height=top_h, align=(Align.CENTER, Align.CENTER, Align.MIN))
+1. **Section-First Analysis**: Start with Section Views (A-A, B-B). These are the source of truth for internal ports, bores, and wall thicknesses.
+2. **Envelope & Datum**: Identify the primary Bounding Box and the coordinate origin (Datum).
+3. **Topology Mapping**: 
+   - External: Main prismatic or cylindrical body features.
+   - Internal: Every internal cavity, counterbore, and transition.
+4. **Pattern Extraction**: Identify all circular (PCD) and rectangular hole patterns.
+5. **Annotation Audit**: Capture every numeric value, thread spec (M/UNC), and fillet/chamfer radius.
 
-    # 3. Translation and Boolean Algebra
-    top = top.locate(Location(Vector(0, 0, flange_h)))
-    body = base + top
-
-    # 4. Operations (Strictly lowercase, Circular Edge Selection, DEFENSIVE)
-    try:
-        circular_edges = body.edges().filter_by(GeomType.CIRCLE)
-        target_edges = [e for e in circular_edges if abs(e.center().Z - flange_h) < 1e-4]
-        if target_edges:
-            body = fillet(target_edges, radius=params["fillet_rad"])
-    except Exception:
-        pass # Prevent crashes from IndexError or impossible geometry
-    return body
-```
-
-If you cannot comply, output a minimal valid Python script that still follows this contract.
+RULE: Every number on the drawing must be mapped to a Parameter. 
+Return ONLY the comprehensive feature summary. No code.
 """.strip()
 
 
@@ -107,9 +84,14 @@ class LLMCodegenService:
             raise RuntimeError("GOOGLE_API_KEY is not set.")
 
         self.client = genai.Client(api_key=api_key)
-        # Use one primary model from env/config to keep generation predictable.
         self.model = model or os.getenv("GENAI_MODEL", "gemini-3.1-flash-lite")
+        
+        # Configuration & Budgets
         self.max_retries = max(1, int(os.getenv("GENAI_MAX_RETRIES", "5")))
+        self.max_prompt_tokens = int(os.getenv("MAX_PROMPT_TOKENS", "12000"))
+        self.max_output_tokens = int(os.getenv("MAX_OUTPUT_TOKENS", "2048"))
+        self.include_safety = os.getenv("GENAI_SAFETY", "0") == "1"
+        
         self.retry_base_delay_seconds = float(os.getenv("GENAI_RETRY_BASE_DELAY", "1.5"))
         self.max_retry_delay_seconds = float(os.getenv("GENAI_MAX_RETRY_DELAY", "60"))
 
@@ -117,41 +99,94 @@ class LLMCodegenService:
     def _load_env_file() -> None:
         try:
             import importlib
-
             dotenv = importlib.import_module("dotenv")
             project_root = Path(__file__).resolve().parents[2]
             dotenv.load_dotenv(project_root / ".env")
         except Exception:
             return
 
+    def _prepare_full_instruction(self) -> str:
+        instructions = [CORE_INSTRUCTION]
+        if self.include_safety:
+            instructions.append(SAFETY_INSTRUCTION)
+        return "\n\n".join(instructions)
+
+    def summarise_blueprint(
+        self,
+        image_bytes: bytes,
+        image_mime_type: str,
+    ) -> str:
+        """
+        Stage 1: Extract features and dimensions into a text summary.
+        """
+        parts = [
+            types.Part.from_text(text=SUMMARISATION_INSTRUCTION),
+            types.Part.from_bytes(data=image_bytes, mime_type=image_mime_type),
+        ]
+        
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=parts,
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=1024,
+            )
+        )
+        
+        return response.text or ""
+
     def stream_build123d_script(
         self,
         prompt: str,
         image_bytes: bytes,
         image_mime_type: str,
+        summary: str | None = None,
     ) -> Iterator[str]:
-        user_prompt = (
-            "Generate a build123d script for this CAD request.\n"
-            "User request:\n"
-            f"{prompt}\n\n"
-            "Follow the system requirements exactly."
-        )
+        full_system_instruction = self._prepare_full_instruction()
+        
+        context_block = ""
+        if summary:
+            context_block = f"\n\n### BLUEPRINT ANALYSIS SUMMARY\n{summary}\n"
+            
+        user_prompt = f"CAD request: {prompt.strip()}{context_block}"
+
+        # 1. Budget Check
+        try:
+            token_count_response = self.client.models.count_tokens(
+                model=self.model,
+                contents=[
+                    full_system_instruction,
+                    user_prompt,
+                    types.Part.from_bytes(data=image_bytes, mime_type=image_mime_type),
+                ]
+            )
+            total_tokens = token_count_response.total_tokens
+            if total_tokens > self.max_prompt_tokens:
+                raise RuntimeError(f"Prompt is too large ({total_tokens} tokens). Max budget is {self.max_prompt_tokens}.")
+        except Exception as e:
+            if "too large" in str(e): raise
+            # Silently continue if API count_tokens fails for other reasons
 
         content = types.Content(
             role="user",
             parts=[
-                types.Part.from_text(text=SYSTEM_INSTRUCTION),
+                types.Part.from_text(text=full_system_instruction),
                 types.Part.from_text(text=user_prompt),
                 types.Part.from_bytes(data=image_bytes, mime_type=image_mime_type),
             ],
         )
 
         config = types.GenerateContentConfig(
-            temperature=0.1,
-            max_output_tokens=4096,
+            candidate_count=1,
+            max_output_tokens=self.max_output_tokens,
+            temperature=0.0,
+            stop_sequences=["```"] if self.max_output_tokens < 1000 else None,
         )
 
-        errors: list[str] = []
+        seen_errors: list[str] = []
+        last_exception: Exception | None = None
+        raw_output_chunks: list[str] = []
+
         for attempt in range(1, self.max_retries + 1):
             try:
                 yielded_any = False
@@ -165,16 +200,19 @@ class LLMCodegenService:
                     text = getattr(chunk, "text", "")
                     if text:
                         yielded_any = True
+                        raw_output_chunks.append(text)
                         yield text
 
                 if not yielded_any:
                     raise RuntimeError("Empty response from generate_content_stream")
 
+                self._log_diagnostic(prompt, "".join(raw_output_chunks), None)
                 return
             except Exception as exc:
+                last_exception = exc
                 error_text = str(exc)
                 retry_after_seconds = self._extract_retry_delay_seconds(error_text)
-                errors.append(f"model={self.model} attempt={attempt} error={error_text}")
+                seen_errors.append(error_text)
 
                 is_last_attempt = attempt >= self.max_retries
                 if is_last_attempt or not self._is_retryable_error(exc):
@@ -185,19 +223,49 @@ class LLMCodegenService:
                 delay = min(delay, self.max_retry_delay_seconds)
                 time.sleep(delay)
 
-        error_summary = " | ".join(errors[-4:]) if errors else "Unknown generation error"
-        if self._contains_daily_quota_error(errors):
+        self._log_diagnostic(prompt, "".join(raw_output_chunks), str(last_exception) if last_exception else "Max retries exceeded")
+
+        joined_errors = "\n".join(seen_errors)
+        if self._is_daily_quota_error(joined_errors):
             raise RuntimeError(
-                "Gemini daily free-tier quota appears exhausted for the configured model. "
-                "Try again after quota reset, switch to a billed key, or update GENAI_MODEL in ai-engine/.env. "
-                f"Details: {error_summary}"
+                "Model daily quota reached. Try again after quota reset or switch models."
+            )
+
+        if last_exception and self._is_quota_error(last_exception):
+            raise RuntimeError(
+                "Model quota is temporarily exhausted. Please retry in a few minutes."
+            )
+
+        if last_exception and self._is_transient_error(last_exception):
+            raise RuntimeError(
+                "Model is temporarily unavailable. Please retry shortly."
             )
 
         raise RuntimeError(
-            "Model generation is temporarily unavailable. "
-            "Please retry in a moment, or update GENAI_MODEL in ai-engine/.env. "
-            f"Details: {error_summary}"
+            "Unable to generate CAD script right now. Please retry."
         )
+
+    def _log_diagnostic(self, prompt: str, raw_output: str, error: str | None) -> None:
+        try:
+            log_dir = Path(__file__).resolve().parents[2] / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_id = uuid.uuid4().hex[:8]
+            log_file = log_dir / f"cad_gen_{timestamp}_{log_id}.json"
+            
+            log_data = {
+                "timestamp": datetime.now().isoformat(),
+                "model": self.model,
+                "prompt": prompt,
+                "raw_output": raw_output,
+                "cleaned_output": self.normalize_script(raw_output) if raw_output else "",
+                "error": error
+            }
+            
+            with open(log_file, "w", encoding="utf-8") as f:
+                json.dump(log_data, f, indent=2)
+        except Exception as e:
+            print(f"Failed to write diagnostic log: {e}")
 
     @staticmethod
     def _is_retryable_error(exc: Exception) -> bool:
@@ -247,10 +315,6 @@ class LLMCodegenService:
             "requests per day",
         )
         return any(marker in normalized for marker in daily_markers)
-
-    @staticmethod
-    def _contains_daily_quota_error(errors: list[str]) -> bool:
-        return any(LLMCodegenService._is_daily_quota_error(entry) for entry in errors)
 
     @staticmethod
     def _extract_retry_delay_seconds(message: str) -> float | None:

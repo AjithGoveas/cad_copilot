@@ -5,11 +5,15 @@ import { OrbitControls } from '@react-three/drei';
 import { Canvas, useLoader } from '@react-three/fiber';
 import JSON5 from 'json5';
 import { ChevronLeft, ChevronRight, Loader2, SendHorizontal, Upload, Wrench } from 'lucide-react';
-import { type FormEvent, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import type { editor as MonacoEditor } from 'monaco-editor';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Box3, BufferGeometry, Color, MeshStandardMaterial, Vector3 } from 'three';
-import { STLLoader } from 'three-stdlib';
+
+import { ChatPanel } from './ChatPanel';
+import { CadViewport } from './CadViewport';
+import { EditorDrawer } from './EditorDrawer';
+import { ParameterInput } from './ParameterInput';
+import { StlMesh } from './StlMesh';
 
 type ChatRole = 'user' | 'assistant' | 'system';
 
@@ -24,10 +28,23 @@ type RenderPayload = {
 	step_url?: string;
 	status?: string;
 	job_id?: string;
+	error?: {
+		message?: string;
+		hint?: string;
+	};
 	artifacts?: {
 		stl_url?: string;
 		step_url?: string;
 	};
+};
+
+type ApiErrorEnvelope = {
+	error?: {
+		message?: unknown;
+		hint?: unknown;
+	};
+	message?: unknown;
+	detail?: unknown;
 };
 
 type DrawerTab = 'parameters' | 'code';
@@ -39,20 +56,6 @@ const MODEL_OPTIONS = [
 	{ value: 'gemini-3-flash-preview', label: 'gemini-3-flash' },
 	{ value: 'gemini-2.5-flash-lite', label: 'gemini-2.5-flash-lite' },
 ];
-const SUPPORTED_UPLOAD_MIME_TYPES = new Set(['application/pdf']);
-
-function isSupportedUpload(file: File): boolean {
-	const fileType = file.type.toLowerCase();
-	if (fileType.startsWith('image/')) {
-		return true;
-	}
-
-	if (SUPPORTED_UPLOAD_MIME_TYPES.has(fileType)) {
-		return true;
-	}
-
-	return file.name.toLowerCase().endsWith('.pdf');
-}
 
 function makeId(prefix: string): string {
 	return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -129,24 +132,38 @@ function findMatchingBrace(source: string, startIndex: number): number {
 	return -1;
 }
 
-function extractParameters(script: string): Record<string, unknown> {
-	const assignmentMatch = /\bPARAMETERS\s*(?::[^=\n]+)?=/.exec(script);
-	if (!assignmentMatch) {
-		return {};
+function getParametersBlock(script: string): { braceStart: number; braceEnd: number } | null {
+	const regex = /^\s*PARAMETERS\s*(?::[^=\n]+)?\s*=\s*/m;
+	const match = regex.exec(script);
+	if (!match) return null;
+
+	const startSearch = match.index + match[0].length;
+
+	let braceStart = -1;
+	for (let i = startSearch; i < script.length; i++) {
+		const ch = script[i];
+		if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') continue;
+		if (ch === '{') {
+			braceStart = i;
+			break;
+		} else {
+			return null;
+		}
 	}
 
-	const startSearch = assignmentMatch.index + assignmentMatch[0].length;
-	const braceStart = script.indexOf('{', startSearch);
-	if (braceStart < 0) {
-		return {};
-	}
+	if (braceStart === -1) return null;
 
 	const braceEnd = findMatchingBrace(script, braceStart);
-	if (braceEnd < 0) {
-		return {};
-	}
+	if (braceEnd === -1) return null;
 
-	const literal = script.slice(braceStart, braceEnd + 1);
+	return { braceStart, braceEnd };
+}
+
+function extractParameters(script: string): Record<string, unknown> {
+	const block = getParametersBlock(script);
+	if (!block) return {};
+
+	const literal = script.slice(block.braceStart, block.braceEnd + 1);
 	const normalized = literal
 		.replace(/\bTrue\b/g, 'true')
 		.replace(/\bFalse\b/g, 'false')
@@ -171,95 +188,68 @@ function setParameterValue(params: Record<string, unknown>, key: string, value: 
 	};
 }
 
-function StlMesh({ url }: { url: string }) {
-	const geometry = useLoader(STLLoader, url);
+function injectParameters(script: string, parameters: Record<string, unknown>): string {
+	const block = getParametersBlock(script);
+	if (!block) return script;
 
-	const { centeredGeometry, scale } = useMemo(() => {
-		const cloned = geometry.clone() as BufferGeometry;
-		cloned.computeVertexNormals();
-		cloned.computeBoundingBox();
+	const pythonLiteral = JSON.stringify(parameters, null, 4)
+		.replace(/: true\b/g, ': True')
+		.replace(/: false\b/g, ': False')
+		.replace(/: null\b/g, ': None');
 
-		const box = cloned.boundingBox ?? new Box3();
-		const size = new Vector3();
-		box.getSize(size);
-		const maxDim = Math.max(size.x || 0, size.y || 0, size.z || 0);
-		const safeScale = maxDim > 0 ? 1.8 / maxDim : 1;
-
-		cloned.center();
-		return {
-			centeredGeometry: cloned,
-			scale: safeScale,
-		};
-	}, [geometry]);
-
-	const material = useMemo(
-		() =>
-			new MeshStandardMaterial({
-				color: new Color('#d4d4d8'),
-				metalness: 0.12,
-				roughness: 0.45,
-			}),
-		[]
-	);
-
-	return <mesh geometry={centeredGeometry} material={material} scale={scale} castShadow receiveShadow />;
+	return script.slice(0, block.braceStart) + pythonLiteral + script.slice(block.braceEnd + 1);
 }
 
-function ParameterInput({ value, onChange }: { value: unknown; onChange: (newValue: unknown) => void }) {
-	if (typeof value === 'number') {
-		return (
-			<input
-				type="number"
-				value={Number.isFinite(value) ? value : 0}
-				onChange={(event) => onChange(Number(event.target.value))}
-				className="w-full rounded-md border border-zinc-800 bg-black px-3 py-2 text-sm text-zinc-100 focus:border-amber-500 focus:outline-none"
-			/>
-		);
+function extractReadableError(payload: unknown, fallback: string): string {
+	if (payload && typeof payload === 'object') {
+		const candidate = payload as ApiErrorEnvelope;
+		if (candidate.error && typeof candidate.error === 'object') {
+			const message = typeof candidate.error.message === 'string' ? candidate.error.message.trim() : '';
+			const hint = typeof candidate.error.hint === 'string' ? candidate.error.hint.trim() : '';
+			if (message && hint) {
+				return `${message} ${hint}`;
+			}
+			if (message) {
+				return message;
+			}
+		}
+
+		if (typeof candidate.message === 'string' && candidate.message.trim()) {
+			return candidate.message.trim();
+		}
+
+		if (typeof candidate.detail === 'string' && candidate.detail.trim()) {
+			return candidate.detail.trim();
+		}
 	}
 
-	if (typeof value === 'boolean') {
-		return (
-			<label className="flex items-center gap-2 text-sm text-zinc-100">
-				<input
-					type="checkbox"
-					checked={value}
-					onChange={(event) => onChange(event.target.checked)}
-					className="size-4 rounded border-zinc-700 bg-black"
-				/>
-				Enabled
-			</label>
-		);
+	if (typeof payload === 'string' && payload.trim()) {
+		return payload.trim();
 	}
 
-	if (typeof value === 'string') {
-		return (
-			<input
-				type="text"
-				value={value}
-				onChange={(event) => onChange(event.target.value)}
-				className="w-full rounded-md border border-zinc-800 bg-black px-3 py-2 text-sm text-zinc-100 focus:border-amber-500 focus:outline-none"
-			/>
-		);
+	return fallback;
+}
+
+async function readErrorFromResponse(response: Response, fallback: string): Promise<string> {
+	const jsonPayload = await response
+		.clone()
+		.json()
+		.catch(() => null);
+	if (jsonPayload) {
+		return extractReadableError(jsonPayload, fallback);
 	}
 
-	const serialized = JSON.stringify(value, null, 2);
-	return (
-		<textarea
-			value={serialized}
-			onChange={(event) => {
-				try {
-					onChange(JSON.parse(event.target.value));
-				} catch {
-					// Ignore incomplete JSON edits until valid JSON exists.
-				}
-			}}
-			rows={4}
-			className="w-full rounded-md border border-zinc-800 bg-black px-3 py-2 text-xs text-zinc-100 focus:border-amber-500 focus:outline-none"
-		/>
-	);
+	const textPayload = await response.text().catch(() => '');
+	if (textPayload.trim()) {
+		return extractReadableError(textPayload, fallback);
+	}
+
+	return fallback;
 }
 
 export default function HitlWorkspace() {
+	const [chatWidth, setChatWidth] = useState(400);
+	const isResizing = useRef(false);
 	const [messages, setMessages] = useState<ChatMessage[]>([
 		{
 			id: 'system_welcome',
@@ -283,7 +273,6 @@ export default function HitlWorkspace() {
 	const [isDownloadingStep, setIsDownloadingStep] = useState(false);
 	const [statusText, setStatusText] = useState<string>('Ready');
 
-	const messagesEndRef = useRef<HTMLDivElement | null>(null);
 	const pythonScriptRef = useRef('');
 
 	const updatePythonScript = (nextScript: string) => {
@@ -292,42 +281,48 @@ export default function HitlWorkspace() {
 	};
 
 	useEffect(() => {
-		messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-	}, [messages]);
+		const handleMouseMove = (e: MouseEvent) => {
+			if (!isResizing.current) return;
+			const newWidth = Math.max(300, Math.min(e.clientX, 800));
+			setChatWidth(newWidth);
+		};
+		const handleMouseUp = () => {
+			isResizing.current = false;
+			document.body.style.cursor = 'default';
+		};
+		window.addEventListener('mousemove', handleMouseMove);
+		window.addEventListener('mouseup', handleMouseUp);
+		return () => {
+			window.removeEventListener('mousemove', handleMouseMove);
+			window.removeEventListener('mouseup', handleMouseUp);
+		};
+	}, []);
+
+	useEffect(() => {
+		if (!pythonScript) return;
+
+		const timeout = setTimeout(() => {
+			const extracted = extractParameters(pythonScript);
+			if (Object.keys(extracted).length === 0) return;
+
+			if (JSON.stringify(extracted) !== JSON.stringify(parameters)) {
+				setParameters(extracted);
+			}
+		}, 800);
+
+		return () => clearTimeout(timeout);
+	}, [pythonScript]);
 
 	async function handleGenerate(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		if (!prompt.trim()) {
-			setStatusText('Type a prompt before generating.');
-			return;
-		}
-		if (!selectedFile) {
-			setStatusText('Attach an image or PDF before generating.');
-			return;
-		}
-		if (!isSupportedUpload(selectedFile)) {
-			setStatusText('Unsupported file type. Please upload an image or PDF.');
+		if (!prompt.trim() || !selectedFile) {
+			setStatusText('Please provide a prompt and file.');
 			return;
 		}
 
-		const userMessage: ChatMessage = {
-			id: makeId('user'),
-			role: 'user',
-			content: `**Prompt**\n${prompt.trim()}\n\n**Model**\n${selectedModel}\n\nAttached file: ${selectedFile.name}`,
-		};
 		const assistantMessageId = makeId('assistant');
-
-		setMessages((prev) => [
-			...prev,
-			userMessage,
-			{
-				id: assistantMessageId,
-				role: 'assistant',
-				content: '',
-			},
-		]);
+		setMessages((prev) => [...prev, { id: makeId('user'), role: 'user', content: prompt }, { id: assistantMessageId, role: 'assistant', content: '' }]);
 		setIsGenerating(true);
-		setStatusText('Generating build123d script...');
 
 		const formData = new FormData();
 		formData.append('prompt', prompt.trim());
@@ -335,264 +330,128 @@ export default function HitlWorkspace() {
 		formData.append('model_name', selectedModel);
 
 		try {
-			const response = await fetch('/api/generate', {
-				method: 'POST',
-				body: formData,
-			});
-
+			const response = await fetch('/api/generate', { method: 'POST', body: formData });
 			const nextSessionId = response.headers.get('x-session-id');
-			if (nextSessionId) {
-				setSessionId(nextSessionId);
+			if (nextSessionId) setSessionId(nextSessionId);
+
+			if (!response.ok) {
+				const errorMsg = await readErrorFromResponse(response, 'Failed to connect to backend.');
+				throw new Error(errorMsg);
 			}
 
-			if (!response.ok || !response.body) {
-				const failureText = await response.text();
-				throw new Error(failureText || `Generate failed with ${response.status}`);
-			}
+			const reader = response.body?.getReader();
+			if (!reader) throw new Error('Streaming failed. Please retry.');
 
-			const reader = response.body.getReader();
 			const decoder = new TextDecoder();
-			let buffer = '';
-			let assembledScript = '';
-			let receivedDoneEvent = false;
-
-			const processRawEvent = (rawEvent: string) => {
-				const lines = rawEvent.split('\n');
-				let eventType = 'message';
-				const dataLines: string[] = [];
-
-				for (const line of lines) {
-					if (line.startsWith('event:')) {
-						eventType = line.slice(6).trim();
-					}
-					if (line.startsWith('data:')) {
-						dataLines.push(line.slice(5).trim());
-					}
-				}
-
-				if (!dataLines.length) {
-					return;
-				}
-
-				const payloadText = dataLines.join('\n');
-				let payload: Record<string, unknown> = {};
-				try {
-					payload = JSON.parse(payloadText) as Record<string, unknown>;
-				} catch {
-					return;
-				}
-
-				if (eventType === 'status') {
-					const message = typeof payload.message === 'string' ? payload.message : 'Working...';
-					setStatusText(message);
-					return;
-				}
-
-				if (eventType === 'token') {
-					const chunk = typeof payload.chunk === 'string' ? payload.chunk : '';
-					assembledScript += chunk;
-					setMessages((prev) =>
-						prev.map((item) =>
-							item.id === assistantMessageId
-								? {
-										...item,
-										content: assembledScript,
-									}
-								: item
-						)
-					);
-					return;
-				}
-
-				if (eventType === 'done') {
-					receivedDoneEvent = true;
-					const scriptFromDone = typeof payload.script === 'string' ? payload.script : assembledScript;
-					updatePythonScript(scriptFromDone);
-					const payloadParameters = payload.parameters;
-					const extracted =
-						payloadParameters && typeof payloadParameters === 'object' && !Array.isArray(payloadParameters)
-							? (payloadParameters as Record<string, unknown>)
-							: extractParameters(scriptFromDone);
-					setParameters(extracted);
-					setStatusText('Script generated. Edit parameters and sync geometry.');
-
-					setMessages((prev) =>
-						prev.map((item) =>
-							item.id === assistantMessageId
-								? {
-										...item,
-										content: scriptFromDone || 'Generation completed.',
-									}
-								: item
-						)
-					);
-					return;
-				}
-
-				if (eventType === 'error') {
-					const message = typeof payload.message === 'string' ? payload.message : 'Generation error.';
-					throw new Error(message);
-				}
-			};
+			let accumulated = '';
+			let fullScript = '';
+			let finalParams = parameters;
 
 			while (true) {
 				const { done, value } = await reader.read();
-				if (done) {
-					break;
-				}
+				if (done) break;
 
-				buffer += decoder.decode(value, { stream: true });
-				const normalizedBuffer = buffer.replace(/\r\n/g, '\n');
-				const events = normalizedBuffer.split('\n\n');
-				buffer = events.pop() ?? '';
+				const chunkText = decoder.decode(value);
+				const lines = chunkText.split('\n');
 
-				for (const rawEvent of events) {
-					if (!rawEvent.trim()) {
-						continue;
-					}
-					processRawEvent(rawEvent);
+				for (const line of lines) {
+					if (!line.startsWith('data: ')) continue;
+					try {
+						const rawData = JSON.parse(line.slice(6));
+						if (rawData.chunk) {
+							accumulated += rawData.chunk;
+							setMessages((prev) => prev.map((m) => (m.id === assistantMessageId ? { ...m, content: accumulated } : m)));
+						}
+						if (rawData.script) fullScript = rawData.script;
+						if (rawData.parameters) {
+							finalParams = rawData.parameters;
+							setParameters(rawData.parameters);
+						}
+					} catch {}
 				}
 			}
 
-			if (buffer.trim()) {
-				processRawEvent(buffer.trim());
-			}
-
-			if (!receivedDoneEvent && assembledScript.trim()) {
-				const fallbackScript = assembledScript.trim();
-				updatePythonScript(fallbackScript);
-				setParameters(extractParameters(fallbackScript));
-				setStatusText('Script generated. Edit parameters and sync geometry.');
-				setMessages((prev) =>
-					prev.map((item) =>
-						item.id === assistantMessageId
-							? {
-									...item,
-									content: fallbackScript,
-								}
-							: item
-					)
-				);
+			if (fullScript) {
+				updatePythonScript(fullScript);
+				setActiveDrawerTab('code');
+				setIsDrawerOpen(true);
+				setStatusText('Script generated. Compiling 3D model...');
+				
+				// Automatically trigger sync after generation
+				const currentSession = nextSessionId || sessionId;
+				if (currentSession) {
+					await performSync(fullScript, finalParams, currentSession);
+				}
+			} else {
+				throw new Error('No script returned from model.');
 			}
 		} catch (error) {
 			const errorText = error instanceof Error ? error.message : String(error);
-			setStatusText('Generation failed.');
-			setMessages((prev) => [
-				...prev,
-				{
-					id: makeId('system_error'),
-					role: 'system',
-					content: `Generation failed: ${errorText}`,
-				},
-			]);
+			setMessages((prev) => prev.map((m) => (m.id === assistantMessageId ? { ...m, content: `Error: ${errorText}` } : m)));
+			setStatusText(`Generation failed: ${errorText}`);
 		} finally {
 			setIsGenerating(false);
 		}
 	}
 
-	async function handleRenderSync() {
-		const latestPythonScript = pythonScriptRef.current;
-
-		if (!latestPythonScript || !sessionId) {
-			setStatusText('Generate code first before syncing.');
-			return;
-		}
-
+	async function performSync(script: string, params: Record<string, any>, session: string) {
 		setIsRecompiling(true);
-		setStatusText('Recompiling Geometry...');
-		setStlUrl(null);
-		setStepUrl(null);
+		setStatusText('Syncing to backend engine...');
 
 		try {
 			const response = await fetch('/api/render', {
 				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-				},
-				body: JSON.stringify({
-					python_script: latestPythonScript,
-					parameters,
-					session_id: sessionId,
-				}),
+				headers: { 'Content-Type': 'application/json', 'x-session-id': session },
+				body: JSON.stringify({ python_script: script, parameters: params }),
 			});
+
+			if (!response.ok) {
+				const errorMsg = await readErrorFromResponse(response, 'Render failed.');
+				throw new Error(errorMsg);
+			}
 
 			const payload = (await response.json()) as RenderPayload;
-			if (!response.ok) {
-				throw new Error(JSON.stringify(payload));
-			}
+			if (payload.artifacts?.stl_url) setStlUrl(resolveModelUrl(payload.artifacts.stl_url, Date.now().toString()));
+			if (payload.artifacts?.step_url) setStepUrl(resolveModelUrl(payload.artifacts.step_url));
 
-			const stlPath = payload.stl_url ?? payload.artifacts?.stl_url;
-			const stepPath = payload.step_url ?? payload.artifacts?.step_url;
-			const artifactVersion = `${Date.now()}`;
-
-			if (!stlPath && !stepPath) {
-				throw new Error('Render completed but STL/STEP artifacts were missing in the response.');
-			}
-
-			if (stlPath) {
-				setStlUrl(resolveModelUrl(stlPath, artifactVersion));
-			}
-			if (stepPath) {
-				setStepUrl(resolveModelUrl(stepPath, artifactVersion));
-			}
-
-			if (stlPath && stepPath) {
-				setStatusText('Geometry synced.');
-				toast.success('STL and STEP are ready', {
-					description: 'Viewer updated. Download buttons are now available.',
-				});
-			} else {
-				setStatusText('Geometry synced. One artifact is still missing.');
-				toast.warning('Partial artifacts generated', {
-					description: 'Only one of STL/STEP is available right now.',
-				});
-			}
+			setStatusText('Geometry recompiled successfully.');
+			toast.success('Sync successful');
 		} catch (error) {
 			const errorText = error instanceof Error ? error.message : String(error);
-			setStatusText(`Render failed: ${errorText}`);
-			toast.error('Render failed', {
-				description: errorText,
-			});
+			setStatusText(`Sync failed: ${errorText}`);
+			toast.error('Sync failed', { description: errorText });
 		} finally {
 			setIsRecompiling(false);
 		}
 	}
 
-	async function handleDownloadArtifact(url: string | null, extension: 'stl' | 'step') {
-		if (!url) {
-			toast.error(`No ${extension.toUpperCase()} file available yet`);
-			return;
-		}
+	async function handleRenderSync() {
+		if (!sessionId || !pythonScript) return;
+		await performSync(pythonScript, parameters, sessionId);
+	}
 
-		const setBusy = extension === 'stl' ? setIsDownloadingStl : setIsDownloadingStep;
-		const label = extension.toUpperCase();
-		const filename = `${sessionId ?? 'cad_model'}.${extension}`;
+	async function handleDownloadArtifact(url: string | null, label: string) {
+		if (!url) return;
 
+		const setBusy = label === 'stl' ? setIsDownloadingStl : setIsDownloadingStep;
 		setBusy(true);
 		try {
-			const response = await fetch(url, { cache: 'no-store' });
-			if (!response.ok) {
-				throw new Error(`Download failed with status ${response.status}`);
-			}
+			const response = await fetch(url);
+			if (!response.ok) throw new Error(`Server returned ${response.status}`);
 
 			const blob = await response.blob();
 			const objectUrl = URL.createObjectURL(blob);
 			const link = document.createElement('a');
 			link.href = objectUrl;
+			const filename = url.split('/').pop()?.split('?')[0] || `model.${label}`;
 			link.download = filename;
 			document.body.appendChild(link);
 			link.click();
-			link.remove();
+			document.body.removeChild(link);
 			URL.revokeObjectURL(objectUrl);
-
-			toast.success(`${label} downloaded`, {
-				description: filename,
-			});
+			toast.success(`${label} downloaded`, { description: filename });
 		} catch (error) {
-			const errorText = error instanceof Error ? error.message : String(error);
-			toast.error(`Failed to download ${label}`, {
-				description: errorText,
-			});
+			toast.error(`Failed to download ${label}`);
 		} finally {
 			setBusy(false);
 		}
@@ -601,269 +460,77 @@ export default function HitlWorkspace() {
 	const parameterEntries = Object.entries(parameters);
 	const hasStl = Boolean(stlUrl);
 	const hasStep = Boolean(stepUrl);
-	const hasAnyArtifacts = hasStl || hasStep;
 
 	return (
-		<div className="dark min-h-screen bg-black text-zinc-100">
-			<main className="flex h-screen w-full gap-3 bg-[#09090b] p-3">
-				<section className="flex w-85 shrink-0 flex-col border border-zinc-800 bg-zinc-950">
-					<header className="border-b border-zinc-800 px-4 py-3">
-						<p className="text-xs font-medium uppercase tracking-[0.2em] text-zinc-500">Chat</p>
-						<h1 className="mt-1 text-lg font-semibold text-zinc-100">Docs to CAD Workspace</h1>
-					</header>
+		<div className="dark h-screen w-full bg-black text-zinc-100 overflow-hidden">
+			<main className="flex h-full w-full gap-0">
+				<ChatPanel
+					messages={messages}
+					prompt={prompt}
+					setPrompt={setPrompt}
+					selectedModel={selectedModel}
+					setSelectedModel={setSelectedModel}
+					modelOptions={MODEL_OPTIONS}
+					selectedFile={selectedFile}
+					handleFileChange={setSelectedFile}
+					isGenerating={isGenerating}
+					onSubmit={handleGenerate}
+					width={chatWidth}
+				/>
 
-					<div className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
-						{messages.map((message) => {
-							const bubbleClass =
-								message.role === 'user'
-									? 'ml-6 bg-zinc-100 text-black'
-									: message.role === 'assistant'
-										? 'mr-6 bg-zinc-900 text-zinc-100'
-										: 'mx-3 bg-zinc-900 text-zinc-100';
+				<div
+					className="group relative w-1 cursor-col-resize bg-zinc-900 transition-colors hover:bg-amber-500/50"
+					onMouseDown={() => {
+						isResizing.current = true;
+						document.body.style.cursor = 'col-resize';
+					}}
+				>
+					<div className="absolute inset-y-0 -left-1 w-3 opacity-0 group-hover:opacity-100" />
+				</div>
 
-							return (
-								<div
-									key={message.id}
-									className={`rounded-md border border-zinc-800 px-3 py-2 text-sm ${bubbleClass}`}
-								>
-									<ReactMarkdown>{message.content || '...'}</ReactMarkdown>
-								</div>
-							);
-						})}
-						<div ref={messagesEndRef} />
-					</div>
+				<CadViewport
+					stlUrl={stlUrl}
+					statusText={statusText}
+					isRecompiling={isRecompiling}
+					hasStl={hasStl}
+					hasStep={hasStep}
+					isDownloadingStl={isDownloadingStl}
+					isDownloadingStep={isDownloadingStep}
+					onDownloadStl={() => void handleDownloadArtifact(stlUrl, 'stl')}
+					onDownloadStep={() => void handleDownloadArtifact(stepUrl, 'step')}
+				>
+					{stlUrl ? <StlMesh url={stlUrl} /> : null}
+				</CadViewport>
 
-					<form onSubmit={handleGenerate} className="space-y-2 border-t border-zinc-800 p-3">
-						<div className="space-y-2 border border-zinc-800 bg-black p-2">
-							<textarea
-								value={prompt}
-								onChange={(event) => setPrompt(event.target.value)}
-								rows={3}
-								placeholder="Describe the CAD part, dimensions, and constraints..."
-								className="w-full resize-none bg-transparent text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
-							/>
-							<select
-								value={selectedModel}
-								onChange={(event) => setSelectedModel(event.target.value)}
-								className="w-full border border-zinc-800 bg-zinc-950 px-2 py-2 text-xs text-zinc-100 focus:border-amber-500 focus:outline-none"
-							>
-								{MODEL_OPTIONS.map((modelOption) => (
-									<option key={modelOption.value} value={modelOption.value}>
-										{modelOption.label}
-									</option>
-								))}
-							</select>
-						</div>
-
-						<label className="flex cursor-pointer items-center gap-2 border border-dashed border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 hover:border-amber-500">
-							<Upload className="size-4" />
-							<span className="truncate">{selectedFile ? selectedFile.name : 'Attach image or PDF'}</span>
-							<input
-								type="file"
-								accept="image/*,.pdf,application/pdf"
-								className="hidden"
-								onChange={(event) => {
-									const file = event.target.files?.[0] ?? null;
-									if (!file) {
-										setSelectedFile(null);
-										return;
+				<EditorDrawer
+					isOpen={isDrawerOpen}
+					setIsOpen={setIsDrawerOpen}
+					activeTab={activeDrawerTab}
+					setActiveTab={setActiveDrawerTab}
+					pythonScript={pythonScript}
+					onScriptChange={updatePythonScript}
+					onRenderSync={handleRenderSync}
+					isRecompiling={isRecompiling}
+					hasSession={Boolean(sessionId)}
+				>
+					<div className="space-y-4">
+						{parameterEntries.map(([key, value]) => (
+							<ParameterInput
+								key={key}
+								label={key}
+								value={value}
+								onChange={(nextValue) => {
+									const nextParams = setParameterValue(parameters, key, nextValue);
+									setParameters(nextParams);
+									const nextScript = injectParameters(pythonScript, nextParams);
+									if (nextScript !== pythonScript) {
+										updatePythonScript(nextScript);
 									}
-
-									if (!isSupportedUpload(file)) {
-										setStatusText('Unsupported file type. Please upload an image or PDF.');
-										event.currentTarget.value = '';
-										return;
-									}
-
-									setSelectedFile(file);
-									setStatusText('File attached. Ready to generate.');
 								}}
 							/>
-						</label>
-
-						<button
-							type="submit"
-							disabled={isGenerating}
-							className="flex w-full items-center justify-center gap-2 border border-amber-400 bg-amber-500 px-3 py-2 text-sm font-semibold text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
-						>
-							{isGenerating ? (
-								<Loader2 className="size-4 animate-spin" />
-							) : (
-								<SendHorizontal className="size-4" />
-							)}
-							{isGenerating ? 'Streaming...' : 'Generate CAD Script'}
-						</button>
-					</form>
-				</section>
-
-				<section className="relative flex min-w-0 flex-1 flex-col overflow-hidden border border-zinc-800 bg-zinc-950">
-					<div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-						<div>
-							<p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Viewport</p>
-							<p className="text-sm text-zinc-100">{statusText}</p>
-						</div>
-						{hasAnyArtifacts ? (
-							<div className="flex items-center gap-2">
-								<button
-									type="button"
-									onClick={() => void handleDownloadArtifact(stlUrl, 'stl')}
-									disabled={!hasStl || isDownloadingStl}
-									className="flex items-center gap-1 border border-zinc-700 bg-black px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-100 hover:border-amber-500 hover:text-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
-								>
-									{isDownloadingStl ? <Loader2 className="size-3.5 animate-spin" /> : null}
-									Download STL
-								</button>
-								<button
-									type="button"
-									onClick={() => void handleDownloadArtifact(stepUrl, 'step')}
-									disabled={!hasStep || isDownloadingStep}
-									className="flex items-center gap-1 border border-amber-500 bg-amber-500 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
-								>
-									{isDownloadingStep ? <Loader2 className="size-3.5 animate-spin" /> : null}
-									Download STEP
-								</button>
-							</div>
-						) : null}
+						))}
 					</div>
-
-					<div className="relative flex-1">
-						<Canvas camera={{ position: [2.8, 2.2, 2.5], fov: 46 }} shadows>
-							<color attach="background" args={['#09090b']} />
-							<fog attach="fog" args={['#09090b', 7, 18]} />
-							<ambientLight intensity={0.35} />
-							<hemisphereLight intensity={0.45} groundColor="#1f2937" />
-							<directionalLight position={[5, 8, 4]} intensity={1.1} castShadow />
-
-							<gridHelper args={[8, 16, '#3f3f46', '#27272a']} position={[0, -1.2, 0]} />
-
-							<Suspense fallback={null}>{stlUrl ? <StlMesh url={stlUrl} /> : null}</Suspense>
-							<OrbitControls makeDefault enableDamping dampingFactor={0.08} />
-						</Canvas>
-
-						{!stlUrl && !isRecompiling ? (
-							<div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-								<div className="rounded-md border border-zinc-800 bg-black px-4 py-3 text-sm text-zinc-500">
-									Generate a script, then sync parameters to render STL.
-								</div>
-							</div>
-						) : null}
-
-						{isRecompiling ? (
-							<div className="absolute inset-0 flex items-center justify-center bg-black/70">
-								<div className="flex items-center gap-2 border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-zinc-100">
-									<Loader2 className="size-4 animate-spin text-amber-400" />
-									Recompiling Geometry...
-								</div>
-							</div>
-						) : null}
-					</div>
-				</section>
-
-				<aside
-					className={`relative shrink-0 overflow-hidden border border-zinc-800 bg-zinc-950 transition-all duration-300 ${
-						isDrawerOpen ? 'w-82.5' : 'w-12'
-					}`}
-				>
-					<button
-						type="button"
-						className="absolute left-2 top-3 border border-zinc-700 bg-black p-1 text-zinc-100 hover:border-amber-500"
-						onClick={() => setIsDrawerOpen((prev) => !prev)}
-						aria-label={isDrawerOpen ? 'Collapse parameters' : 'Expand parameters'}
-					>
-						{isDrawerOpen ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
-					</button>
-
-					{isDrawerOpen ? (
-						<div className="flex h-full flex-col">
-							<header className="border-b border-zinc-800 bg-zinc-900/80 px-4 py-3 pl-12">
-								<p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Engine Drawer</p>
-								<h2 className="text-sm font-semibold text-zinc-100">Live Parameter Drawer</h2>
-								<div className="mt-3 flex border border-zinc-700 bg-black">
-									<button
-										type="button"
-										onClick={() => setActiveDrawerTab('parameters')}
-										className={`flex-1 border-b-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide transition-colors ${
-											activeDrawerTab === 'parameters'
-												? 'border-amber-500 bg-zinc-900 text-amber-300'
-												: 'border-transparent bg-black text-zinc-400 hover:text-zinc-100'
-										}`}
-									>
-										Parameters
-									</button>
-									<button
-										type="button"
-										onClick={() => setActiveDrawerTab('code')}
-										className={`flex-1 border-b-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide transition-colors ${
-											activeDrawerTab === 'code'
-												? 'border-amber-500 bg-zinc-900 text-amber-300'
-												: 'border-transparent bg-black text-zinc-400 hover:text-zinc-100'
-										}`}
-									>
-										Code Engine
-									</button>
-								</div>
-							</header>
-
-							{activeDrawerTab === 'parameters' ? (
-								<div className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
-									{parameterEntries.length ? (
-										parameterEntries.map(([key, value]) => (
-											<div key={key} className="border border-zinc-800 bg-black p-2">
-												<label className="mb-1 block text-xs font-medium uppercase tracking-wide text-zinc-500">
-													{key}
-												</label>
-												<ParameterInput
-													value={value}
-													onChange={(nextValue) =>
-														setParameters((prev) => setParameterValue(prev, key, nextValue))
-													}
-												/>
-											</div>
-										))
-									) : (
-										<div className="border border-dashed border-zinc-700 p-3 text-sm text-zinc-500">
-											No PARAMETERS parsed yet. Generate code first.
-										</div>
-									)}
-								</div>
-							) : (
-								<div className="flex-1 overflow-hidden p-3">
-									<div className="h-full border border-zinc-800">
-										<Editor
-											height="100%"
-											language="python"
-											theme="vs-dark"
-											value={pythonScript}
-											onChange={(value) => updatePythonScript(value ?? '')}
-											options={{
-												minimap: { enabled: false },
-												fontSize: 13,
-												wordWrap: 'on',
-												scrollBeyondLastLine: false,
-												automaticLayout: true,
-											}}
-										/>
-									</div>
-								</div>
-							)}
-
-							<div className="border-t border-zinc-800 p-3">
-								<button
-									onClick={handleRenderSync}
-									disabled={isRecompiling || !sessionId || !pythonScript}
-									className="flex w-full items-center justify-center gap-2 border border-emerald-400 bg-emerald-500 px-3 py-2 text-sm font-semibold text-black hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
-								>
-									{isRecompiling ? (
-										<Loader2 className="size-4 animate-spin" />
-									) : (
-										<Wrench className="size-4" />
-									)}
-									Sync to Engine
-								</button>
-							</div>
-						</div>
-					) : null}
-				</aside>
+				</EditorDrawer>
 			</main>
 		</div>
 	);

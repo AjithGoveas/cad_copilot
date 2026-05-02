@@ -15,6 +15,19 @@ router = APIRouter(tags=["cad"])
 render_service = ParameterRenderService()
 DEFAULT_MODEL = os.getenv("GENAI_MODEL", "gemini-3.1-flash-lite")
 
+
+def _error_payload(message: str, hint: str | None = None) -> dict[str, Any]:
+    error: dict[str, Any] = {"message": message}
+    if hint:
+        error["hint"] = hint
+    return {"error": error}
+
+
+def _coerce_error_message(exc: Exception, fallback: str) -> str:
+    message = str(exc).strip()
+    return message or fallback
+
+
 def _as_sse(event: str, payload: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
 
@@ -33,7 +46,10 @@ async def generate(
     )
 
     if content_type and not (is_image or is_pdf):
-        raise HTTPException(status_code=400, detail="Uploaded file must be an image or PDF.")
+        raise HTTPException(
+            status_code=400,
+            detail=_error_payload("Uploaded file must be an image or PDF."),
+        )
 
     image_bytes = await image.read()
     mime_type = content_type if content_type else ("application/pdf" if image.filename and image.filename.lower().endswith(".pdf") else "image/png")
@@ -41,11 +57,32 @@ async def generate(
     try:
         codegen_service = LLMCodegenService(model=model_name)
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500,
+            detail=_error_payload(_coerce_error_message(exc, "Failed to initialize AI model.")),
+        ) from exc
 
     async def event_stream():
         try:
-            yield _as_sse("status", {"message": "Generating build123d script."})
+            yield _as_sse("metadata", {
+                "token_budget": codegen_service.max_prompt_tokens,
+                "model": codegen_service.model,
+                "max_output": codegen_service.max_output_tokens
+            })
+
+            yield _as_sse("status", {"message": "Scanning blueprint for features..."})
+
+            # Stage 1: Summarisation (Analysis)
+            try:
+                summary = await asyncio.to_thread(
+                    codegen_service.summarise_blueprint,
+                    image_bytes,
+                    mime_type
+                )
+                yield _as_sse("status", {"message": "Analysis complete. Generating precision script..."})
+            except Exception:
+                summary = None
+                yield _as_sse("status", {"message": "Generating build123d script..."})
 
             script_chunks: list[str] = []
 
@@ -53,6 +90,7 @@ async def generate(
                 prompt=prompt,
                 image_bytes=image_bytes,
                 image_mime_type=mime_type,
+                summary=summary,
             ):
                 if await request.is_disconnected():
                     return
@@ -77,7 +115,13 @@ async def generate(
             # Client disconnected gracefully
             return
         except Exception as exc:
-            yield _as_sse("error", {"message": str(exc)})
+            yield _as_sse(
+                "error",
+                {
+                    "message": _coerce_error_message(exc, "Generation failed."),
+                    "hint": "Adjust the prompt or model and try again.",
+                },
+            )
             return
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -97,7 +141,13 @@ def render(request: RenderRequest) -> RenderResponse:
             output_basename=output_basename,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Render Engine Failed: {str(exc)}")
+        raise HTTPException(
+            status_code=500,
+            detail=_error_payload(
+                _coerce_error_message(exc, "Render failed."),
+                "Check script and parameter values, then retry.",
+            ),
+        )
 
     # 3. Format parameters back for the response UI
     reconstructed_params = [
