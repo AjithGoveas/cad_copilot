@@ -45,6 +45,14 @@ def run():
     # Load symbols
     import build123d
     ns.update({k: getattr(build123d, k) for k in dir(build123d) if not k.startswith('_')})
+    
+    # Common AI Casing Fallbacks
+    ns.update({
+        "Extrude": ns.get("extrude"),
+        "Revolve": ns.get("revolve"),
+        "Loft": ns.get("loft"),
+        "Sweep": ns.get("sweep"),
+    })
 
     # 3. Execute
     try:
