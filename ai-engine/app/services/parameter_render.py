@@ -52,7 +52,30 @@ def run():
         "Revolve": ns.get("revolve"),
         "Loft": ns.get("loft"),
         "Sweep": ns.get("sweep"),
+        "GridLocation": ns.get("GridLocations"),
+        "PolarLocation": ns.get("PolarLocations"),
     })
+
+    # Robustness Wrappers (Monkey-patching build123d)
+    _orig_fillet = build123d.fillet
+    def smart_fillet(*args, **kwargs):
+        try:
+            return _orig_fillet(*args, **kwargs)
+        except ValueError as e:
+            if "2D fillet operation takes only Vertices" in str(e):
+                objs = kwargs.get("objects") or (args[0] if args else None)
+                if objs is not None:
+                    verts = None
+                    if hasattr(objs, "vertices"):
+                        v = getattr(objs, "vertices")
+                        verts = v() if callable(v) else v
+                    if verts:
+                        if "objects" in kwargs: kwargs["objects"] = verts
+                        elif args: args = (verts,) + args[1:]
+                        return _orig_fillet(*args, **kwargs)
+            raise
+    build123d.fillet = smart_fillet
+    ns["fillet"] = smart_fillet
 
     # 3. Execute
     try:

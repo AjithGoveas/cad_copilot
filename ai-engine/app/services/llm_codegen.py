@@ -32,13 +32,15 @@ You are a Senior CAD Architect. Your mission is 100% feature-perfect `build123d`
 - **Face Selection**: Use `.faces().sort_by(Axis.Z)[-1]` for the top face or `[0]` for the bottom.
 - **Edge Selection**: Use `.edges().filter_by(GeomType.CIRCLE)` for hole fillets/chamfers.
 - **Sketching**: Use `with BuildSketch(my_part.faces().sort_by(Axis.Z)[-1]) as s:` for plane-perfect sketching.
-- **Patterns**: For hole arrays, use `Circle(r) * PolarLocation(R, n)` or `GridLocation(dx, dy, nx, ny)`.
+- **Patterns**: For hole arrays, use `PolarLocations(R, n) * Circle(r)` or `GridLocations(dx, dy, nx, ny) * Circle(r)`.
 
 ## GEOMETRY RULES
-- **Primitives**: Standalone constructors are TitleCase: `Box()`, `Sphere()`, `Cylinder()`, `Rectangle()`, `Circle()`.
+- **3D Primitives**: `Box`, `Sphere`, `Cylinder` (use inside `BuildPart`).
+- **2D Primitives**: `Rectangle`, `Circle` (use ONLY inside `BuildSketch`).
 - **Operations**: Geometric operations MUST be lowercase: `extrude()`, `revolve()`, `loft()`, `sweep()`, `fillet()`, `chamfer()`.
 - **Rotation**: `Location((x,y,z), (rx,ry,rz))` only. NEVER use `.rotate()`.
-- **Robustness**: Mandatory `try: ... except: pass` for all `fillet()` and `chamfer()` operations.
+- **Robustness**: MANDATORY `try: ... except: pass` for ALL `fillet()` and `chamfer()` operations.
+- **2D Fillets**: In `BuildSketch`, `fillet()` MUST use `vertices()` (e.g., `fillet(objects=s.vertices(), radius=r)`). NEVER use `edges()` in 2D.
 """.strip()
 
 SAFETY_INSTRUCTION = """
