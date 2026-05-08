@@ -17,7 +17,7 @@ export function ChatBubble({ role, content }: ChatBubbleProps) {
 	const [copied, setCopied] = useState(false);
 	const isUser = role === 'user';
 	const isAssistant = role === 'assistant';
-	
+
 	const bubbleClass = isUser
 		? 'bg-gradient-to-br from-amber-500 to-amber-600 text-black shadow-[0_4px_20px_rgba(245,158,11,0.25)]'
 		: 'bg-[#18181b]/80 backdrop-blur-xl text-zinc-200 border border-zinc-800/50 shadow-[0_8px_30px_rgb(0,0,0,0.5)]';
@@ -37,19 +37,19 @@ export function ChatBubble({ role, content }: ChatBubbleProps) {
 				</div>
 				<span className="opacity-60">{role}</span>
 			</div>
-			
+
 			<div className={`relative max-w-[88%] rounded-2xl px-5 py-4 text-sm leading-[1.6] ${bubbleClass} ${isUser ? 'rounded-tr-none' : 'rounded-tl-none'}`}>
-				<div className="prose prose-invert prose-sm max-w-none break-words font-sans">
+				<div className="prose prose-invert prose-sm max-w-none wrap-break-word font-sans">
 					<ReactMarkdown
 						components={{
 							code({ node, className, children, ...props }) {
 								const match = /language-(\w+)/.exec(className || '');
 								const codeText = String(children).replace(/\n$/, '');
-								
+
 								if (match) {
 									return (
 										<div className="relative my-4 overflow-hidden rounded-xl bg-black/40 border border-white/5 shadow-inner group/code">
-											<div className="flex items-center justify-between bg-white/[0.03] px-4 py-2.5 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400 border-b border-white/5">
+											<div className="flex items-center justify-between bg-white/3 px-4 py-2.5 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400 border-b border-white/5">
 												<span className="flex items-center gap-2">
 													<div className="size-1.5 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
 													{match[1]}

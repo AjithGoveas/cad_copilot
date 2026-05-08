@@ -46,7 +46,7 @@ export function ChatPanel({
 	}, [messages]);
 
 	return (
-		<section 
+		<section
 			className="flex shrink-0 flex-col border-r border-zinc-800 bg-[#09090b] relative z-20"
 			style={{ width: `${width}px` }}
 		>
@@ -56,7 +56,7 @@ export function ChatPanel({
 					<div className="flex size-7 items-center justify-center rounded-lg bg-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.4)]">
 						<span className="text-sm font-black text-black">C</span>
 					</div>
-					<h1 className="text-xs font-bold tracking-[0.1em] text-zinc-100 font-sans uppercase">Cad Copilot</h1>
+					<h1 className="text-xs font-bold tracking-widest text-zinc-100 font-sans uppercase">Cad Copilot</h1>
 				</div>
 
 				{/* Model Switcher - Hardware Module Style */}
@@ -109,7 +109,7 @@ export function ChatPanel({
 										{selectedFile.name}
 									</p>
 								</div>
-								<button 
+								<button
 									onClick={() => handleFileChange(null)}
 									className="p-1 text-zinc-500 hover:text-zinc-100 transition-colors"
 								>
@@ -136,8 +136,8 @@ export function ChatPanel({
 								placeholder="Describe your design intent..."
 								className="w-full resize-none bg-transparent p-5 text-sm text-zinc-100 placeholder:text-zinc-700 focus:outline-none font-sans leading-relaxed"
 							/>
-							
-							<div className="flex items-center justify-between border-t border-zinc-800/30 bg-white/[0.02] px-4 py-3">
+
+							<div className="flex items-center justify-between border-t border-zinc-800/30 bg-white/2 px-4 py-3">
 								<div className="flex items-center gap-2">
 									<label className="group/btn relative flex cursor-pointer items-center justify-center rounded-lg p-2 text-zinc-500 hover:bg-zinc-800 hover:text-amber-500 transition-all">
 										<Upload className="size-4" />

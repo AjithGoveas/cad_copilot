@@ -33,7 +33,7 @@ export function EditorDrawer({
 	return (
 		<aside
 			className={`relative shrink-0 overflow-hidden border-l border-zinc-800 bg-[#09090b] transition-all duration-500 ease-[cubic-bezier(0.2,1,0.2,1)] ${
-				isOpen ? 'w-[450px]' : 'w-16'
+				isOpen ? 'w-112.5' : 'w-16'
 			}`}
 		>
 			<button
@@ -120,7 +120,7 @@ export function EditorDrawer({
 							<Wrench className="size-4 group-hover:rotate-45 transition-transform" />
 						)}
 						{isRecompiling ? 'Engine Working...' : 'Sync to Engine'}
-						<div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent group-hover:translate-x-full transition-transform duration-1000" />
+						<div className="absolute inset-0 -translate-x-full bg-linear-to-r from-transparent via-white/20 to-transparent group-hover:translate-x-full transition-transform duration-1000" />
 					</button>
 				</div>
 			</div>

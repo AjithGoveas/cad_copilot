@@ -1,12 +1,7 @@
 'use client';
 
-import Editor from '@monaco-editor/react';
-import { OrbitControls } from '@react-three/drei';
-import { Canvas, useLoader } from '@react-three/fiber';
 import JSON5 from 'json5';
-import { ChevronLeft, ChevronRight, Loader2, SendHorizontal, Upload, Wrench } from 'lucide-react';
-import type { editor as MonacoEditor } from 'monaco-editor';
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { ChatPanel } from './ChatPanel';
@@ -55,6 +50,7 @@ const MODEL_OPTIONS = [
 	{ value: 'gemini-3.1-flash-lite-preview', label: 'gemini-3.1-flash-lite (Default / Recommended)' },
 	{ value: 'gemini-3-flash-preview', label: 'gemini-3-flash' },
 	{ value: 'gemini-2.5-flash-lite', label: 'gemini-2.5-flash-lite' },
+	{ value: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
 ];
 
 function makeId(prefix: string): string {
@@ -376,7 +372,7 @@ export default function HitlWorkspace() {
 				setActiveDrawerTab('code');
 				setIsDrawerOpen(true);
 				setStatusText('Script generated. Compiling 3D model...');
-				
+
 				// Automatically trigger sync after generation
 				const currentSession = nextSessionId || sessionId;
 				if (currentSession) {
