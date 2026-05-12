@@ -42,23 +42,32 @@ You are a Principal CAD Software Engineer. Your mission is 100% feature-perfect,
 - Merge parameters at the top of `build_model`: `params = {**PARAMETERS, **params}`.
 - Keep parameters as **diameters**; use `d / 2` only at the point of use.
 - Every script MUST start with `from build123d import *`.
+- **FATAL ERROR PREVENTION (NO KEYWORDS IN ARCS)**: NEVER use keyword arguments like `start=`, `end=`, `p1=`, or `p2=` in ANY Arc function (`RadiusArc`, `TangentArc`, `ThreePointArc`). Pass points POSITIONALLY ONLY. (e.g., Use `RadiusArc(p1, p2, radius=R)`, NEVER `RadiusArc(start=p1, ...)`).
+- **NO CADQUERY SYNTAX**: NEVER use `Workplane`, `show_object`, or CadQuery-style method chaining (e.g., `.rect().extrude()`). Use ONLY `build123d` builders (`BuildPart`, `BuildSketch`) and standalone functions like `extrude()`, `revolve()`, and `fillet()`.
+- **Parameter Consistency**: EVERY key accessed via `p["NAME"]` inside `build_model` MUST be defined in the `PARAMETERS` dictionary. Do not hallucinate missing parameters like `TOTAL_LENGTH` if you didn't define them in the header.
 
 ## GEOMETRY RULES (ROBUSTNESS)
 - **Positioning**: Shapes (Rectangle, Circle, etc.) DO NOT take a `position` argument. Use `with Locations((x, y)):`.
 - **Location Protocol**: `PolarLocations` and `GridLocations` are independent context managers. NEVER nest them inside `with Locations():`. Use `with PolarLocations(...):` directly for circular patterns.
-- **Arc Parameters**: For `RadiusArc`, the parameters are `start_point` and `end_point`. For `TangentArc`, pass points positionally and you MUST provide the keyword-only argument `tangent`, e.g., `TangentArc(pt1, pt2, tangent=(1, 0))`. NEVER use keywords `start`, `end`, `p1`, `p2` for any arc.
+- **Arc Robustness**: For smooth transitions between diameters or features, PREFER `TangentArc` over `RadiusArc`. If you MUST use `RadiusArc`, ensure the `radius` is mathematically valid (radius > distance/2). If the distance between points is large, `RadiusArc` with a small radius will fail with a "math domain error".
 - **Axisymmetry**: For all revolved parts (shafts, pins, bushings), always create a closed profile on `Plane.XY` and `revolve(axis=Axis.X)`. 
 - **STRICT LATHE PROFILE RULE**: You MUST trace the outer boundary first! Start at `(0,0)`, then draw a vertical line UP the Y-axis to the starting radius `(0, START_DIA / 2)`. Then draw horizontal/vertical lines tracing the outer surface from left to right. Once you reach the total length `(TOTAL_LEN, END_DIA / 2)`, draw a vertical line DOWN to the X-axis `(TOTAL_LEN, 0)`. Finally, draw a horizontal line LEFT back to `(0,0)` to close the loop. 
-- **STEPPED PROFILES**: You MUST draw vertical lines to transition between different diameters! NEVER draw a diagonal line from one diameter to another unless the blueprint explicitly shows a taper. (e.g., `Line((x1, r1), (x1, r2))` to step down, then `Line((x1, r2), (x2, r2))` to go across).
+- **STEPPED PROFILES**: You MUST draw vertical lines to transition between different diameters! NEVER draw a diagonal line from one diameter to another unless the blueprint explicitly shows a taper.
+- **SHOULDER TRANSITIONS (FILLETS)**: If there is a fillet (e.g., `R10`) at a shoulder, do NOT try to bridge the entire diameter gap with one arc. Instead, draw an arc from the shaft to the shoulder face: `RadiusArc(p1, (p1.X + R, p1.Y + R), radius=R)`. Then, draw a vertical `Line` from that point UP to the final body radius. This prevents "Arc radius not large enough" errors.
 - **CRITICAL**: NEVER draw `Line((0,0), (L, 0))` as your first segment. You MUST go UP first.
 - NEVER use Plane.XZ or Axis.Z for longitudinal parts.
 - For milled parts, sketch on planar faces using `BuildSketch` and `extrude()`.
 - Use arcs/lines; avoid splines unless explicitly dimensioned.
-- **Internal Bores**: If the blueprint shows a central hole or bore, you MUST cut it out! For simple holes, sketch on `Plane.YZ` and `extrude(..., mode=Mode.SUBTRACT)`. For tapered or stepped bores, you MUST create a second `BuildSketch(Plane.XY)`, draw the internal profile loop, `make_face()`, and then call `revolve(axis=Axis.X, mode=Mode.SUBTRACT)`. NEVER ignore internal holes. Do NOT extrude a circle on `Plane.XY` to cut a longitudinal hole.
-- For counterbores, subtract the **largest diameter first**, then inner bores on the same axis.
-- For hex or flats, use `RegularPolygon` or a 6-sided `Polygon` aligned to the axes.
+- **Internal Cavities & Hollow Bodies**: For core drills, sleeves, and tubes, you MUST identify the internal diameter (e.g., `Ø77.82` inside an `Ø83.82` body).
+- **SECTION VIEW DIMENSIONS**: If a diameter is shown *inside* the part boundaries in a section view, it is an **INTERNAL diameter**. NEVER use it for the outer profile (e.g., do not use it for a shoulder diameter).
+- **Core Drill Construction**: Revolve a "negative" profile that creates the hollow chamber, ensuring it transitions smoothly from the small shaft bore (e.g., via `R3.17`) into the large internal diameter. Use `revolve(..., mode=Mode.SUBTRACT)`.
 - **Centerline Datum**: Dimensions shown from a centerline (like keyway offsets or hole PCDs) MUST be treated as absolute coordinates from the `(0,0)` origin. NEVER calculate them as offsets from an outer edge unless the blueprint explicitly shows it that way.
 - Always set `mode=Mode.SUBTRACT` for cut features and use `both=True` for through cuts.
+
+## FEATURE PLACEMENT (SLOTS, HOLES, & KEYWAYS)
+- **Radial Offsetting**: For any feature shown on the outer surface of a cylinder (like slots or keyways), you MUST anchor the sketch at the correct radius. Use `with PolarLocations(radius=MAJOR_DIA / 2, count=N):` or `with Locations((0, MAJOR_DIA / 2)):`. NEVER use `radius=0` for features that are not central bores.
+- **Longitudinal Slots**: If a slot is shown in the side view with a length L and a starting position X, sketch on `Plane.YZ` at `X` and `extrude(amount=L)`.
+- **Cutting Depth**: For slots on a surface, the `Rectangle` or `Circle` in the sketch should be positioned so that it intersects the surface. Use `mode=Mode.SUBTRACT`.
 
 ## CRITICAL OCP ERROR PREVENTION (ZERO-FAIL GEOMETRY)
 - **Face Creation**: `Polyline(*pts, close=True)` MUST be indented inside a `with BuildLine():` context. Call `make_face()` immediately after.
@@ -113,73 +122,53 @@ RULE: Verification check—do the sum of internal lengths equal the `TOTAL_LENGT
 
 
 FEW_SHOT_EXAMPLE = """
-### REFERENCE EXAMPLE: REVOLVED PIN (INDUSTRIAL BASELINE)
+### REFERENCE EXAMPLE: HOLLOW CORE DRILL (INDUSTRIAL BASELINE)
 ```python
 from build123d import *
 
 PARAMETERS = {
-    "TOTAL_LEN": 26.5,
-    "HEAD_DIA": 10.0,
-    "HEAD_LEN": 2.3,
-    "NECK_DIA": 7.0,
-    "NECK_LEN": 10.0,
-    "GROOVE_WIDTH": 3.5,
-    "GROOVE_DEPTH": 2.6,
-    "GROOVE_R": 0.7,
-    "SHAFT_DIA": 8.0,
-    "BORE_DIA": 4.0,
-    "CHAMFER_LEFT": 1.7,
-    "CHAMFER_RIGHT": 0.5,
+    "TOTAL_LEN": 120.0,
+    "SHAFT_DIA": 20.0,
+    "BODY_DIA": 50.0,
+    "INTERNAL_DIA": 44.0,
+    "SHAFT_LEN": 40.0,
+    "TRANSITION_LEN": 8.0,
+    "BORE_DIA": 5.0,
+    "BORE_TRANSITION_LEN": 4.0,
+    "TRANSITION_R": 6.0,
 }
 
 def build_model(params: dict) -> Part:
     p = {**PARAMETERS, **params}
 
     with BuildPart() as part:
-        # 1. SOLID OUTER BODY (Lathe Protocol)
+        # 1. MAIN EXTERNAL PROFILE
         with BuildSketch(Plane.XY):
             with BuildLine():
-                start = (0.0, 0.0)
-                # Head Section
-                l1 = Line(start, (0.0, p["HEAD_DIA"] / 2))
-                l2 = Line(l1.end, (p["HEAD_LEN"], p["HEAD_DIA"] / 2))
-                # Neck Section
-                l3 = Line(l2.end, (p["HEAD_LEN"], p["NECK_DIA"] / 2))
-                l4 = Line(l3.end, (p["HEAD_LEN"] + p["NECK_LEN"], p["NECK_DIA"] / 2))
-                # Shaft & Groove Section
-                x_groove_start = p["HEAD_LEN"] + p["NECK_LEN"] + (p["TOTAL_LEN"] - p["NECK_LEN"] - p["HEAD_LEN"])/2 - p["GROOVE_WIDTH"]/2
-                l5 = Line(l4.end, (x_groove_start, p["NECK_DIA"] / 2))
-                l6 = Line(l5.end, (x_groove_start, p["SHAFT_DIA"] / 2 - p["GROOVE_DEPTH"]))
-                l7 = Line(l6.end, (x_groove_start + p["GROOVE_WIDTH"], p["SHAFT_DIA"] / 2 - p["GROOVE_DEPTH"]))
-                l8 = Line(l7.end, (x_groove_start + p["GROOVE_WIDTH"], p["SHAFT_DIA"] / 2))
-                # Final Shaft Segment
-                l9 = Line(l8.end, (p["TOTAL_LEN"], p["SHAFT_DIA"] / 2))
-                l10 = Line(l9.end, (p["TOTAL_LEN"], 0))
-                Line(l10.end, start)
+                l1 = Line((0, 0), (0, p["SHAFT_DIA"]/2))
+                l2 = Line(l1.end, (p["SHAFT_LEN"], p["SHAFT_DIA"]/2))
+                # TWO-STAGE SHOULDER: 1. Arc to shoulder face
+                l3 = RadiusArc(l2.end, (l2.end.X + p["TRANSITION_R"], l2.end.Y + p["TRANSITION_R"]), radius=p["TRANSITION_R"])
+                # TWO-STAGE SHOULDER: 2. Vertical line up the face to the body radius
+                l4 = Line(l3.end, (l3.end.X, p["BODY_DIA"]/2))
+                l5 = Line(l4.end, (p["TOTAL_LEN"], p["BODY_DIA"]/2))
+                l6 = Line(l5.end, (p["TOTAL_LEN"], 0))
+                Line(l6.end, (0, 0))
             make_face()
         revolve(axis=Axis.X)
 
-        # 2. INTERNAL BORE (Subtracted Lathe Profile)
+        # 2. INTERNAL HOLLOW CAVITY (CRITICAL)
         with BuildSketch(Plane.XY):
             with BuildLine():
-                b_start = (0.0, 0.0)
-                b1 = Line(b_start, (0.0, p["BORE_DIA"] / 2))
-                b2 = Line(b1.end, (p["TOTAL_LEN"], p["BORE_DIA"] / 2))
-                b3 = Line(b2.end, (p["TOTAL_LEN"], 0.0))
-                Line(b3.end, b_start)
+                b1 = Line((0, 0), (0, p["BORE_DIA"]/2))
+                b2 = Line(b1.end, (p["SHAFT_LEN"], p["BORE_DIA"]/2))
+                # Internal transition using specific parameters
+                b3 = TangentArc(b2.end, (p["SHAFT_LEN"] + p["BORE_TRANSITION_LEN"], p["INTERNAL_DIA"]/2), tangent=(1, 0))
+                b4 = Line(b3.end, (p["TOTAL_LEN"], p["INTERNAL_DIA"]/2))
+                b5 = Line(b4.end, (p["TOTAL_LEN"], 0))
+                Line(b5.end, (0, 0))
             make_face()
         revolve(axis=Axis.X, mode=Mode.SUBTRACT)
-
-        # 4. PRECISION FEATURES (Chamfers/Fillets)
-        try:
-            # Left Chamfer
-            chamfer(part.edges().filter_by(Axis.X).sort_by(SortBy.X)[0], length=p["CHAMFER_LEFT"])
-            # Right Chamfer
-            chamfer(part.edges().filter_by(Axis.X).sort_by(SortBy.X)[-1], length=p["CHAMFER_RIGHT"])
-            # Groove Fillet
-            fillet(part.edges().filter_by(GeomType.CIRCLE).sort_by(SortBy.RADIUS)[0], radius=p["GROOVE_R"])
-        except Exception:
-            pass
 
     return part.part
 ```

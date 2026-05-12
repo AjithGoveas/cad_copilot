@@ -92,7 +92,7 @@ export function CadViewport({
 						</Stage>
 					</Suspense>
 
-					<gridHelper args={[20, 20, '#18181b', '#09090b']} position={[0, -0.01, 0]} />
+
 					<OrbitControls makeDefault enableDamping dampingFactor={0.05} minPolarAngle={0} maxPolarAngle={Math.PI / 1.75} />
 				</Canvas>
 

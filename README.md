@@ -160,7 +160,7 @@ Health check:
 curl http://127.0.0.1:8000/health
 ```
 
-### 3) Start web-ui
+### 3) Start web-ui 
 
 ```bash
 cd web-ui
