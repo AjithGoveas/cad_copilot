@@ -57,9 +57,12 @@ def _coerce_params(value):
         except Exception:
             return value
     if isinstance(value, str):
-        if re.fullmatch(r"[+-]?\d+(?:\.\d+)?", value.strip()):
+        # Aggressively strip units and whitespace
+        clean_value = re.sub(r"(?i)\s*(?:mm|in|inch|degrees?|°|rads?|radians?)\s*$", "", value.strip())
+        if re.fullmatch(r"[+-]?\d+(?:\.\d+)?", clean_value):
             try:
-                return float(value)
+                return float(clean_value)
+
             except Exception:
                 return value
     return value
@@ -101,7 +104,22 @@ def run():
         "math": math,
     }
 
+    try:
+        exec("from build123d import *", ns)
+    except ImportError:
+        print("CRITICAL: build123d not found.")
+        sys.exit(1)
+
     import build123d
+    # Compatibility Patches for build123d 0.10.0
+    if hasattr(build123d, "Mixin1D"):
+        build123d.Mixin1D.start = property(lambda self: self @ 0)
+        build123d.Mixin1D.end = property(lambda self: self @ 1)
+    elif hasattr(build123d, "Edge"):
+        build123d.Edge.start = property(lambda self: self @ 0)
+        build123d.Edge.end = property(lambda self: self @ 1)
+
+    # Sync patched objects to namespace
     ns.update({k: getattr(build123d, k) for k in dir(build123d) if not k.startswith('_')})
 
     if hasattr(build123d, "Part") and not hasattr(build123d.Part, "export_step"):
@@ -231,6 +249,7 @@ def run():
         script_content = re.sub(r"Polygon\((.*?),\s*close=(?:True|False)\)", r"Polygon(\1)", script_content)
         script_content = re.sub(r"(\s+)extrude\s*\(\s*", r"\1# extrude_placeholder(", script_content)
         script_content = re.sub(r"# extrude_placeholder", r"extrude", script_content)
+
         exec(script_content, ns)
     except Exception:
         import traceback
@@ -264,10 +283,21 @@ def run():
     out_dir = Path(os.getenv("OUTPUT_DIR", "."))
     basename = os.getenv("OUTPUT_BASENAME", "model")
     try:
+        from build123d.exporters import ExportDXF
         _validate_shape(shape)
         export_step(shape, str(out_dir / f"{basename}.step"))
         export_stl(shape, str(out_dir / f"{basename}.stl"))
-        print(f"RENDER_SUCCESS: Exported {basename}.step and {basename}.stl", flush=True)
+        
+        # DXF Export for CNC/Drafting
+        try:
+            dxf_exporter = ExportDXF(unit=build123d.Unit.MM)
+            dxf_exporter.add_shape(shape)
+            dxf_exporter.write(str(out_dir / f"{basename}.dxf"))
+        except Exception as dxf_exc:
+            print(f"DXF_WARNING: Could not export DXF: {dxf_exc}")
+
+        print(f"RENDER_SUCCESS: Exported {basename}.step, {basename}.stl, and {basename}.dxf", flush=True)
+
     except Exception as exc:
         print(f"EXPORT_ERROR: {exc}")
         sys.exit(1)
@@ -340,6 +370,8 @@ class ParameterRenderService:
 
         stl_path = self.outputs_dir / f"{output_basename}.stl"
         step_path = self.outputs_dir / f"{output_basename}.step"
+        dxf_path = self.outputs_dir / f"{output_basename}.dxf"
+
 
         if not stl_path.exists() or not step_path.exists():
             raise RuntimeError("Render finished but artifacts are missing.")
@@ -347,6 +379,8 @@ class ParameterRenderService:
         return {
             "stl_path": str(stl_path),
             "step_path": str(step_path),
+            "dxf_path": str(dxf_path) if dxf_path.exists() else None,
+
         }
 
     def _parse_worker_error(self, log: str) -> str:

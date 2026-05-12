@@ -21,6 +21,8 @@ type ChatMessage = {
 type RenderPayload = {
 	stl_url?: string;
 	step_url?: string;
+	dxf_url?: string;
+
 	status?: string;
 	job_id?: string;
 	error?: {
@@ -30,6 +32,8 @@ type RenderPayload = {
 	artifacts?: {
 		stl_url?: string;
 		step_url?: string;
+		dxf_url?: string;
+
 	};
 };
 
@@ -265,8 +269,11 @@ export default function HitlWorkspace() {
 	const [parameters, setParameters] = useState<Record<string, unknown>>({});
 	const [stlUrl, setStlUrl] = useState<string | null>(null);
 	const [stepUrl, setStepUrl] = useState<string | null>(null);
+	const [dxfUrl, setDxfUrl] = useState<string | null>(null);
 	const [isDownloadingStl, setIsDownloadingStl] = useState(false);
 	const [isDownloadingStep, setIsDownloadingStep] = useState(false);
+	const [isDownloadingDxf, setIsDownloadingDxf] = useState(false);
+
 	const [statusText, setStatusText] = useState<string>('Ready');
 
 	const pythonScriptRef = useRef('');
@@ -354,6 +361,12 @@ export default function HitlWorkspace() {
 					if (!line.startsWith('data: ')) continue;
 					try {
 						const rawData = JSON.parse(line.slice(6));
+						if (rawData.error) {
+							const msg = rawData.error.message || 'Generation failed.';
+							const hint = rawData.error.hint ? ` Hint: ${rawData.error.hint}` : '';
+							throw new Error(`${msg}${hint}`);
+						}
+
 						if (rawData.chunk) {
 							accumulated += rawData.chunk;
 							setMessages((prev) => prev.map((m) => (m.id === assistantMessageId ? { ...m, content: accumulated } : m)));
@@ -409,6 +422,8 @@ export default function HitlWorkspace() {
 			const payload = (await response.json()) as RenderPayload;
 			if (payload.artifacts?.stl_url) setStlUrl(resolveModelUrl(payload.artifacts.stl_url, Date.now().toString()));
 			if (payload.artifacts?.step_url) setStepUrl(resolveModelUrl(payload.artifacts.step_url));
+			if (payload.artifacts?.dxf_url) setDxfUrl(resolveModelUrl(payload.artifacts.dxf_url));
+
 
 			setStatusText('Geometry recompiled successfully.');
 			toast.success('Sync successful');
@@ -429,8 +444,10 @@ export default function HitlWorkspace() {
 	async function handleDownloadArtifact(url: string | null, label: string) {
 		if (!url) return;
 
-		const setBusy = label === 'stl' ? setIsDownloadingStl : setIsDownloadingStep;
+
+		const setBusy = label === 'stl' ? setIsDownloadingStl : label === 'step' ? setIsDownloadingStep : setIsDownloadingDxf;
 		setBusy(true);
+
 		try {
 			const response = await fetch(url);
 			if (!response.ok) throw new Error(`Server returned ${response.status}`);
@@ -456,6 +473,8 @@ export default function HitlWorkspace() {
 	const parameterEntries = Object.entries(parameters);
 	const hasStl = Boolean(stlUrl);
 	const hasStep = Boolean(stepUrl);
+	const hasDxf = Boolean(dxfUrl);
+
 
 	return (
 		<div className="dark h-screen w-full bg-black text-zinc-100 overflow-hidden">
@@ -490,10 +509,14 @@ export default function HitlWorkspace() {
 					isRecompiling={isRecompiling}
 					hasStl={hasStl}
 					hasStep={hasStep}
+					hasDxf={hasDxf}
 					isDownloadingStl={isDownloadingStl}
 					isDownloadingStep={isDownloadingStep}
+					isDownloadingDxf={isDownloadingDxf}
 					onDownloadStl={() => void handleDownloadArtifact(stlUrl, 'stl')}
 					onDownloadStep={() => void handleDownloadArtifact(stepUrl, 'step')}
+					onDownloadDxf={() => void handleDownloadArtifact(dxfUrl, 'dxf')}
+
 				>
 					{stlUrl ? <StlMesh url={stlUrl} /> : null}
 				</CadViewport>
