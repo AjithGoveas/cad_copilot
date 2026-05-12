@@ -9,6 +9,8 @@ import { CadViewport } from './CadViewport';
 import { EditorDrawer } from './EditorDrawer';
 import { ParameterInput } from './ParameterInput';
 import { StlMesh } from './StlMesh';
+import { HistoryDrawer } from './HistoryDrawer';
+import { History } from 'lucide-react';
 
 type ChatRole = 'user' | 'assistant' | 'system';
 
@@ -273,6 +275,7 @@ export default function HitlWorkspace() {
 	const [isDownloadingStl, setIsDownloadingStl] = useState(false);
 	const [isDownloadingStep, setIsDownloadingStep] = useState(false);
 	const [isDownloadingDxf, setIsDownloadingDxf] = useState(false);
+	const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
 	const [statusText, setStatusText] = useState<string>('Ready');
 
@@ -470,6 +473,27 @@ export default function HitlWorkspace() {
 		}
 	}
 
+	const handleRestoreSession = async (session: any) => {
+		setSessionId(session.id);
+		updatePythonScript(session.pythonScript);
+		setParameters(session.parameters || {});
+		
+		setMessages((prev) => [
+			...prev, 
+			{ id: makeId('system'), role: 'system', content: `Restoring session: ${session.prompt}` }
+		]);
+		
+		setIsHistoryOpen(false);
+		setActiveDrawerTab('parameters');
+		setIsDrawerOpen(true);
+		setStatusText('Restoring session and rebuilding geometry...');
+		
+		// Always trigger a sync to ensure the environment matches the script
+		await performSync(session.pythonScript, session.parameters || {}, session.id);
+		
+		toast.success('Session restored');
+	};
+
 	const parameterEntries = Object.entries(parameters);
 	const hasStl = Boolean(stlUrl);
 	const hasStep = Boolean(stepUrl);
@@ -531,6 +555,7 @@ export default function HitlWorkspace() {
 					onRenderSync={handleRenderSync}
 					isRecompiling={isRecompiling}
 					hasSession={Boolean(sessionId)}
+					onHistoryClick={() => setIsHistoryOpen(true)}
 				>
 					<div className="space-y-4">
 						{parameterEntries.map(([key, value]) => (
@@ -550,6 +575,12 @@ export default function HitlWorkspace() {
 						))}
 					</div>
 				</EditorDrawer>
+
+				<HistoryDrawer 
+					isOpen={isHistoryOpen}
+					onClose={() => setIsHistoryOpen(false)}
+					onRestore={handleRestoreSession}
+				/>
 			</main>
 		</div>
 	);
