@@ -167,10 +167,13 @@ def render(request: RenderRequest) -> RenderResponse:
             session_id=job_id,
             step_file_path=paths["step_path"],
             stl_file_path=paths["stl_path"],
+            dxf_file_path=paths.get("dxf_path"),
             step_url=f"/outputs/{output_basename}.step",
             stl_url=f"/outputs/{output_basename}.stl",
-            script_url="",
+            dxf_url=f"/outputs/{output_basename}.dxf" if paths.get("dxf_path") else None,
+            script_url=f"/outputs/{output_basename}.py",
             python_script=request.python_script,
-            parameters=reconstructed_params
+            parameters=reconstructed_params,
+
         )
     )

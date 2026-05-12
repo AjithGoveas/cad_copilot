@@ -11,10 +11,14 @@ type CadViewportProps = {
 	isRecompiling: boolean;
 	hasStl: boolean;
 	hasStep: boolean;
+	hasDxf: boolean;
 	isDownloadingStl: boolean;
 	isDownloadingStep: boolean;
+	isDownloadingDxf: boolean;
 	onDownloadStl: () => void;
 	onDownloadStep: () => void;
+	onDownloadDxf: () => void;
+
 	children?: React.ReactNode; // For StlMesh
 };
 
@@ -24,10 +28,14 @@ export function CadViewport({
 	isRecompiling,
 	hasStl,
 	hasStep,
+	hasDxf,
 	isDownloadingStl,
 	isDownloadingStep,
+	isDownloadingDxf,
 	onDownloadStl,
 	onDownloadStep,
+	onDownloadDxf,
+
 	children
 }: CadViewportProps) {
 	return (
@@ -42,6 +50,16 @@ export function CadViewport({
 				</div>
 				
 				<div className="flex items-center gap-2">
+					{hasDxf && (
+						<button
+							onClick={onDownloadDxf}
+							disabled={isDownloadingDxf}
+							className="flex h-9 items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-4 text-[11px] font-bold uppercase tracking-wider text-zinc-100 hover:border-zinc-500 hover:bg-zinc-800 transition-all disabled:opacity-50"
+						>
+							{isDownloadingDxf ? <Loader2 className="size-3 animate-spin" /> : 'DXF'}
+						</button>
+					)}
+
 					{hasStl && (
 						<button
 							onClick={onDownloadStl}
@@ -74,7 +92,7 @@ export function CadViewport({
 						</Stage>
 					</Suspense>
 
-					<gridHelper args={[20, 20, '#18181b', '#09090b']} position={[0, -0.01, 0]} />
+
 					<OrbitControls makeDefault enableDamping dampingFactor={0.05} minPolarAngle={0} maxPolarAngle={Math.PI / 1.75} />
 				</Canvas>
 

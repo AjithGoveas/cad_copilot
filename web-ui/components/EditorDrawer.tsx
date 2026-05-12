@@ -1,7 +1,7 @@
 'use client';
 
 import Editor from '@monaco-editor/react';
-import { ChevronLeft, ChevronRight, Wrench, Loader2, Code2, Sliders } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Wrench, Loader2, Code2, Sliders, History } from 'lucide-react';
 
 type DrawerTab = 'parameters' | 'code';
 
@@ -15,6 +15,7 @@ type EditorDrawerProps = {
 	onRenderSync: () => void;
 	isRecompiling: boolean;
 	hasSession: boolean;
+	onHistoryClick: () => void;
 	children?: React.ReactNode; // For ParameterInputs
 };
 
@@ -28,6 +29,7 @@ export function EditorDrawer({
 	onRenderSync,
 	isRecompiling,
 	hasSession,
+	onHistoryClick,
 	children
 }: EditorDrawerProps) {
 	return (
@@ -69,6 +71,14 @@ export function EditorDrawer({
 							Engine
 						</button>
 					</div>
+
+					<button
+						onClick={onHistoryClick}
+						className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-amber-500 hover:border-amber-500/50 transition-all shadow-sm"
+					>
+						<History className="size-3 text-amber-500" />
+						History
+					</button>
 				</header>
 
 				<div className="flex-1 overflow-y-auto px-6 py-6 custom-scrollbar">

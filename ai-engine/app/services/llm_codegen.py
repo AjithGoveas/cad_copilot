@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 import uuid
 from datetime import datetime
@@ -17,7 +18,6 @@ except ImportError:
     types = None
     GENAI_AVAILABLE = False
 
-
 logger = logging.getLogger(__name__)
 
 # ============================================================================
@@ -32,22 +32,45 @@ You are a Principal CAD Software Engineer. Your mission is 100% feature-perfect,
 1. **PARAMETERS**: Extract EVERY dimension, tolerance, and quantity into `PARAMETERS = { ... }`.
 2. **FUNCTION**: `def build_model(params: dict) -> Part:` is the ONLY entry point.
 3. **FEATURE PARITY**: Every dimension extracted from the blueprint MUST map to a feature.
-4. **NO YAP**: Output ONLY the python code block. No explanations or notes.
+4. **NO YAP**: Output ONLY the python code block inside ```python markers. No explanations or notes.
+5. **LOOP INTEGRITY**: All segments in `BuildLine` MUST form a single, continuous, closed loop. No floating or extra segments.
 
 ## DATA RULES (NO HALLUCINATIONS)
+- **Shorthand Decoder**: Correctly interpret technical shorthand: `Nx` or `N Pls` means the feature occurs N times; `L x A°` is a chamfer of length L at angle A; `PCD` is a Pitch Circle Diameter for circular patterns.
 - Units are **millimeters**. Use floats for all dimensional parameters.
-- Never invent dimensions. If a value is not shown, keep the feature simple and avoid guessing.
+- **Missing Dimensions on Axisymmetric Parts**: If a blueprint visually shows a stepped profile (like a base and a shaft) but omits diameters, you MUST guess distinct parameters (e.g., `BASE_DIA=15.0`, `SHAFT_DIA=10.0`) so the geometric steps match the visual shape. Do not simplify a stepped part into a single cylinder/cone.
 - Merge parameters at the top of `build_model`: `params = {**PARAMETERS, **params}`.
 - Keep parameters as **diameters**; use `d / 2` only at the point of use.
+- Every script MUST start with `from build123d import *`.
+- **FATAL ERROR PREVENTION (NO KEYWORDS IN ARCS)**: NEVER use keyword arguments like `start=`, `end=`, `p1=`, or `p2=` in ANY Arc function (`RadiusArc`, `TangentArc`, `ThreePointArc`). Pass points POSITIONALLY ONLY. (e.g., Use `RadiusArc(p1, p2, radius=R)`, NEVER `RadiusArc(start=p1, ...)`).
+- **NO CADQUERY SYNTAX**: NEVER use `Workplane`, `show_object`, or CadQuery-style method chaining (e.g., `.rect().extrude()`). Use ONLY `build123d` builders (`BuildPart`, `BuildSketch`) and standalone functions like `extrude()`, `revolve()`, and `fillet()`.
+- **POINT ACCESS (FATAL)**: NEVER use `.X` or `.Y` on points you defined manually as tuples (e.g., `p1 = (x, y)`). Tuples have no attributes. Use `p1[0]` for X and `p1[1]` for Y. You may ONLY use `.X` and `.Y` on properties returned by the engine (e.g., `line.end.X` or `part.center().Y`).
+- **Parameter Consistency**: EVERY key accessed via `p["NAME"]` inside `build_model` MUST be defined in the `PARAMETERS` dictionary. Do not hallucinate missing parameters like `TOTAL_LENGTH` if you didn't define them in the header.
 
 ## GEOMETRY RULES (ROBUSTNESS)
-- Identify axisymmetry (centerline + circular view). If axisymmetric, create a full closed profile on `Plane.XZ` and `revolve(axis=Axis.Z)`.
+- **Positioning**: Shapes (Rectangle, Circle, etc.) DO NOT take a `position` argument. Use `with Locations((x, y)):`.
+- **Location Protocol**: `PolarLocations` and `GridLocations` are independent context managers. NEVER nest them inside `with Locations():`. Use `with PolarLocations(...):` directly for circular patterns.
+- **Arc Robustness**: For smooth transitions between diameters or features, PREFER `TangentArc` over `RadiusArc`. If you MUST use `RadiusArc`, ensure the `radius` is mathematically valid (radius > distance/2). If the distance between points is large, `RadiusArc` with a small radius will fail with a "math domain error".
+- **Axisymmetry**: For all revolved parts (shafts, pins, bushings), always create a closed profile on `Plane.XY` and `revolve(axis=Axis.X)`. 
+- **AXIS CROSSING (FATAL)**: NEVER allow any point in a revolved profile to have a negative Y-coordinate. All points MUST have `Y >= 0`. Crossing the X-axis will CRASH the math engine.
+- **Core Drill & Bore Construction**: Revolve a "negative" profile that creates the hollow chamber. For internal bores, you MUST only draw the **upper half** (Y >= 0) of the profile loop. NEVER use a centered `Rectangle` or `Circle` on the axis of revolution (X-axis).
+- **STRICT LATHE PROFILE RULE**: You MUST trace the outer boundary first! Start at `(0,0)`, then draw a vertical line UP the Y-axis to the starting radius `(0, START_DIA / 2)`. Then draw horizontal/vertical lines tracing the outer surface from left to right. Once you reach the total length `(TOTAL_LEN, END_DIA / 2)`, draw a vertical line DOWN to the X-axis `(TOTAL_LEN, 0)`. Finally, draw a horizontal line LEFT back to `(0,0)` to close the loop. 
+- **STEPPED PROFILES**: You MUST draw vertical lines to transition between different diameters! NEVER draw a diagonal line from one diameter to another unless the blueprint explicitly shows a taper.
+- **SHOULDER TRANSITIONS (FILLETS)**: If there is a fillet (e.g., `R10`) at a shoulder, do NOT try to bridge the entire diameter gap with one arc. Instead, draw an arc from the shaft to the shoulder face: `RadiusArc(p1, (p1.X + R, p1.Y + R), radius=R)`. Then, draw a vertical `Line` from that point UP to the final body radius. This prevents "Arc radius not large enough" errors.
+- **CRITICAL**: NEVER draw `Line((0,0), (L, 0))` as your first segment. You MUST go UP first.
+- NEVER use Plane.XZ or Axis.Z for longitudinal parts.
 - For milled parts, sketch on planar faces using `BuildSketch` and `extrude()`.
-- Use arcs/lines; avoid splines unless explicitly dimensioned.
-- For counterbores, subtract the **largest diameter first**, then inner bores on the same axis.
-- For tapped holes, use **minor drill diameter**; do not model helical threads unless the profile is explicitly defined.
-- For hex or flats, use `RegularPolygon` or a 6-sided `Polygon` aligned to the axes.
+- **NOSE RADII & ROUNDED TOPS**: If the blueprint shows a rounded nose (e.g., `R9.9`), draw the vertical wall to the specified height, then use `TangentArc` or `RadiusArc` to curve from the wall to the top face.
+- **SHOULDER GROOVES**: For features like `1.0 x 0.2 Dp`, draw a small notch into the outer profile at the specified height.
+- **Internal Cavities & Hollow Bodies**: For core drills, sleeves, and tubes, you MUST identify the internal diameter (e.g., `Ø4.40` for a bore).
+- **SECTION VIEW DIMENSIONS**: If a diameter is shown *inside* the part boundaries in a section view, it is an **INTERNAL diameter**. NEVER use it for the outer profile.
+- **Centerline Datum**: Dimensions shown from a centerline (like keyway offsets or hole PCDs) MUST be treated as absolute coordinates from the `(0,0)` origin. NEVER calculate them as offsets from an outer edge unless the blueprint explicitly shows it that way.
 - Always set `mode=Mode.SUBTRACT` for cut features and use `both=True` for through cuts.
+
+## FEATURE PLACEMENT (SLOTS, HOLES, & KEYWAYS)
+- **Radial Offsetting**: For any feature shown on the outer surface of a cylinder (like slots or keyways), you MUST anchor the sketch at the correct radius. Use `with PolarLocations(radius=MAJOR_DIA / 2, count=N):` or `with Locations((0, MAJOR_DIA / 2)):`. NEVER use `radius=0` for features that are not central bores.
+- **Longitudinal Slots**: If a slot is shown in the side view with a length L and a starting position X, sketch on `Plane.YZ` at `X` and `extrude(amount=L)`.
+- **Cutting Depth**: For slots on a surface, the `Rectangle` or `Circle` in the sketch should be positioned so that it intersects the surface. Use `mode=Mode.SUBTRACT`.
 
 ## CRITICAL OCP ERROR PREVENTION (ZERO-FAIL GEOMETRY)
 - **Face Creation**: `Polyline(*pts, close=True)` MUST be indented inside a `with BuildLine():` context. Call `make_face()` immediately after.
@@ -79,89 +102,77 @@ SAFETY_INSTRUCTION = """
 
 
 SUMMARISATION_INSTRUCTION = """
-## ARCHITECTURAL AUDIT - INDUSTRIAL PRECISION PARTS
-Analyze the blueprint as a Lead Mechanical Engineer for precision manufacturing.
+## ARCHITECTURAL AUDIT - PRECISION ENGINEERING PROTOCOL
+Analyze this blueprint as a Lead Mechanical Engineer. Your goal is a 100% accurate parameter map.
 
-1. **Section-First Synthesis**: Use section views as ground truth for internal cavities and wall thickness.
-2. **Axisymmetry Check**: Determine if the part is revolved or prismatic/milled.
-3. **Datum & Origin**: Identify stable datums and a consistent origin.
-4. **Internal Topology Mapping**: Map nested bores, stepped diameters, counterbores, and shoulders.
-5. **Hole Patterns**: Extract PCDs/grids, hole counts, and minor diameters for tapped holes.
-6. **Feature Geometry**: Extract slots, relief grooves, fillets, chamfers, and angles.
-7. **Annotation Audit**: Capture EVERY numeric dimension and tolerance.
+1. **DIAMETER DISCRIMINATION**: 
+   - Identify the "Main Envelope" (the largest outer diameters).
+   - Distinguish between "Shaft Diameter" and "Groove Bottom Diameter" (often shown as a diameter inside a groove).
+   - If a diameter is shown as `øX` inside a groove, the Groove Depth = (Main Diameter - X) / 2.
+2. **LONGITUDINAL DATUMS**:
+   - Use the leftmost or largest face as the Primary Datum (X=0).
+   - Capture all lengths from this origin. 
+   - Note if a dimension is "Incremental" (between features) or "Absolute" (from datum).
+3. **FEATURE SYNTESIS**:
+   - Map every chamfer (`L x A°`) to its specific edge (e.g., "front face", "rear face", "shoulder").
+   - Capture all radii (R) and map them to the specific internal or external corner.
+4. **TOLERANCE CAPTURE**:
+   - Capture the nominal value. If a tolerance is asymmetrical (e.g., +0.2/0), note it in the parameter description.
 
-RULE: Every single number and feature annotation must map to a Parameter.
-RULE: Do not invent values. If a value is ambiguous, flag it as "ambiguous" in the summary.
-Return ONLY the comprehensive feature summary with clear parameter names and values. No code.
+RULE: Output a structured list of PARAMETERS. Use descriptive names like `SHAFT_DIA`, `GROOVE_BOTTOM_DIA`, `HEAD_LEN`.
+RULE: Verification check—do the sum of internal lengths equal the `TOTAL_LENGTH`?
 """.strip()
 
 
 FEW_SHOT_EXAMPLE = """
-### REFERENCE EXAMPLE (DO NOT COPY VALUES)
+### REFERENCE EXAMPLE: PRECISION PIERCING DIE (CURVED NOSE & GROOVES)
 ```python
 from build123d import *
 
 PARAMETERS = {
-    "OUTER_DIA": 83.820,
-    "TOTAL_LENGTH": 160.0,
-    "SLOT_WIDTH": 6.35,
-    "SLOT_DEPTH": 8.2,
-    "CUP_HEIGHT": 80.0,
-    "WALL_THICKNESS": 4.0,
-    "SHANK_DIA": 24.60,
-    "BASE_THICKNESS": 12.0,
-    "SIDE_SLOT_LENGTH": 45.0,
-    "SIDE_SLOT_WIDTH": 8.0,
+    "TOTAL_LEN": 19.0,
+    "BASE_DIA": 11.0,
+    "SHAFT_DIA": 8.0,
+    "BASE_LEN": 4.9,
+    "GROOVE_WIDTH": 1.0,
+    "GROOVE_DEPTH": 0.2,
+    "NOSE_R": 9.9,
+    "BORE_DIA": 4.40,
+    "BORE_DEPTH": 3.0,
 }
 
 def build_model(params: dict) -> Part:
     p = {**PARAMETERS, **params}
 
     with BuildPart() as part:
-        # Main Body: Revolve closed profile
-        with BuildSketch(Plane.XZ):
-            with BuildLine():
-                pts = [
-                    (p["OUTER_DIA"] / 2 - p["WALL_THICKNESS"], 0),
-                    (p["OUTER_DIA"] / 2, 0),
-                    (p["OUTER_DIA"] / 2, p["CUP_HEIGHT"]),
-                    (p["SHANK_DIA"] / 2, p["CUP_HEIGHT"] + 15),
-                    (p["SHANK_DIA"] / 2, p["TOTAL_LENGTH"]),
-                    (0, p["TOTAL_LENGTH"]),
-                    (0, p["CUP_HEIGHT"] - p["BASE_THICKNESS"]),
-                    (p["OUTER_DIA"] / 2 - p["WALL_THICKNESS"], p["CUP_HEIGHT"] - p["BASE_THICKNESS"]),
-                ]
-                Polyline(*pts, close=True)
-            make_face()
-        revolve(axis=Axis.Z)
-
-        # Slots: subtract sketches
+        # 1. MAIN EXTERNAL PROFILE
         with BuildSketch(Plane.XY):
-            with PolarLocations(radius=p["OUTER_DIA"] / 2, count=4):
-                Rectangle(width=p["SLOT_DEPTH"] * 2, height=p["SLOT_WIDTH"])
-        extrude(amount=p["SLOT_DEPTH"], mode=Mode.SUBTRACT)
+            with BuildLine():
+                # Start at origin
+                l1 = Line((0, 0), (0, p["BASE_DIA"]/2))
+                l2 = Line(l1.end, (p["BASE_LEN"] - p["GROOVE_WIDTH"], p["BASE_DIA"]/2))
+                # SHOULDER GROOVE
+                l3 = Line(l2.end, (l2.end.X, p["BASE_DIA"]/2 - p["GROOVE_DEPTH"]))
+                l4 = Line(l3.end, (l3.end.X + p["GROOVE_WIDTH"], l3.end.Y))
+                l5 = Line(l4.end, (l4.end.X, p["SHAFT_DIA"]/2))
+                # SHAFT WALL
+                l6 = Line(l5.end, (14.2, p["SHAFT_DIA"]/2)) # Height where curve starts
+                # NOSE RADIUS (ROUNDED TOP)
+                l7 = RadiusArc(l6.end, (p["TOTAL_LEN"], 0), radius=p["NOSE_R"])
+                # Close profile
+                Line(l7.end, (0, 0))
+            make_face()
+        revolve(axis=Axis.X)
 
-        with BuildSketch(Plane.XZ):
-            with Locations((0, p["CUP_HEIGHT"] / 2 - 5)):
-                SlotOverall(width=p["SIDE_SLOT_LENGTH"], height=p["SIDE_SLOT_WIDTH"], rotation=90)
-        extrude(amount=p["OUTER_DIA"], both=True, mode=Mode.SUBTRACT)
-
-        with BuildSketch(Plane.YZ):
-            with Locations((0, p["CUP_HEIGHT"] / 2 - 5)):
-                SlotOverall(width=p["SIDE_SLOT_LENGTH"], height=p["SIDE_SLOT_WIDTH"], rotation=90)
-        extrude(amount=p["OUTER_DIA"], both=True, mode=Mode.SUBTRACT)
-
-        # Finishing
-        try:
-            bottom_edges = part.edges().filter_by(GeomType.CIRCLE).group_by(Axis.Z)[0]
-            chamfer(bottom_edges.sort_by(SortBy.RADIUS)[-1], length=1.0)
-        except Exception:
-            pass
+        # 2. INTERNAL BORE
+        with BuildSketch(Plane.XY):
+            # 4.40mm bore half (Y=0 to Y=2.2)
+            Rectangle(p["BORE_DEPTH"], p["BORE_DIA"]/2, align=(Align.MIN, Align.MIN))
+        revolve(axis=Axis.X, mode=Mode.SUBTRACT)
 
     return part.part
 ```
-""".strip()
-
+"""
 
 # ============================================================================
 # REGULAR EXPRESSION PATTERNS
@@ -171,7 +182,6 @@ CODE_BLOCK_RE = re.compile(r"```(?:python|py)?\s*(.*?)```", re.IGNORECASE | re.D
 LIKELY_CODE_START_RE = re.compile(
     r"(?m)^(?:from\s+\w+\s+import\s+|import\s+\w+|PARAMETERS\s*=|def\s+build_model\s*\(|def\s+\w+\s*\(|class\s+\w+\s*\(|@|\w+\s*=)"
 )
-
 
 # ============================================================================
 # LLM CODEGEN SERVICE

@@ -45,8 +45,11 @@ class GeneratedCadArtifacts(StrictModel):
     height: int
     step_file_path: str
     stl_file_path: str
+    dxf_file_path: str | None = None
     step_url: str
     stl_url: str
+    dxf_url: str | None = None
+
     script_url: str
     stdout: str = ""
     stderr: str = ""
@@ -75,8 +78,11 @@ class RenderedCadArtifacts(StrictModel):
     session_id: str
     step_file_path: str
     stl_file_path: str
+    dxf_file_path: str | None = None
     step_url: str
     stl_url: str
+    dxf_url: str | None = None
+
     script_url: str
     stdout: str = ""
     stderr: str = ""
