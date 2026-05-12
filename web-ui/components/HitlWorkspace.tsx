@@ -2,7 +2,7 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, Focus, Trash2, Zap } from 'lucide-react';
+import { AlertTriangle, Target, Trash2, Zap } from 'lucide-react';
 
 import { useCADEngine, type EngineError } from '@/hooks/useCADEngine';
 import { extractOpenScadParameters, injectOpenScadParameters } from '@/lib/openscadParameters';
@@ -224,21 +224,27 @@ export default function HitlWorkspace() {
 				isGenerating={isGenerating}
 				onSubmit={handleGenerate}
 				width={chatWidth}
+				hasScript={!!cadScript}
 			>
 				{/* Selection badge */}
 				{selection && (
-					<div className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 animate-in fade-in zoom-in-95 duration-150">
-						<div className="flex items-center gap-2">
-							<Focus size={12} className="text-amber-400" />
-							<span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-amber-400">
-								Focused: {selection.id}
-							</span>
+					<div className="group flex items-center justify-between rounded-xl border border-amber-500/20 bg-amber-500/[0.03] px-3.5 py-2.5 animate-in fade-in zoom-in-95 duration-300">
+						<div className="flex items-center gap-2.5">
+							<div className="flex size-6 items-center justify-center rounded-lg bg-amber-500/10 border border-amber-500/20 group-hover:scale-110 transition-transform">
+								<Target size={12} className="text-amber-400" />
+							</div>
+							<div>
+								<p className="font-mono text-[10px] font-black uppercase tracking-widest text-amber-400">
+									Target Focused
+								</p>
+								<p className="font-mono text-[8px] text-amber-700 uppercase">Interactive Context Active</p>
+							</div>
 						</div>
 						<button
 							onClick={() => setSelection(null)}
-							className="text-zinc-700 hover:text-red-400 transition-colors"
+							className="rounded-lg p-1.5 text-zinc-600 hover:bg-white/5 hover:text-red-400 transition-all"
 						>
-							<Trash2 size={11} />
+							<Trash2 size={13} />
 						</button>
 					</div>
 				)}
@@ -302,9 +308,11 @@ export default function HitlWorkspace() {
 				onRebuild={rebuild}
 				isCompiling={isRecompiling}
 				hasScript={!!cadScript}
+				selection={selection}
+				onClearSelection={() => setSelection(null)}
 			>
 				{Object.keys(parameters).length > 0 ? (
-					<div className="space-y-5">
+					<div className="space-y-6">
 						{Object.entries(parameters).map(([key, val]) => (
 							<ParameterInput
 								key={key}

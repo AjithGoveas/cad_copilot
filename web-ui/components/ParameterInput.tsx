@@ -1,84 +1,84 @@
 'use client';
 
+import { useMemo } from 'react';
+
 type Props = {
-	label:     string;
-	value:     unknown;
-	isFocused?: boolean;
-	onChange:  (v: unknown) => void;
+    label: string;
+    value: unknown;
+    isFocused?: boolean;
+    onChange: (v: unknown) => void;
 };
 
 export function ParameterInput({ label, value, isFocused, onChange }: Props) {
-	const focusRing = isFocused
-		? 'border-amber-500/60 bg-amber-500/5 shadow-[0_0_12px_rgba(245,158,11,0.1)]'
-		: 'border-white/5 bg-zinc-900/40';
+    const displayLabel = useMemo(() => label.replace(/_/g, ' '), [label]);
 
-	const inputCls = `w-full rounded-lg border ${focusRing} px-3 py-2 font-mono text-[12px] text-zinc-100 placeholder:text-zinc-700 focus:outline-none focus:border-amber-500/50 transition-all`;
+    // For larger inputs (like objects/strings), we stack them. 
+    // For simple inputs (numbers/booleans), we use a clean horizontal row.
+    const isComplex = typeof value !== 'number' && typeof value !== 'boolean' && typeof value !== 'string';
 
-	const displayLabel = label.replace(/_/g, ' ');
+    return (
+        <div className={`group flex py-2.5 transition-colors border-b border-zinc-800/40 last:border-0 ${
+            isComplex ? 'flex-col gap-2' : 'items-center justify-between gap-4'
+        } ${isFocused ? 'bg-amber-500/5 -mx-4 px-4 border-y border-amber-500/20' : ''}`}>
+            
+            <div className="flex items-center gap-2 w-1/3 shrink-0">
+                <label 
+                    className="text-[11px] font-medium tracking-wide text-zinc-400 capitalize transition-colors group-hover:text-zinc-200 truncate"
+                    title={displayLabel}
+                >
+                    {displayLabel}
+                </label>
+                {isFocused && (
+                    <span className="size-1.5 rounded-full bg-amber-500 animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
+                )}
+            </div>
 
-	return (
-		<div className="space-y-2">
-			<label className={`block font-mono text-[9px] font-semibold uppercase tracking-[0.2em] ${isFocused ? 'text-amber-400' : 'text-zinc-600'}`}>
-				{displayLabel}
-			</label>
+            <div className={`flex justify-end ${isComplex ? 'w-full' : 'flex-1'}`}>
+                {typeof value === 'number' && (
+                    <input
+                        type="number"
+                        value={Number.isFinite(value) ? value : 0}
+                        onChange={(e) => onChange(e.target.value === '' ? 0 : Number(e.target.value))}
+                        className="h-7 w-24 rounded border border-zinc-800 bg-zinc-950/50 px-2 text-right font-mono text-xs text-zinc-300 shadow-inner transition-all hover:border-zinc-600 hover:text-zinc-100 focus:border-amber-500/50 focus:bg-zinc-900 focus:text-amber-100 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                    />
+                )}
 
-			{typeof value === 'number' && (
-				<div className="space-y-2">
-					<div className="flex items-center gap-2">
-						<input
-							type="number"
-							value={Number.isFinite(value) ? value : 0}
-							onChange={(e) => onChange(Number(e.target.value))}
-							className={`${inputCls} flex-1`}
-						/>
-						<span className="font-mono text-[9px] font-bold uppercase text-zinc-700">MM</span>
-					</div>
-					<input
-						type="range"
-						min={0}
-						max={Math.max(100, (value as number) * 2)}
-						step={0.1}
-						value={Number.isFinite(value) ? value : 0}
-						onChange={(e) => onChange(Number(e.target.value))}
-						className="h-1 w-full cursor-pointer appearance-none rounded-full bg-zinc-800 accent-amber-500"
-					/>
-				</div>
-			)}
+                {typeof value === 'boolean' && (
+                    <button
+                        onClick={() => onChange(!value)}
+                        className={`relative flex h-5 w-9 items-center rounded-full transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:ring-offset-1 focus:ring-offset-zinc-950 ${
+                            value ? 'bg-amber-500' : 'bg-zinc-700 hover:bg-zinc-600'
+                        }`}
+                        role="switch"
+                        aria-checked={value}
+                    >
+                        <span className={`inline-block size-3.5 transform rounded-full bg-white shadow-sm transition-transform duration-200 ease-in-out ${
+                            value ? 'translate-x-4.5' : 'translate-x-1'
+                        }`} />
+                    </button>
+                )}
 
-			{typeof value === 'boolean' && (
-				<label className="flex cursor-pointer items-center gap-3">
-					<div className="relative flex size-5 items-center justify-center">
-						<input
-							type="checkbox"
-							checked={value}
-							onChange={(e) => onChange(e.target.checked)}
-							className="peer size-full cursor-pointer appearance-none rounded border border-zinc-700 bg-zinc-900 transition checked:bg-amber-500 checked:border-amber-400"
-						/>
-						<span className="pointer-events-none absolute text-[10px] font-black text-black opacity-0 scale-0 peer-checked:opacity-100 peer-checked:scale-100 transition-all">✓</span>
-					</div>
-					<span className="font-mono text-[11px] text-zinc-400">Enabled</span>
-				</label>
-			)}
+                {typeof value === 'string' && (
+                    <input
+                        type="text"
+                        value={value}
+                        onChange={(e) => onChange(e.target.value)}
+                        className="h-7 w-full rounded border border-zinc-800 bg-zinc-950/50 px-2.5 text-xs text-zinc-300 shadow-inner transition-all hover:border-zinc-600 hover:text-zinc-100 focus:border-amber-500/50 focus:bg-zinc-900 focus:text-amber-100 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                    />
+                )}
 
-			{typeof value === 'string' && (
-				<input
-					type="text"
-					value={value}
-					onChange={(e) => onChange(e.target.value)}
-					className={inputCls}
-				/>
-			)}
-
-			{typeof value !== 'number' && typeof value !== 'boolean' && typeof value !== 'string' && (
-				<textarea
-					value={JSON.stringify(value, null, 2)}
-					rows={3}
-					onChange={(e) => {
-						try { onChange(JSON.parse(e.target.value)); } catch { /* partial edit */ }
-					}}
-					className={`${inputCls} resize-none`}
-				/>
-			)}
-		</div>
-	);
+                {isComplex && (
+                    <textarea
+                        value={JSON.stringify(value, null, 2)}
+                        rows={5}
+                        onChange={(e) => {
+                            try { onChange(JSON.parse(e.target.value)); } catch { /* Ignore mid-typing errors */ }
+                        }}
+                        className="w-full resize-y rounded border border-zinc-800 bg-zinc-950/80 p-2.5 font-mono text-[11px] leading-relaxed text-zinc-400 shadow-inner transition-all hover:border-zinc-700 hover:text-zinc-300 focus:border-amber-500/50 focus:bg-zinc-900 focus:text-amber-100 focus:outline-none focus:ring-1 focus:ring-amber-500/50 custom-scrollbar"
+                        spellCheck={false}
+                    />
+                )}
+            </div>
+        </div>
+    );
 }

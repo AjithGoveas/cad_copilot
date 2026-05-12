@@ -1,7 +1,7 @@
 'use client';
 
 import { type FormEvent, useEffect, useRef } from 'react';
-import { SendHorizontal, Upload, X, Loader2 } from 'lucide-react';
+import { SendHorizontal, Upload, X, Loader2, Sparkles, Binary } from 'lucide-react';
 import { ChatBubble } from './ChatBubble';
 
 type Message = { id: string; role: 'user' | 'assistant' | 'system'; content: string };
@@ -18,6 +18,7 @@ type Props = {
 	isGenerating:   boolean;
 	onSubmit:       (e: FormEvent) => void;
 	width:          number;
+	hasScript:      boolean;
 	children?:      React.ReactNode;
 };
 
@@ -25,7 +26,7 @@ export function ChatPanel({
 	messages, prompt, setPrompt,
 	selectedModel, setSelectedModel, modelOptions,
 	selectedFile, onFileChange,
-	isGenerating, onSubmit, width, children,
+	isGenerating, onSubmit, width, hasScript, children,
 }: Props) {
 	const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -33,36 +34,40 @@ export function ChatPanel({
 		bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
 	}, [messages]);
 
-	const canSubmit = !isGenerating && prompt.trim().length > 0 && !!selectedFile;
+	const canSubmit = !isGenerating && prompt.trim().length > 0 && (!!selectedFile || hasScript);
 
 	return (
 		<section
-			className="flex shrink-0 flex-col border-r border-white/5 bg-[#050505] dot-grid"
+			className="flex shrink-0 flex-col border-r border-white/5 bg-[#050505] transition-all duration-500 ease-[cubic-bezier(0.2,1,0.2,1)] dot-grid"
 			style={{ width }}
 		>
 			{/* ── Header ─────────────────────────────────────────────────── */}
-			<header className="flex h-16 shrink-0 items-center justify-between border-b border-white/5 px-5 glass">
+			<header className="flex h-16 shrink-0 items-center justify-between border-b border-white/5 px-5 bg-black/40 backdrop-blur-md">
 				<div className="flex items-center gap-3">
-					<div className="flex size-8 items-center justify-center rounded-xl bg-amber-500 shadow-[0_0_16px_rgba(245,158,11,0.3)]">
-						<span className="font-mono text-sm font-black text-black">C</span>
+					<div className="group relative flex size-9 items-center justify-center rounded-xl bg-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.2)] transition-all hover:scale-105 active:scale-95">
+						<div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+						<Sparkles size={16} className="text-black" fill="currentColor" />
 					</div>
 					<div>
-						<p className="font-sans text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-100">
+						<p className="font-sans text-[11px] font-black uppercase tracking-[0.25em] text-zinc-100">
 							CAD Copilot
 						</p>
-						<p className="font-mono text-[8px] uppercase tracking-widest text-amber-500/50">
-							v2 · neural pipeline
+						<p className="font-mono text-[8px] uppercase tracking-widest text-amber-500/60">
+							Engine v2.5 · Active
 						</p>
 					</div>
 				</div>
 
 				{/* Model selector */}
-				<div className="flex items-center gap-2 rounded-full border border-white/5 bg-white/[0.03] px-3 py-1.5">
-					<span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+				<div className="group flex items-center gap-2 rounded-xl border border-white/[0.03] bg-zinc-900/40 px-3 py-1.5 hover:border-white/10 transition-all">
+					<div className="relative flex size-2 items-center justify-center">
+						<span className="absolute size-full rounded-full bg-emerald-500/40 animate-ping" />
+						<span className="relative size-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+					</div>
 					<select
 						value={selectedModel}
 						onChange={(e) => setSelectedModel(e.target.value)}
-						className="bg-transparent font-mono text-[9px] uppercase tracking-wider text-zinc-400 focus:outline-none cursor-pointer"
+						className="bg-transparent font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500 focus:outline-none cursor-pointer group-hover:text-zinc-300 transition-colors"
 					>
 						{modelOptions.map((o) => (
 							<option key={o.value} value={o.value} className="bg-zinc-900">
@@ -74,7 +79,7 @@ export function ChatPanel({
 			</header>
 
 			{/* ── Messages ────────────────────────────────────────────────── */}
-			<div className="flex-1 space-y-6 overflow-y-auto px-5 py-6">
+			<div className="flex-1 space-y-8 overflow-y-auto px-6 py-8 custom-scrollbar">
 				{messages.map((m) => (
 					<ChatBubble key={m.id} {...m} />
 				))}
@@ -82,16 +87,26 @@ export function ChatPanel({
 			</div>
 
 			{/* ── Bottom: context slot + input ────────────────────────────── */}
-			<div className="shrink-0 border-t border-white/5 p-4 space-y-3">
+			<div className="shrink-0 border-t border-white/5 p-6 space-y-4 bg-black/20">
 				{children}
 
 				{/* File badge */}
 				{selectedFile && (
-					<div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-						<Upload size={11} className="shrink-0 text-amber-500" />
-						<span className="flex-1 truncate font-mono text-[10px] text-amber-400">{selectedFile.name}</span>
-						<button onClick={() => onFileChange(null)} className="text-zinc-600 hover:text-zinc-200 transition-colors">
-							<X size={12} />
+					<div className="flex items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.03] px-3.5 py-2.5 animate-in slide-in-from-bottom-2 duration-300">
+						<div className="flex size-6 items-center justify-center rounded-lg bg-amber-500/10 border border-amber-500/20">
+							<Binary size={12} className="text-amber-500" />
+						</div>
+						<div className="flex-1 min-w-0">
+							<p className="truncate font-mono text-[10px] font-bold text-amber-400/90 uppercase tracking-tight">
+								{selectedFile.name}
+							</p>
+							<p className="font-mono text-[8px] text-amber-700 uppercase">Context Active</p>
+						</div>
+						<button 
+							onClick={() => onFileChange(null)} 
+							className="rounded-lg p-1 text-zinc-600 hover:bg-white/5 hover:text-zinc-200 transition-all"
+						>
+							<X size={14} />
 						</button>
 					</div>
 				)}
@@ -99,20 +114,21 @@ export function ChatPanel({
 				{/* Compose form */}
 				<form
 					onSubmit={onSubmit}
-					className="rounded-2xl border border-white/5 bg-zinc-900/50 focus-within:border-amber-500/30 transition-colors overflow-hidden"
+					className="group relative rounded-2xl border border-white/[0.05] bg-zinc-900/30 transition-all duration-300 focus-within:border-amber-500/40 focus-within:bg-zinc-900/50"
 				>
 					<textarea
 						value={prompt}
 						onChange={(e) => setPrompt(e.target.value)}
 						onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSubmit(e as any); }}
 						rows={3}
-						placeholder="Describe the part you want to generate…"
+						placeholder="Describe geometry modifications or generate new parts…"
 						className="w-full resize-none bg-transparent px-4 pt-4 pb-2 font-sans text-sm text-zinc-100 placeholder:text-zinc-700 focus:outline-none"
 					/>
 
-					<div className="flex items-center justify-between border-t border-white/5 bg-white/[0.02] px-4 py-2.5">
-						<label className="cursor-pointer text-zinc-600 hover:text-amber-400 transition-colors">
-							<Upload size={15} />
+					<div className="flex items-center justify-between border-t border-white/[0.03] px-4 py-3">
+						<label className="group/upload relative flex cursor-pointer items-center gap-2 rounded-xl px-2 py-1 transition-all hover:bg-white/5">
+							<Upload size={14} className="text-zinc-600 group-hover/upload:text-amber-400 transition-colors" />
+							<span className="font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-700 group-hover/upload:text-zinc-400">Context</span>
 							<input
 								type="file"
 								accept="image/*,.pdf"
@@ -124,13 +140,13 @@ export function ChatPanel({
 						<button
 							type="submit"
 							disabled={!canSubmit}
-							className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-black transition-all hover:bg-amber-400 disabled:bg-zinc-800 disabled:text-zinc-600 active:scale-95"
+							className="group/btn flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2 font-mono text-[10px] font-black uppercase tracking-[0.15em] text-black shadow-lg shadow-amber-500/10 transition-all hover:bg-amber-400 hover:shadow-amber-500/20 disabled:cursor-not-allowed disabled:bg-zinc-900 disabled:text-zinc-700 disabled:shadow-none active:scale-95"
 						>
 							{isGenerating
-								? <Loader2 size={12} className="animate-spin" />
-								: <SendHorizontal size={12} />
+								? <Loader2 size={13} className="animate-spin" />
+								: <SendHorizontal size={13} className="transition-transform group-hover/btn:translate-x-0.5" />
 							}
-							{isGenerating ? 'Processing…' : 'Generate'}
+							{isGenerating ? 'Synthesising…' : 'Execute'}
 						</button>
 					</div>
 				</form>

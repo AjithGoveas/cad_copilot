@@ -78,7 +78,7 @@ Every subtractive volume (hole, slot, cutout) inside a `difference()` block MUST
 - **Resolution**: Global `$fn = 32;` is the hard limit for WASM stability.
 
 ## MANDATORY FILE STRUCTURE
-1. `$fn = 32;`
+1. `$fn = 250;`
 2. `/* PARAMETERS_JSON { ... } */`
 3. `// PARAMETERS_START` ... `// PARAMETERS_END` (Include `eps = 0.02;`)
 4. One `module` per logical feature with `// @id: name` tags.
@@ -91,7 +91,7 @@ Every subtractive volume (hole, slot, cutout) inside a `difference()` block MUST
 """
 
 CANONICAL_EXAMPLE = """
-$fn = 32;
+$fn = 250;
 
 /* PARAMETERS_JSON
 {
