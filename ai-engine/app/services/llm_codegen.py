@@ -1,490 +1,290 @@
+"""
+CAD Copilot V2 - LLM Code Generation Service.
+
+Two-stage pipeline:
+  Stage 1 (Audit)   - Extract a feature-map JSON from the blueprint image/PDF.
+  Stage 2 (Codegen) - Synthesize a BOSL2 OpenSCAD script from the feature-map.
+"""
+from __future__ import annotations
+
 import json
-import logging
 import os
 import re
 import time
-import uuid
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Callable
 
 try:
     from google import genai
     from google.genai import types
-    GENAI_AVAILABLE = True
 except ImportError:
-    genai = None
-    types = None
-    GENAI_AVAILABLE = False
+    genai = None  # type: ignore
+    types = None  # type: ignore
 
 
-logger = logging.getLogger(__name__)
+# -- System Instructions -------------------------------------------------------
 
-# ============================================================================
-# SYSTEM PROMPTS & ENGINEERING CONTRACTS
-# ============================================================================
+AUDIT_INSTRUCTION = """
+# ROLE: Senior CAD Auditor & Geometric Topologist
+Analyze the provided technical drawing and extract a structured feature-map.
 
-CORE_INSTRUCTION = """
-# CAD COPILOT V7: Principal Engineering Protocol
-You are a Principal CAD Software Engineer. Your mission is 100% feature-perfect, mathematically robust `build123d` scripts.
+## OBJECTIVES:
+1. Identify all primary and secondary features.
+2. Extract exact dimensions and spatial relationships (offsets, patterns).
+3. Determine topological connectivity (which holes belong to which face).
 
-## MANDATORY CONTRACT
-1. **PARAMETERS**: Extract EVERY dimension, tolerance, and quantity into `PARAMETERS = { ... }`.
-2. **FUNCTION**: `def build_model(params: dict) -> Part:` is the ONLY entry point.
-3. **FEATURE PARITY**: Every dimension extracted from the blueprint MUST map to a feature.
-4. **NO YAP**: Output ONLY the python code block. No explanations or notes.
-
-## DATA RULES (NO HALLUCINATIONS)
-- Units are **millimeters**. Use floats for all dimensional parameters.
-- Never invent dimensions. If a value is not shown, keep the feature simple and avoid guessing.
-- Merge parameters at the top of `build_model`: `params = {**PARAMETERS, **params}`.
-- Keep parameters as **diameters**; use `d / 2` only at the point of use.
-
-## GEOMETRY RULES (ROBUSTNESS)
-- Identify axisymmetry (centerline + circular view). If axisymmetric, create a full closed profile on `Plane.XZ` and `revolve(axis=Axis.Z)`.
-- For milled parts, sketch on planar faces using `BuildSketch` and `extrude()`.
-- Use arcs/lines; avoid splines unless explicitly dimensioned.
-- For counterbores, subtract the **largest diameter first**, then inner bores on the same axis.
-- For tapped holes, use **minor drill diameter**; do not model helical threads unless the profile is explicitly defined.
-- For hex or flats, use `RegularPolygon` or a 6-sided `Polygon` aligned to the axes.
-- Always set `mode=Mode.SUBTRACT` for cut features and use `both=True` for through cuts.
-
-## CRITICAL OCP ERROR PREVENTION (ZERO-FAIL GEOMETRY)
-- **Face Creation**: `Polyline(*pts, close=True)` MUST be indented inside a `with BuildLine():` context. Call `make_face()` immediately after.
-- **Non-Intersection Rule**: Trace coordinates in a single continuous path (CW or CCW). NEVER cross or re-trace an existing segment.
-- **Hollow Axisymmetry**: For tubes, sleeves, and core drills, draw the full closed wall thickness profile and revolve.
-- **Topological Filtering**: Wrap chamfers/fillets in `try...except: pass`. Filter by geometry and check non-empty selections.
-  ```python
-  try:
-      edges = part.edges().filter_by(GeomType.CIRCLE).group_by(Axis.Z)[0]
-      chamfer(edges.sort_by(SortBy.RADIUS)[-1], length=1.0)
-  except Exception:
-      pass
-  ```
-
-## PHASE-BASED CONSTRUCTION (STRICT ORDER)
-1. `# Main Body`: Primary envelope (revolve/extrude).
-2. `# Internal Cavities`: Counterbores, stepped bores, central pockets.
-3. `# Hole Patterns`: PCDs, grids, slots, keyways (Mode.SUBTRACT).
-4. `# Finishing`: Fillets and chamfers inside a `try...except` block.
+## OUTPUT: JSON only - no prose, no markdown
+{
+    "units": "mm|in",
+    "envelope": {"x": 0, "y": 0, "z": 0},
+    "topology_hints": ["e.g. cylindrical body with radial holes"],
+    "features": [
+        {
+            "id": "unique_snake_case_id",
+            "type": "block|cylinder|hole|slot|pocket|thread|chamfer|fillet",
+            "dims": {"key": value},
+            "location": {"x": 0, "y": 0, "z": 0},
+            "is_subtractive": true,
+            "parent_id": "optional_id_of_containing_feature"
+        }
+    ],
+    "patterns": [
+        {"type": "radial|linear", "feature_ids": [], "count": 0, "spacing": 0}
+    ],
+    "notes": []
+}
 """.strip()
 
 
-SAFETY_INSTRUCTION = """
-# TOPOLOGICAL SAFETY
-- DIMS: Use `max(0.01, v)` for thin walls.
-- BOOLEANS: Use (+, -, &) operators. Avoid `BuildPart` context unless required.
-- TYPE: NEVER pass raw tuples where `Location` or `Vector` is expected.
-""".strip()
+SYSTEM_INSTRUCTION = """
+# ROLE: Expert OpenSCAD & Computational Geometry Engineer
+Transform a JSON feature-map into a modular, parametric OpenSCAD script for high-performance WASM rendering.
 
+# ==============================================================================
+# RULE #1 - THE EPSILON PROTOCOL (CRITICAL)
+# ==============================================================================
+To prevent CGAL kernel crashes (Pointer 1168136) caused by zero-thickness faces:
+Every subtractive volume (hole, slot, cutout) inside a `difference()` block MUST:
+  1. Be extended by `eps` in height/depth → `h = dimension + eps`
+  2. Be shifted by `eps/2` against the cut direction → `translate([0, 0, -eps/2])`
 
-SUMMARISATION_INSTRUCTION = """
-## ARCHITECTURAL AUDIT - INDUSTRIAL PRECISION PARTS
-Analyze the blueprint as a Lead Mechanical Engineer for precision manufacturing.
+# ==============================================================================
 
-1. **Section-First Synthesis**: Use section views as ground truth for internal cavities and wall thickness.
-2. **Axisymmetry Check**: Determine if the part is revolved or prismatic/milled.
-3. **Datum & Origin**: Identify stable datums and a consistent origin.
-4. **Internal Topology Mapping**: Map nested bores, stepped diameters, counterbores, and shoulders.
-5. **Hole Patterns**: Extract PCDs/grids, hole counts, and minor diameters for tapped holes.
-6. **Feature Geometry**: Extract slots, relief grooves, fillets, chamfers, and angles.
-7. **Annotation Audit**: Capture EVERY numeric dimension and tolerance.
+## ENGINEERING GUIDELINES
+- **Stateless Vanilla**: Use standard `cube()`, `cylinder()`, `sphere()`. NO LIBRARIES.
+- **Parametric Consistency**: Declare all dimensions in the PARAMETERS block. Never use magic numbers in modules.
+- **Manifold Enforcement**: Ensure all `union()` and `difference()` operations result in closed manifolds.
+- **Positioning**: Use `translate()` and `rotate()`. Prefer `center=true` for alignment.
+- **Resolution**: Global `$fn = 32;` is the hard limit for WASM stability.
 
-RULE: Every single number and feature annotation must map to a Parameter.
-RULE: Do not invent values. If a value is ambiguous, flag it as "ambiguous" in the summary.
-Return ONLY the comprehensive feature summary with clear parameter names and values. No code.
-""".strip()
+## MANDATORY FILE STRUCTURE
+1. `$fn = 32;`
+2. `/* PARAMETERS_JSON { ... } */`
+3. `// PARAMETERS_START` ... `// PARAMETERS_END` (Include `eps = 0.02;`)
+4. One `module` per logical feature with `// @id: name` tags.
+5. Final top-level assembly call.
 
+## PERFORMANCE CONSTRAINTS
+- No `minkowski()` - causes heap overflow.
+- Max 8 children per `difference()`.
+- Output ONLY valid OpenSCAD code.
+"""
 
-FEW_SHOT_EXAMPLE = """
-### REFERENCE EXAMPLE (DO NOT COPY VALUES)
-```python
-from build123d import *
+CANONICAL_EXAMPLE = """
+$fn = 32;
 
-PARAMETERS = {
-    "OUTER_DIA": 83.820,
-    "TOTAL_LENGTH": 160.0,
-    "SLOT_WIDTH": 6.35,
-    "SLOT_DEPTH": 8.2,
-    "CUP_HEIGHT": 80.0,
-    "WALL_THICKNESS": 4.0,
-    "SHANK_DIA": 24.60,
-    "BASE_THICKNESS": 12.0,
-    "SIDE_SLOT_LENGTH": 45.0,
-    "SIDE_SLOT_WIDTH": 8.0,
+/* PARAMETERS_JSON
+{
+  "shank_dia": 19.05,
+  "shank_length": 35.0,
+  "body_dia": 80.0,
+  "body_length": 50.0,
+  "wall_thickness": 3.0,
+  "num_slots": 3
+}
+*/
+
+// PARAMETERS_START
+shank_dia = 19.05;
+shank_length = 35.0;
+body_dia = 80.0;
+body_length = 50.0;
+wall_thickness = 3.0;
+num_slots = 3;
+eps = 0.02;  // CGAL crash prevention
+// PARAMETERS_END
+
+module core_drill() {
+    difference() {
+        // @id: main_body
+        union() {
+            cylinder(d=shank_dia, h=shank_length);
+            translate([0, 0, shank_length])
+                cylinder(d=body_dia, h=body_length);
+        }
+
+        // @id: inner_hollow - Epsilon Applied (+eps height, -eps/2 shift)
+        translate([0, 0, shank_length + wall_thickness])
+            cylinder(d=body_dia - 2*wall_thickness, h=body_length + eps);
+
+        // @id: chip_slots
+        for (a = [0 : 360/num_slots : 359]) {
+            rotate([0, 0, a])
+            translate([body_dia/2, 0, shank_length + body_length/2])
+            cube([20, 10, body_length + eps], center=true);
+        }
+    }
 }
 
-def build_model(params: dict) -> Part:
-    p = {**PARAMETERS, **params}
-
-    with BuildPart() as part:
-        # Main Body: Revolve closed profile
-        with BuildSketch(Plane.XZ):
-            with BuildLine():
-                pts = [
-                    (p["OUTER_DIA"] / 2 - p["WALL_THICKNESS"], 0),
-                    (p["OUTER_DIA"] / 2, 0),
-                    (p["OUTER_DIA"] / 2, p["CUP_HEIGHT"]),
-                    (p["SHANK_DIA"] / 2, p["CUP_HEIGHT"] + 15),
-                    (p["SHANK_DIA"] / 2, p["TOTAL_LENGTH"]),
-                    (0, p["TOTAL_LENGTH"]),
-                    (0, p["CUP_HEIGHT"] - p["BASE_THICKNESS"]),
-                    (p["OUTER_DIA"] / 2 - p["WALL_THICKNESS"], p["CUP_HEIGHT"] - p["BASE_THICKNESS"]),
-                ]
-                Polyline(*pts, close=True)
-            make_face()
-        revolve(axis=Axis.Z)
-
-        # Slots: subtract sketches
-        with BuildSketch(Plane.XY):
-            with PolarLocations(radius=p["OUTER_DIA"] / 2, count=4):
-                Rectangle(width=p["SLOT_DEPTH"] * 2, height=p["SLOT_WIDTH"])
-        extrude(amount=p["SLOT_DEPTH"], mode=Mode.SUBTRACT)
-
-        with BuildSketch(Plane.XZ):
-            with Locations((0, p["CUP_HEIGHT"] / 2 - 5)):
-                SlotOverall(width=p["SIDE_SLOT_LENGTH"], height=p["SIDE_SLOT_WIDTH"], rotation=90)
-        extrude(amount=p["OUTER_DIA"], both=True, mode=Mode.SUBTRACT)
-
-        with BuildSketch(Plane.YZ):
-            with Locations((0, p["CUP_HEIGHT"] / 2 - 5)):
-                SlotOverall(width=p["SIDE_SLOT_LENGTH"], height=p["SIDE_SLOT_WIDTH"], rotation=90)
-        extrude(amount=p["OUTER_DIA"], both=True, mode=Mode.SUBTRACT)
-
-        # Finishing
-        try:
-            bottom_edges = part.edges().filter_by(GeomType.CIRCLE).group_by(Axis.Z)[0]
-            chamfer(bottom_edges.sort_by(SortBy.RADIUS)[-1], length=1.0)
-        except Exception:
-            pass
-
-    return part.part
-```
+// @id: part_root
+core_drill();
 """.strip()
 
 
-# ============================================================================
-# REGULAR EXPRESSION PATTERNS
-# ============================================================================
+# -- Regex ---------------------------------------------------------------------
 
-CODE_BLOCK_RE = re.compile(r"```(?:python|py)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
-LIKELY_CODE_START_RE = re.compile(
-    r"(?m)^(?:from\s+\w+\s+import\s+|import\s+\w+|PARAMETERS\s*=|def\s+build_model\s*\(|def\s+\w+\s*\(|class\s+\w+\s*\(|@|\w+\s*=)"
+_CODE_FENCE_RE = re.compile(r"```(?:scad|openscad|text)?\s*(.*?)```", re.I | re.S)
+_CODE_START_RE = re.compile(
+    r"(?m)^(?:include\s*<|/\*\s*PARAMETERS_JSON|//\s*PARAMETERS_START|module\s+\w+\s*\(|\$fn\s*=)"
 )
 
 
-# ============================================================================
-# LLM CODEGEN SERVICE
-# ============================================================================
+# -- Service -------------------------------------------------------------------
 
 class LLMCodegenService:
-    """AI-powered CAD script generation service."""
+    """Stateless AI orchestration service wrapping the Gemini API."""
 
-    def __init__(self, model: Optional[str] = None) -> None:
-        if not GENAI_AVAILABLE or genai is None or types is None:
-            raise RuntimeError("google-genai is not installed. Check dependencies.")
+    MAX_RETRIES = 3
 
-        self._load_env_file()
-        api_key = os.getenv("GOOGLE_API_KEY")
+    def __init__(self, model: str | None = None) -> None:
+        if genai is None:
+            raise RuntimeError("google-genai SDK not installed.")
+
+        self._load_env()
+        api_key = os.getenv("GOOGLE_API_KEY", "")
         if not api_key:
-            raise RuntimeError("GOOGLE_API_KEY is not set.")
+            raise RuntimeError("GOOGLE_API_KEY environment variable not set.")
 
         self.client = genai.Client(api_key=api_key)
-        self.model = model or os.getenv("GENAI_MODEL", "gemini-3.1-flash-lite")
-        self.summary_model = os.getenv("GENAI_SUMMARY_MODEL", self.model)
+        self.model  = model or os.getenv("GENAI_MODEL", "gemini-3.1-flash-lite-preview")
 
-        self.max_retries = max(1, int(os.getenv("GENAI_MAX_RETRIES", "5")))
-        self.max_prompt_tokens = int(os.getenv("MAX_PROMPT_TOKENS", "12000"))
-        self.max_output_tokens = int(os.getenv("MAX_OUTPUT_TOKENS", "2048"))
-        self.include_safety = os.getenv("GENAI_SAFETY", "0") == "1"
-        self.include_example = os.getenv("GENAI_INCLUDE_EXAMPLE", "1") == "1"
-
-        self.summary_max_retries = max(1, int(os.getenv("GENAI_SUMMARY_MAX_RETRIES", "3")))
-        self.summary_retry_base_delay_seconds = float(
-            os.getenv("GENAI_SUMMARY_RETRY_BASE_DELAY", "1.5")
-        )
-        self.retry_base_delay_seconds = float(os.getenv("GENAI_RETRY_BASE_DELAY", "1.5"))
-        self.max_retry_delay_seconds = float(os.getenv("GENAI_MAX_RETRY_DELAY", "60"))
+    # -- Private helpers -------------------------------------------------------
 
     @staticmethod
-    def _load_env_file() -> None:
+    def _load_env() -> None:
         try:
-            import importlib
-
-            dotenv = importlib.import_module("dotenv")
-            project_root = Path(__file__).resolve().parents[2]
-            dotenv.load_dotenv(project_root / ".env")
+            from dotenv import load_dotenv
+            load_dotenv(Path(__file__).resolve().parents[2] / ".env")
         except Exception:
-            return
+            pass
 
-    def _prepare_full_instruction(self) -> str:
-        instructions = [CORE_INSTRUCTION]
-        if self.include_safety:
-            instructions.append(SAFETY_INSTRUCTION)
-        if self.include_example:
-            instructions.append(FEW_SHOT_EXAMPLE)
-        return "\n\n".join(instructions)
-
-    def summarise_blueprint(self, image_bytes: bytes, image_mime_type: str) -> str:
-        if types is None:
-            raise RuntimeError("google-genai is not installed. Check dependencies.")
-
-        parts = [
-            types.Part.from_text(text=SUMMARISATION_INSTRUCTION),
-            types.Part.from_bytes(data=image_bytes, mime_type=image_mime_type),
-        ]
-
-        last_exception: Optional[Exception] = None
-        for attempt in range(1, self.summary_max_retries + 1):
+    def _call_with_retry(self, fn: Callable[[], Any], label: str) -> str:
+        """Execute `fn()` up to MAX_RETRIES times with exponential back-off."""
+        last_exc: Exception | None = None
+        for attempt in range(self.MAX_RETRIES):
             try:
-                response = self.client.models.generate_content(
-                    model=self.summary_model,
-                    contents=parts,
-                    config=types.GenerateContentConfig(
-                        temperature=0.0,
-                        max_output_tokens=1024,
-                    ),
-                )
+                response = fn()
                 return response.text or ""
             except Exception as exc:
-                last_exception = exc
-                if attempt >= self.summary_max_retries or not self._is_retryable_error(exc):
-                    break
-                backoff_delay = self.summary_retry_base_delay_seconds * (2 ** (attempt - 1))
-                delay = min(backoff_delay, self.max_retry_delay_seconds)
-                logger.info(f"Retrying summary call in {delay}s due to: {exc}")
-                time.sleep(delay)
-
-        logger.warning(
-            f"Summarisation stage failed, proceeding without summary: {last_exception}"
+                last_exc = exc
+                time.sleep(2 ** attempt)
+        raise RuntimeError(
+            f"[{label}] failed after {self.MAX_RETRIES} attempts: {last_exc}"
         )
-        return ""
-
-    def stream_build123d_script(
-        self,
-        prompt: str,
-        image_bytes: bytes,
-        image_mime_type: str,
-        summary: Optional[str] = None,
-    ) -> Iterator[str]:
-        if types is None:
-            raise RuntimeError("google-genai is not installed. Check dependencies.")
-
-        full_system_instruction = self._prepare_full_instruction()
-        context_block = f"\n\n### BLUEPRINT ANALYSIS SUMMARY\n{summary}\n" if summary else ""
-        user_prompt = f"CAD request: {prompt.strip()}{context_block}"
-
-        try:
-            token_count_response = self.client.models.count_tokens(
-                model=self.model,
-                contents=[
-                    full_system_instruction,
-                    user_prompt,
-                    types.Part.from_bytes(data=image_bytes, mime_type=image_mime_type),
-                ],
-            )
-            total_tokens = token_count_response.total_tokens
-            if total_tokens is None:
-                total_tokens = 0
-            if total_tokens > self.max_prompt_tokens:
-                raise RuntimeError(
-                    f"Prompt is too large ({total_tokens} tokens). Max budget is {self.max_prompt_tokens}."
-                )
-        except Exception as exc:
-            if "Prompt is too large" in str(exc):
-                raise
-
-        content = types.Content(
-            role="user",
-            parts=[
-                types.Part.from_text(text=full_system_instruction),
-                types.Part.from_text(text=user_prompt),
-                types.Part.from_bytes(data=image_bytes, mime_type=image_mime_type),
-            ],
-        )
-
-        config = types.GenerateContentConfig(
-            candidate_count=1,
-            max_output_tokens=self.max_output_tokens,
-            temperature=0.0,
-            stop_sequences=["```"] if self.max_output_tokens < 1000 else None,
-        )
-
-        seen_errors: list[str] = []
-        last_exception: Optional[Exception] = None
-        raw_output_chunks: list[str] = []
-
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                yielded_any = False
-                stream = self.client.models.generate_content_stream(
-                    model=self.model,
-                    contents=[content],
-                    config=config,
-                )
-
-                for chunk in stream:
-                    text = getattr(chunk, "text", "")
-                    if text:
-                        yielded_any = True
-                        raw_output_chunks.append(text)
-                        yield text
-
-                if not yielded_any:
-                    raise RuntimeError("Empty response from generate_content_stream")
-
-                self._log_diagnostic(prompt, "".join(raw_output_chunks), None)
-                return
-            except Exception as exc:
-                last_exception = exc
-                error_text = str(exc)
-                retry_after_seconds = self._extract_retry_delay_seconds(error_text)
-                seen_errors.append(error_text)
-
-                if attempt >= self.max_retries or not self._is_retryable_error(exc):
-                    break
-
-                backoff_delay = self.retry_base_delay_seconds * (2 ** (attempt - 1))
-                delay = max(backoff_delay, retry_after_seconds or 0.0)
-                delay = min(delay, self.max_retry_delay_seconds)
-                time.sleep(delay)
-
-        self._log_diagnostic(
-            prompt,
-            "".join(raw_output_chunks),
-            str(last_exception) if last_exception else "Max retries exceeded",
-        )
-
-        joined_errors = "\n".join(seen_errors)
-        if self._is_daily_quota_error(joined_errors):
-            raise RuntimeError(
-                "Model daily quota reached. Try again after quota reset or switch models."
-            )
-
-        if last_exception and self._is_quota_error(last_exception):
-            raise RuntimeError(
-                "Model quota is temporarily exhausted. Please retry in a few minutes."
-            )
-
-        if last_exception and self._is_transient_error(last_exception):
-            raise RuntimeError(
-                "Model is temporarily unavailable. Please retry shortly."
-            )
-
-        raise RuntimeError("Unable to generate CAD script right now. Please retry.")
-
-    def _log_diagnostic(self, prompt: str, raw_output: str, error: Optional[str]) -> None:
-        try:
-            log_dir = Path(__file__).resolve().parents[2] / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_id = uuid.uuid4().hex[:8]
-            log_file = log_dir / f"cad_gen_{timestamp}_{log_id}.json"
-
-            log_data = {
-                "timestamp": datetime.now().isoformat(),
-                "model": self.model,
-                "prompt": prompt,
-                "raw_output": raw_output,
-                "cleaned_output": self.normalize_script(raw_output) if raw_output else "",
-                "error": error,
-            }
-
-            with open(log_file, "w", encoding="utf-8") as f:
-                json.dump(log_data, f, indent=2)
-        except Exception as exc:
-            logger.error(f"Failed to write diagnostic log: {exc}")
 
     @staticmethod
-    def _is_retryable_error(exc: Exception) -> bool:
-        return LLMCodegenService._is_transient_error(exc) or LLMCodegenService._is_quota_error(exc)
-
-    @staticmethod
-    def _is_transient_error(exc: Exception) -> bool:
-        message = str(exc).lower()
-        transient_markers = (
-            "503",
-            "unavailable",
-            "high demand",
-            "deadline_exceeded",
-            "timed out",
-            "temporar",
-            "try again later",
-        )
-
-        if any(marker in message for marker in transient_markers):
-            return True
-
-        status_code = getattr(exc, "status_code", None)
-        if status_code in {408, 429, 500, 502, 503, 504}:
-            return True
-
-        return False
-
-    @staticmethod
-    def _is_quota_error(exc: Exception) -> bool:
-        message = str(exc).lower()
-        quota_markers = (
-            "429",
-            "resource_exhausted",
-            "quota exceeded",
-            "rate limit",
-            "free_tier_requests",
-        )
-        return any(marker in message for marker in quota_markers)
-
-    @staticmethod
-    def _is_daily_quota_error(message: str) -> bool:
-        normalized = message.lower()
-        daily_markers = (
-            "generaterequestsperday",
-            "perday",
-            "per day",
-            "requests per day",
-        )
-        return any(marker in normalized for marker in daily_markers)
-
-    @staticmethod
-    def _extract_retry_delay_seconds(message: str) -> Optional[float]:
-        patterns = (
-            r"retry in\s+([0-9]+(?:\.[0-9]+)?)s",
-            r"'retryDelay'\s*:\s*'([0-9]+(?:\.[0-9]+)?)s'",
-            r'"retryDelay"\s*:\s*"([0-9]+(?:\.[0-9]+)?)s"',
-        )
-
-        for pattern in patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                try:
-                    return float(match.group(1))
-                except ValueError:
-                    return None
-
-        return None
-
-    @staticmethod
-    def normalize_script(script: str) -> str:
-        if not script:
+    def _normalize_script(raw: str) -> str:
+        """Strip markdown fences and leading prose from a raw LLM response."""
+        if not raw:
             return ""
 
-        block_matches = CODE_BLOCK_RE.findall(script)
-        if block_matches:
-            candidates = [candidate.strip() for candidate in block_matches if candidate.strip()]
-            if candidates:
-                contract_match = [
-                    candidate
-                    for candidate in candidates
-                    if "PARAMETERS" in candidate and "build_model" in candidate
-                ]
-                if contract_match:
-                    return contract_match[0]
-                return max(candidates, key=len)
+        # Extract the largest code fence block if present
+        fences = _CODE_FENCE_RE.findall(raw)
+        text   = max(fences, key=len) if fences else raw
 
-        cleaned = script.strip().strip("`").strip()
-        cleaned = cleaned.replace("```python", "").replace("```py", "").replace("```", "").strip()
+        cleaned = text.strip().strip("`").strip()
 
-        start_match = LIKELY_CODE_START_RE.search(cleaned)
-        if start_match:
-            cleaned = cleaned[start_match.start():].lstrip()
+        # Fast-forward to the first recognizable OpenSCAD token
+        m = _CODE_START_RE.search(cleaned)
+        if m:
+            cleaned = cleaned[m.start():].strip()
 
         return cleaned
+
+    # -- Public API ------------------------------------------------------------
+
+    def audit_blueprint(
+        self,
+        image_bytes: bytes,
+        mime_type: str,
+    ) -> dict[str, Any]:
+        """
+        Stage 1 - Analyse a blueprint image/PDF and return a structured
+        feature-map dictionary.
+        """
+        def _call() -> Any:
+            return self.client.models.generate_content(
+                model=self.model,
+                contents=[
+                    types.Part.from_text(text=AUDIT_INSTRUCTION),
+                    types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    response_mime_type="application/json",
+                ),
+            )
+
+        raw = self._call_with_retry(_call, "audit")
+
+        try:
+            cleaned = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+            return json.loads(cleaned)
+        except Exception:
+            return {}
+
+    def generate_script(
+        self,
+        prompt: str,
+        image_bytes: bytes | None = None,
+        mime_type: str | None = None,
+        feature_map: dict[str, Any] | None = None,
+        base_code: str | None = None,
+        selection_context: str | None = None,
+    ) -> str:
+        """
+        Stage 2 - Synthesise or refine an OpenSCAD script.
+
+        If `base_code` is provided, Gemini will refine the existing script
+        rather than generating from scratch. `selection_context` attaches
+        spatial raycasting data so edits are geometrically targeted.
+        """
+        # Build context string
+        parts: list[str] = [f"REQUEST: {prompt}"]
+
+        if feature_map:
+            parts.append(f"FEATURE_MAP:\n{json.dumps(feature_map, indent=2)}")
+
+        if base_code:
+            parts.append(f"EXISTING_CODE_TO_REFINE:\n{base_code}")
+
+        if selection_context:
+            parts.append(f"USER_SELECTION_CONTEXT:\n{selection_context}")
+
+        user_text = "\n\n".join(parts)
+
+        # Assemble multimodal contents
+        contents: list[Any] = [types.Part.from_text(text=SYSTEM_INSTRUCTION)]
+        if image_bytes and mime_type:
+            contents.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
+        contents.append(types.Part.from_text(text=user_text))
+
+        def _call() -> Any:
+            return self.client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=types.GenerateContentConfig(temperature=0.0),
+            )
+
+        raw = self._call_with_retry(_call, "codegen")
+        return self._normalize_script(raw)

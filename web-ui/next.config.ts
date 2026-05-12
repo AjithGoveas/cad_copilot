@@ -1,7 +1,9 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  /* config options here */
+	// API calls are now handled by app/api/v1/generate/route.ts (Route Handler)
+	// which properly controls timeout and error forwarding.
+	// No rewrites needed.
 };
 
 export default nextConfig;

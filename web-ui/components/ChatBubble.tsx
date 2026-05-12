@@ -1,88 +1,93 @@
 'use client';
 
-import ReactMarkdown from 'react-markdown';
-import { toast } from 'sonner';
-import { User, Cpu, Copy, Check } from 'lucide-react';
 import { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { User, Cpu, Copy, Check } from 'lucide-react';
+import { toast } from 'sonner';
 
-type ChatRole = 'user' | 'assistant' | 'system';
+type Role = 'user' | 'assistant' | 'system';
 
-type ChatBubbleProps = {
-	role: ChatRole;
+type Props = {
+	id:      string;
+	role:    Role;
 	content: string;
-	id: string;
 };
 
-export function ChatBubble({ role, content }: ChatBubbleProps) {
+export function ChatBubble({ role, content }: Props) {
 	const [copied, setCopied] = useState(false);
 	const isUser = role === 'user';
-	const isAssistant = role === 'assistant';
 
-	const bubbleClass = isUser
-		? 'bg-gradient-to-br from-amber-500 to-amber-600 text-black shadow-[0_4px_20px_rgba(245,158,11,0.25)]'
-		: 'bg-[#18181b]/80 backdrop-blur-xl text-zinc-200 border border-zinc-800/50 shadow-[0_8px_30px_rgb(0,0,0,0.5)]';
-
-	const handleCopy = (text: string) => {
+	const copyCode = (text: string) => {
 		navigator.clipboard.writeText(text);
 		setCopied(true);
-		toast.success('Code copied to clipboard');
+		toast.success('Copied to clipboard');
 		setTimeout(() => setCopied(false), 2000);
 	};
 
 	return (
-		<div className={`group flex w-full flex-col gap-2.5 animate-message ${isUser ? 'items-end' : 'items-start'}`}>
-			<div className={`flex items-center gap-2.5 px-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 ${isUser ? 'flex-row-reverse' : ''}`}>
-				<div className={`flex size-6 items-center justify-center rounded-lg shadow-lg ${isUser ? 'bg-amber-400 text-black' : 'bg-zinc-800 text-amber-500'}`}>
-					{isUser ? <User className="size-3.5" /> : <Cpu className="size-3.5" />}
+		<div className={`group flex w-full flex-col gap-2 animate-message ${isUser ? 'items-end' : 'items-start'}`}>
+
+			{/* Avatar + role label */}
+			<div className={`flex items-center gap-2 px-1 ${isUser ? 'flex-row-reverse' : ''}`}>
+				<div className={`flex size-5 items-center justify-center rounded-md ${isUser ? 'bg-amber-500 text-black' : 'bg-zinc-800 text-amber-500'}`}>
+					{isUser ? <User size={11} /> : <Cpu size={11} />}
 				</div>
-				<span className="opacity-60">{role}</span>
+				<span className="font-mono text-[9px] uppercase tracking-widest text-zinc-600">{role}</span>
 			</div>
 
-			<div className={`relative max-w-[88%] rounded-2xl px-5 py-4 text-sm leading-[1.6] ${bubbleClass} ${isUser ? 'rounded-tr-none' : 'rounded-tl-none'}`}>
-				<div className="prose prose-invert prose-sm max-w-none wrap-break-word font-sans">
+			{/* Bubble */}
+			<div
+				className={`relative max-w-[90%] rounded-2xl px-5 py-4 text-[13px] leading-relaxed ${
+					isUser
+						? 'bg-amber-500 text-black rounded-tr-none'
+						: 'glass text-zinc-200 rounded-tl-none'
+				}`}
+			>
+				<div className="prose prose-invert prose-sm max-w-none">
 					<ReactMarkdown
 						components={{
-							code({ node, className, children, ...props }) {
-								const match = /language-(\w+)/.exec(className || '');
-								const codeText = String(children).replace(/\n$/, '');
+							code({ className, children, ...props }) {
+								const lang  = /language-(\w+)/.exec(className || '')?.[1];
+								const codeStr = String(children).replace(/\n$/, '');
 
-								if (match) {
+								if (lang) {
 									return (
-										<div className="relative my-4 overflow-hidden rounded-xl bg-black/40 border border-white/5 shadow-inner group/code">
-											<div className="flex items-center justify-between bg-white/3 px-4 py-2.5 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400 border-b border-white/5">
-												<span className="flex items-center gap-2">
-													<div className="size-1.5 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
-													{match[1]}
-												</span>
+										<div className="relative my-3 overflow-hidden rounded-xl border border-white/5 bg-black/40">
+											<div className="flex items-center justify-between border-b border-white/5 bg-white/[0.02] px-4 py-2">
+												<div className="flex items-center gap-2">
+													<span className="size-1.5 rounded-full bg-amber-500" />
+													<span className="font-mono text-[10px] uppercase tracking-widest text-zinc-500">{lang}</span>
+												</div>
 												<button
-													onClick={() => handleCopy(codeText)}
-													className="flex items-center gap-1.5 hover:text-amber-400 transition-colors opacity-0 group-hover/code:opacity-100 duration-200"
+													onClick={() => copyCode(codeStr)}
+													className="flex items-center gap-1 font-mono text-[10px] text-zinc-600 opacity-0 transition-opacity group-hover:opacity-100 hover:text-amber-400"
 												>
-													{copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+													{copied ? <Check size={11} /> : <Copy size={11} />}
 													{copied ? 'Copied' : 'Copy'}
 												</button>
 											</div>
-											<pre className="overflow-x-auto p-5 font-mono text-[12px] leading-[1.7] whitespace-pre custom-scrollbar">
-												<code className={className} {...props}>
-													{children}
-												</code>
+											<pre className="overflow-x-auto p-4 font-mono text-[11px] leading-relaxed">
+												<code className={className} {...props}>{children}</code>
 											</pre>
 										</div>
 									);
 								}
 								return (
-									<code className="rounded-md bg-zinc-800/80 px-1.5 py-0.5 font-mono text-[11px] text-amber-300 border border-zinc-700/50" {...props}>
+									<code
+										className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-amber-300"
+										{...props}
+									>
 										{children}
 									</code>
 								);
 							},
-							p: ({ children }) => <p className="mb-3 last:mb-0 font-light">{children}</p>,
-							ul: ({ children }) => <ul className="mb-3 list-disc pl-5 last:mb-0 marker:text-amber-500/50">{children}</ul>,
-							ol: ({ children }) => <ol className="mb-3 list-decimal pl-5 last:mb-0 marker:text-amber-500/50">{children}</ol>,
-							strong: ({ children }) => <strong className="font-bold text-amber-400/90 tracking-tight">{children}</strong>,
+							p:      ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+							ul:     ({ children }) => <ul className="mb-2 list-disc pl-4 marker:text-amber-500/40">{children}</ul>,
+							ol:     ({ children }) => <ol className="mb-2 list-decimal pl-4 marker:text-amber-500/40">{children}</ol>,
+							strong: ({ children }) => <strong className="font-semibold text-amber-300">{children}</strong>,
 						}}
 					>
-						{content || '...'}
+						{content || '…'}
 					</ReactMarkdown>
 				</div>
 			</div>

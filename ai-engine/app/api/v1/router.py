@@ -1,176 +1,175 @@
-import json
-import uuid
+"""CAD Copilot V2 - /api/v1 router."""
+from __future__ import annotations
+
 import asyncio
+import json
 import os
+import re
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
-
-from app.models.schemas import RenderRequest, RenderResponse, RenderedCadArtifacts, GeneratedCadParameter
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from app.models.schemas import GenerateResponse
 from app.services.llm_codegen import LLMCodegenService
-from app.services.parameter_render import ParameterRenderService, extract_parameters_from_script
 
 router = APIRouter(tags=["cad"])
-render_service = ParameterRenderService()
-DEFAULT_MODEL = os.getenv("GENAI_MODEL", "gemini-3.1-flash-lite")
+
+_ALLOWED_MIME_PREFIXES = ("image/",)
+_ALLOWED_MIME_EXACT   = {"application/pdf"}
+_DEFAULT_MODEL = os.getenv("GENAI_MODEL", "gemini-3.1-flash-lite-preview")
 
 
-def _error_payload(message: str, hint: str | None = None) -> dict[str, Any]:
-    error: dict[str, Any] = {"message": message}
-    if hint:
-        error["hint"] = hint
-    return {"error": error}
-
-
-def _coerce_error_message(exc: Exception, fallback: str) -> str:
-    message = str(exc).strip()
-    return message or fallback
-
-
-def _as_sse(event: str, payload: dict[str, Any]) -> str:
-    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
-
-@router.post("/generate")
-async def generate(
-    request: Request,
-    prompt: str = Form(...),
-    image: UploadFile = File(...),
-    model_name: str = Form(DEFAULT_MODEL),
-) -> StreamingResponse:
-
-    content_type = (image.content_type or "").lower()
-    is_image = content_type.startswith("image/")
-    is_pdf = content_type == "application/pdf" or (
-        bool(image.filename) and image.filename.lower().endswith(".pdf")
-    )
-
-    if content_type and not (is_image or is_pdf):
-        raise HTTPException(
-            status_code=400,
-            detail=_error_payload("Uploaded file must be an image or PDF."),
-        )
-
-    image_bytes = await image.read()
-    mime_type = content_type if content_type else ("application/pdf" if image.filename and image.filename.lower().endswith(".pdf") else "image/png")
-
-    try:
-        codegen_service = LLMCodegenService(model=model_name)
-    except RuntimeError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=_error_payload(_coerce_error_message(exc, "Failed to initialize AI model.")),
-        ) from exc
-
-    async def event_stream():
+def _extract_parameters(script: str) -> dict[str, Any]:
+    """Pull the PARAMETERS_JSON block out of the generated script."""
+    m = re.search(r"/\*\s*PARAMETERS_JSON\s*(\{.*?\})\s*\*/", script, re.S)
+    if m:
         try:
-            yield _as_sse("metadata", {
-                "token_budget": codegen_service.max_prompt_tokens,
-                "model": codegen_service.model,
-                "max_output": codegen_service.max_output_tokens
-            })
+            return json.loads(m.group(1))
+        except Exception:
+            pass
+    return {}
 
-            yield _as_sse("status", {"message": "Scanning blueprint for features..."})
 
-            # Stage 1: Summarisation (Analysis)
-            try:
-                summary = await asyncio.to_thread(
-                    codegen_service.summarise_blueprint,
-                    image_bytes,
-                    mime_type
-                )
-                yield _as_sse("status", {"message": "Analysis complete. Generating precision script..."})
-            except Exception:
-                summary = None
-                yield _as_sse("status", {"message": "Generating build123d script..."})
+def _resolve_mime(content_type: str, filename: str) -> str | None:
+    """Return the canonical MIME type or None if unsupported."""
+    ct = (content_type or "").lower().split(";")[0].strip()
+    if ct in _ALLOWED_MIME_EXACT:
+        return ct
+    if any(ct.startswith(p) for p in _ALLOWED_MIME_PREFIXES):
+        return ct
+    # Fallback: infer from extension
+    if filename.lower().endswith(".pdf"):
+        return "application/pdf"
+    return None
 
-            script_chunks: list[str] = []
 
-            for chunk in codegen_service.stream_build123d_script(
-                prompt=prompt,
-                image_bytes=image_bytes,
-                image_mime_type=mime_type,
-                summary=summary,
-            ):
-                if await request.is_disconnected():
-                    return
+def _sanitize_script(script: str) -> str:
+    """
+    Server-side safety net applied to every generated script before it is
+    returned to the frontend. Applies three targeted regex fixes:
 
-                script_chunks.append(chunk)
-                yield _as_sse("token", {"chunk": chunk})
+    Guard 1 - $fn cap
+        Any `$fn = N` where N > 32 is rewritten to `$fn = 32`.
 
-            if not script_chunks:
-                raise RuntimeError("Model returned no script output.")
+    Guard 2 - $fn injection
+        If the script has no `$fn` at all, prepend `$fn = 32;`.
 
-            script = codegen_service.normalize_script("".join(script_chunks))
-            parsed_parameters = extract_parameters_from_script(script)
-            yield _as_sse(
-                "done",
-                {
-                    "script": script,
-                    "parameters": parsed_parameters,
-                    "hint": "Call /api/v1/render with parameters + script to produce STL/STEP.",
-                },
+    Guard 3 - eps injection
+        If the script has `difference()` but no `eps` variable, inject
+        `eps = 0.02;` before the first module or difference() block.
+
+    Guard 4 - Library Strip
+        Hallucinated `include <BOSL2/std.scad>` or similar are removed
+        to ensure the script remains vanilla and portable.
+    """
+    if not script:
+        return script
+
+    # -- Guard 4: Strip BOSL2 includes -----------------------------------------
+    script = re.sub(r'include\s*<BOSL2/.*?>;?', '', script, flags=re.I)
+
+    # -- Guard 1: cap every $fn value that exceeds 32 --------------------------
+    FN_CAP = 32
+
+    def _cap_fn(match: re.Match) -> str:
+        val = int(match.group(1))
+        capped = min(val, FN_CAP)
+        return match.group(0).replace(match.group(1), str(capped))
+
+    script = re.sub(r'\$fn\s*=\s*(\d+)', _cap_fn, script)
+
+    # -- Guard 2: inject $fn = 32 if entirely absent ---------------------------
+    if "$fn" not in script:
+        script = "$fn = 32;\n\n" + script
+
+    # -- Guard 3: inject eps = 0.02 if difference() exists but eps is absent --
+    has_difference = "difference()" in script
+    has_eps        = re.search(r'\beps\s*=', script) is not None
+
+    if has_difference and not has_eps:
+        if "// PARAMETERS_START" in script:
+            script = script.replace(
+                "// PARAMETERS_START",
+                "// PARAMETERS_START\neps = 0.02;  // CGAL crash prevention",
+                1,
             )
-        except asyncio.CancelledError:
-            # Client disconnected gracefully
-            return
-        except Exception as exc:
-            yield _as_sse(
-                "error",
-                {
-                    "message": _coerce_error_message(exc, "Generation failed."),
-                    "hint": "Adjust the prompt or model and try again.",
-                },
+        else:
+            # Fallback: inject before the first module or difference() block
+            script = re.sub(
+                r'(\bmodule\b|\bdifference\(\))',
+                r'eps = 0.02;  // CGAL crash prevention\n\n\1',
+                script,
+                count=1,
             )
-            return
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return script
 
 
-@router.post("/render", response_model=RenderResponse)
-def render(request: RenderRequest) -> RenderResponse:
-    # 1. Generate IDs
-    job_id = request.session_id or uuid.uuid4().hex
-    output_basename = f"cad_{job_id}"
+@router.post("/generate", response_model=GenerateResponse)
+async def generate(
+    prompt: str = Form(...),
+    model_name: str = Form(_DEFAULT_MODEL),
+    image: UploadFile = File(None),
+    base_code: str | None = Form(None),
+    selection_context: str | None = Form(None),
+) -> GenerateResponse:
+    """
+    Two-stage CAD generation pipeline:
+      1. Audit blueprint image/PDF  →  structured feature-map JSON
+      2. Synthesise/refine OpenSCAD script via BOSL2 codegen
+    `image` is optional for text-only refinement sessions.
+    """
+    # ── Validate & read uploaded file ────────────────────────────────────────
+    image_bytes: bytes | None = None
+    mime_type: str | None = None
 
-    # 2. Block and execute the render synchronously (Zero 404 race conditions)
+    if image and image.filename:
+        mime_type = _resolve_mime(image.content_type or "", image.filename)
+        if mime_type is None:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"message": "File must be an image (PNG/JPEG/WEBP) or PDF."}},
+            )
+        image_bytes = await image.read()
+
+    # ── Initialise service ────────────────────────────────────────────────────
     try:
-        paths = render_service.render_to_outputs(
-            parameters=request.parameters,
-            script=request.python_script,
-            output_basename=output_basename,
+        svc = LLMCodegenService(model=model_name)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail={"error": {"message": str(exc)}})
+
+    # ── Stage 1: Blueprint Audit (skip if no image) ──────────────────────────
+    feature_map: dict[str, Any] = {}
+    if image_bytes and mime_type:
+        try:
+            feature_map = await asyncio.to_thread(
+                svc.audit_blueprint, image_bytes, mime_type
+            )
+        except Exception as exc:
+            # Non-fatal: proceed with empty feature map
+            print(f"[audit] failed — {exc}")
+
+    # ── Stage 2: Script Generation / Refinement ───────────────────────────────
+    try:
+        script = await asyncio.to_thread(
+            svc.generate_script,
+            prompt=prompt,
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            feature_map=feature_map,
+            base_code=base_code,
+            selection_context=selection_context,
         )
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=_error_payload(
-                _coerce_error_message(exc, "Render failed."),
-                "Check script and parameter values, then retry.",
-            ),
+            detail={"error": {"message": str(exc), "hint": "Check API key and quota."}},
         )
 
-    # 3. Format parameters back for the response UI
-    reconstructed_params = [
-        GeneratedCadParameter(
-            name=k,
-            value=str(v),
-            kind="number" if isinstance(v, (int, float)) else "string"
-        )
-        for k, v in request.parameters.items()
-    ]
+    # ── Server-side safety net ────────────────────────────────────────────────
+    # Ensures eps=0.02 and $fn=32 are always present even if the AI omitted them.
+    script = _sanitize_script(script)
 
-    # 4. Return exact schema Next.js expects
-    return RenderResponse(
-        session_id=job_id,
-        status="SUCCESS",
-        artifacts=RenderedCadArtifacts(
-            session_id=job_id,
-            step_file_path=paths["step_path"],
-            stl_file_path=paths["stl_path"],
-            step_url=f"/outputs/{output_basename}.step",
-            stl_url=f"/outputs/{output_basename}.stl",
-            script_url="",
-            python_script=request.python_script,
-            parameters=reconstructed_params
-        )
+    return GenerateResponse(
+        openscad_script=script,
+        parameters=_extract_parameters(script),
     )

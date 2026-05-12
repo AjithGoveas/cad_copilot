@@ -1,533 +1,322 @@
 'use client';
 
-import JSON5 from 'json5';
-import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { AlertTriangle, Focus, Trash2, Zap } from 'lucide-react';
 
-import { ChatPanel } from './ChatPanel';
-import { CadViewport } from './CadViewport';
-import { EditorDrawer } from './EditorDrawer';
+import { useCADEngine, type EngineError } from '@/hooks/useCADEngine';
+import { extractOpenScadParameters, injectOpenScadParameters } from '@/lib/openscadParameters';
+
+import { ChatPanel }      from './ChatPanel';
+import { EditorDrawer }   from './EditorDrawer';
 import { ParameterInput } from './ParameterInput';
-import { StlMesh } from './StlMesh';
+import { Viewport }       from './Viewport';
 
-type ChatRole = 'user' | 'assistant' | 'system';
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-type ChatMessage = {
-	id: string;
-	role: ChatRole;
-	content: string;
-};
+type Message = { id: string; role: 'user' | 'assistant' | 'system'; content: string };
 
-type RenderPayload = {
-	stl_url?: string;
-	step_url?: string;
-	status?: string;
-	job_id?: string;
-	error?: {
-		message?: string;
-		hint?: string;
-	};
-	artifacts?: {
-		stl_url?: string;
-		step_url?: string;
-	};
-};
+type Selection = { id: string; point: [number, number, number] };
 
-type ApiErrorEnvelope = {
-	error?: {
-		message?: unknown;
-		hint?: unknown;
-	};
-	message?: unknown;
-	detail?: unknown;
-};
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-type DrawerTab = 'parameters' | 'code';
-
-const DEFAULT_PROMPT = 'generate a 3D model of the attached file.';
-const DEFAULT_MODEL = 'gemini-3.1-flash-lite-preview';
 const MODEL_OPTIONS = [
-	{ value: 'gemini-3.1-flash-lite-preview', label: 'gemini-3.1-flash-lite (Default / Recommended)' },
-	{ value: 'gemini-3-flash-preview', label: 'gemini-3-flash' },
-	{ value: 'gemini-2.5-flash-lite', label: 'gemini-2.5-flash-lite' },
-	{ value: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
+	{ value: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite Preview'  },
+	{ value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash'  },
 ];
 
-function makeId(prefix: string): string {
-	return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
+const SYSTEM_MSG: Message = {
+	id:      'sys-0',
+	role:    'system',
+	content: 'Neural CAD Engine online. Upload a technical blueprint (PNG, JPEG, or PDF) to begin geometry generation.',
+};
 
-function stripApiSuffix(url: string): string {
-	return url.replace(/\/api\/v1\/?$/, '');
-}
+const WASM_REPAIR_PROMPTS: Record<EngineError['errorType'], (err: EngineError, script: string) => string> = {
+	OutOfBounds: (err, script) =>
+		`WASM KERNEL PANIC - Memory Access Out of Bounds.\n\nThe OpenSCAD WASM engine exhausted its heap while compiling the script below. The root cause is likely: a high-$fn cylinder/sphere, a Minkowski sum, or deeply chained boolean operations.\n\nFIX REQUIRED:\n1. Set $fn = 32 globally.\n2. Avoid minkowski() or recursion.\n3. Simplify complex boolean operations.\n4. Preserve all PARAMETERS block values and // @id: tags.\n\nWASM STDERR:\n${err.details || 'none'}\n\nSCRIPT TO FIX:\n${script}`,
 
-function resolveModelUrl(rawUrl: string, cacheBust?: string): string {
-	let resolvedUrl = rawUrl;
+	CompileFailure: (err, script) =>
+		`WASM COMPILE ERROR - Syntax or semantic failure.\n\nFix all errors. Apply the 'Epsilon Rule' if a CGAL pointer crash occurred. Do NOT change the PARAMETERS block or // @id: tags.\n\nCOMPILER OUTPUT:\n${err.details || err.message}\n\nSCRIPT TO FIX:\n${script}`,
 
-	if (!(rawUrl.startsWith('http://') || rawUrl.startsWith('https://'))) {
-		const apiBase = process.env.NEXT_PUBLIC_FASTAPI_URL?.trim();
-		if (apiBase && rawUrl.startsWith('/')) {
-			resolvedUrl = `${stripApiSuffix(apiBase)}${rawUrl}`;
-		}
-	}
+	Timeout: (err, script) =>
+		`WASM TIMEOUT - Script exceeded render time budget.\n\nReduce $fn (target 32), simplify hull, avoid recursion.\n\nSCRIPT TO FIX:\n${script}`,
 
-	if (!cacheBust) {
-		return resolvedUrl;
-	}
+	Unknown: (err, script) =>
+		`WASM ENGINE ERROR: ${err.message}\n\nFix the script so it compiles cleanly.\n\nSCRIPT TO FIX:\n${script}`,
+};
 
-	const separator = resolvedUrl.includes('?') ? '&' : '?';
-	return `${resolvedUrl}${separator}v=${encodeURIComponent(cacheBust)}`;
-}
-
-function findMatchingBrace(source: string, startIndex: number): number {
-	let depth = 0;
-	let inSingle = false;
-	let inDouble = false;
-	let escaping = false;
-
-	for (let i = startIndex; i < source.length; i += 1) {
-		const ch = source[i];
-
-		if (escaping) {
-			escaping = false;
-			continue;
-		}
-
-		if (ch === '\\') {
-			escaping = true;
-			continue;
-		}
-
-		if (!inDouble && ch === "'") {
-			inSingle = !inSingle;
-			continue;
-		}
-
-		if (!inSingle && ch === '"') {
-			inDouble = !inDouble;
-			continue;
-		}
-
-		if (inSingle || inDouble) {
-			continue;
-		}
-
-		if (ch === '{') {
-			depth += 1;
-			continue;
-		}
-
-		if (ch === '}') {
-			depth -= 1;
-			if (depth === 0) {
-				return i;
-			}
-		}
-	}
-
-	return -1;
-}
-
-function getParametersBlock(script: string): { braceStart: number; braceEnd: number } | null {
-	const regex = /^\s*PARAMETERS\s*(?::[^=\n]+)?\s*=\s*/m;
-	const match = regex.exec(script);
-	if (!match) return null;
-
-	const startSearch = match.index + match[0].length;
-
-	let braceStart = -1;
-	for (let i = startSearch; i < script.length; i++) {
-		const ch = script[i];
-		if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') continue;
-		if (ch === '{') {
-			braceStart = i;
-			break;
-		} else {
-			return null;
-		}
-	}
-
-	if (braceStart === -1) return null;
-
-	const braceEnd = findMatchingBrace(script, braceStart);
-	if (braceEnd === -1) return null;
-
-	return { braceStart, braceEnd };
-}
-
-function extractParameters(script: string): Record<string, unknown> {
-	const block = getParametersBlock(script);
-	if (!block) return {};
-
-	const literal = script.slice(block.braceStart, block.braceEnd + 1);
-	const normalized = literal
-		.replace(/\bTrue\b/g, 'true')
-		.replace(/\bFalse\b/g, 'false')
-		.replace(/\bNone\b/g, 'null');
-
-	try {
-		const parsed = JSON5.parse(normalized);
-		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-			return parsed as Record<string, unknown>;
-		}
-	} catch {
-		return {};
-	}
-
-	return {};
-}
-
-function setParameterValue(params: Record<string, unknown>, key: string, value: unknown): Record<string, unknown> {
-	return {
-		...params,
-		[key]: value,
-	};
-}
-
-function injectParameters(script: string, parameters: Record<string, unknown>): string {
-	const block = getParametersBlock(script);
-	if (!block) return script;
-
-	const pythonLiteral = JSON.stringify(parameters, null, 4)
-		.replace(/: true\b/g, ': True')
-		.replace(/: false\b/g, ': False')
-		.replace(/: null\b/g, ': None');
-
-	return script.slice(0, block.braceStart) + pythonLiteral + script.slice(block.braceEnd + 1);
-}
-
-function extractReadableError(payload: unknown, fallback: string): string {
-	if (payload && typeof payload === 'object') {
-		const candidate = payload as ApiErrorEnvelope;
-		if (candidate.error && typeof candidate.error === 'object') {
-			const message = typeof candidate.error.message === 'string' ? candidate.error.message.trim() : '';
-			const hint = typeof candidate.error.hint === 'string' ? candidate.error.hint.trim() : '';
-			if (message && hint) {
-				return `${message} ${hint}`;
-			}
-			if (message) {
-				return message;
-			}
-		}
-
-		if (typeof candidate.message === 'string' && candidate.message.trim()) {
-			return candidate.message.trim();
-		}
-
-		if (typeof candidate.detail === 'string' && candidate.detail.trim()) {
-			return candidate.detail.trim();
-		}
-	}
-
-	if (typeof payload === 'string' && payload.trim()) {
-		return payload.trim();
-	}
-
-	return fallback;
-}
-
-async function readErrorFromResponse(response: Response, fallback: string): Promise<string> {
-	const jsonPayload = await response
-		.clone()
-		.json()
-		.catch(() => null);
-	if (jsonPayload) {
-		return extractReadableError(jsonPayload, fallback);
-	}
-
-	const textPayload = await response.text().catch(() => '');
-	if (textPayload.trim()) {
-		return extractReadableError(textPayload, fallback);
-	}
-
-	return fallback;
-}
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function HitlWorkspace() {
-	const [chatWidth, setChatWidth] = useState(400);
-	const isResizing = useRef(false);
-	const [messages, setMessages] = useState<ChatMessage[]>([
-		{
-			id: 'system_welcome',
-			role: 'system',
-			content: 'Upload a reference image or PDF, choose a model, and generate a parameterized build123d script.',
-		},
-	]);
-	const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
-	const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
-	const [selectedFile, setSelectedFile] = useState<File | null>(null);
-	const [isGenerating, setIsGenerating] = useState(false);
-	const [isRecompiling, setIsRecompiling] = useState(false);
-	const [isDrawerOpen, setIsDrawerOpen] = useState(true);
-	const [sessionId, setSessionId] = useState<string | null>(null);
-	const [pythonScript, setPythonScript] = useState('');
-	const [activeDrawerTab, setActiveDrawerTab] = useState<DrawerTab>('parameters');
-	const [parameters, setParameters] = useState<Record<string, unknown>>({});
-	const [stlUrl, setStlUrl] = useState<string | null>(null);
-	const [stepUrl, setStepUrl] = useState<string | null>(null);
-	const [isDownloadingStl, setIsDownloadingStl] = useState(false);
-	const [isDownloadingStep, setIsDownloadingStep] = useState(false);
-	const [statusText, setStatusText] = useState<string>('Ready');
 
-	const pythonScriptRef = useRef('');
+	// Layout
+	const [chatWidth,    setChatWidth]    = useState(420);
+	const [drawerOpen,   setDrawerOpen]   = useState(true);
+	const [activeTab,    setActiveTab]    = useState<'parameters' | 'code'>('parameters');
 
-	const updatePythonScript = (nextScript: string) => {
-		pythonScriptRef.current = nextScript;
-		setPythonScript(nextScript);
-	};
+	// AI workflow
+	const [messages,      setMessages]      = useState<Message[]>([SYSTEM_MSG]);
+	const [prompt,        setPrompt]        = useState('Generate a parametric mechanical part from this blueprint.');
+	const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0].value);
+	const [selectedFile,  setSelectedFile]  = useState<File | null>(null);
+	const [isGenerating,  setIsGenerating]  = useState(false);
 
+	// CAD state
+	const [cadScript,   setCadScript]   = useState('');
+	const [parameters,  setParameters]  = useState<Record<string, unknown>>({});
+	const [selection,   setSelection]   = useState<Selection | null>(null);
+
+	// WASM engine
+	const { stlUrl, statusText, engineError, isRecompiling, rebuild, respawn } = useCADEngine({
+		script:    cadScript,
+		enabled:   !!cadScript,
+	});
+
+	// ── Resizer ───────────────────────────────────────────────────────────────
+	const resizing = useRef(false);
 	useEffect(() => {
-		const handleMouseMove = (e: MouseEvent) => {
-			if (!isResizing.current) return;
-			const newWidth = Math.max(300, Math.min(e.clientX, 800));
-			setChatWidth(newWidth);
+		const move = (e: MouseEvent) => {
+			if (!resizing.current) return;
+			setChatWidth(Math.max(320, Math.min(680, e.clientX)));
 		};
-		const handleMouseUp = () => {
-			isResizing.current = false;
-			document.body.style.cursor = 'default';
-		};
-		window.addEventListener('mousemove', handleMouseMove);
-		window.addEventListener('mouseup', handleMouseUp);
-		return () => {
-			window.removeEventListener('mousemove', handleMouseMove);
-			window.removeEventListener('mouseup', handleMouseUp);
-		};
+		const up = () => { resizing.current = false; };
+		window.addEventListener('mousemove', move);
+		window.addEventListener('mouseup', up);
+		return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
 	}, []);
 
+	// ── Parameter sync ────────────────────────────────────────────────────────
 	useEffect(() => {
-		if (!pythonScript) return;
+		if (!cadScript) return;
+		const next = extractOpenScadParameters(cadScript);
+		if (Object.keys(next).length > 0) {
+			setParameters((prev) =>
+				JSON.stringify(prev) === JSON.stringify(next) ? prev : next
+			);
+		}
+	}, [cadScript]);
 
-		const timeout = setTimeout(() => {
-			const extracted = extractParameters(pythonScript);
-			if (Object.keys(extracted).length === 0) return;
+	// ── Helpers ───────────────────────────────────────────────────────────────
 
-			if (JSON.stringify(extracted) !== JSON.stringify(parameters)) {
-				setParameters(extracted);
-			}
-		}, 800);
+	const pushMessage = (role: Message['role'], content: string) =>
+		setMessages((prev) => [...prev, { id: `${Date.now()}-${Math.random()}`, role, content }]);
 
-		return () => clearTimeout(timeout);
-	}, [pythonScript]);
+	const callAPI = useCallback(async (formData: FormData): Promise<string | null> => {
+		const res = await fetch('/api/v1/generate', { method: 'POST', body: formData });
+		if (!res.ok) {
+			const body = await res.json().catch(() => ({}));
+			throw new Error(body?.error?.message ?? `HTTP ${res.status}`);
+		}
+		const data = await res.json();
+		return data.openscad_script ?? null;
+	}, []);
 
-	async function handleGenerate(event: FormEvent<HTMLFormElement>) {
-		event.preventDefault();
-		if (!prompt.trim() || !selectedFile) {
-			setStatusText('Please provide a prompt and file.');
+	// ── Handler: Generate ─────────────────────────────────────────────────────
+	const handleGenerate = async (e?: FormEvent) => {
+		e?.preventDefault();
+		if (!selectedFile && !cadScript) {
+			toast.error('Upload a blueprint first.');
 			return;
 		}
 
-		const assistantMessageId = makeId('assistant');
-		setMessages((prev) => [...prev, { id: makeId('user'), role: 'user', content: prompt }, { id: assistantMessageId, role: 'assistant', content: '' }]);
+		const userMsg = prompt.trim() || 'Refine the geometry.';
+		pushMessage('user', userMsg);
 		setIsGenerating(true);
 
-		const formData = new FormData();
-		formData.append('prompt', prompt.trim());
-		formData.append('image', selectedFile);
-		formData.append('model_name', selectedModel);
+		const form = new FormData();
+		form.append('prompt',     userMsg);
+		form.append('model_name', selectedModel);
+		if (selectedFile) form.append('image', selectedFile);
+		if (cadScript)    form.append('base_code', cadScript);
+		if (selection)    form.append('selection_context', JSON.stringify(selection));
 
 		try {
-			const response = await fetch('/api/generate', { method: 'POST', body: formData });
-			const nextSessionId = response.headers.get('x-session-id');
-			if (nextSessionId) setSessionId(nextSessionId);
-
-			if (!response.ok) {
-				const errorMsg = await readErrorFromResponse(response, 'Failed to connect to backend.');
-				throw new Error(errorMsg);
+			const script = await callAPI(form);
+			if (script) {
+				setCadScript(script);
+				setActiveTab('code');
+				pushMessage('assistant', 'Geometry synthesised. Handing off to WASM engine for compilation…');
+				toast.success('Script generated', { description: 'WASM is now compiling the mesh.' });
 			}
+		} catch (err) {
+			toast.error('Generation failed', { description: String(err) });
+		} finally {
+			setIsGenerating(false);
+			setPrompt('');
+		}
+	};
 
-			const reader = response.body?.getReader();
-			if (!reader) throw new Error('Streaming failed. Please retry.');
+	// ── Handler: Self-Healing Repair ─────────────────────────────────────────
+	const handleSelfFix = async (err: EngineError) => {
+		if (!cadScript) return;
 
-			const decoder = new TextDecoder();
-			let accumulated = '';
-			let fullScript = '';
-			let finalParams = parameters;
+		// Respawn the worker first to guarantee a clean 0-byte WASM heap
+		// before the repaired script is dispatched.
+		respawn();
 
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
+		const repairPrompt = WASM_REPAIR_PROMPTS[err.errorType]?.(err, cadScript)
+			?? WASM_REPAIR_PROMPTS.Unknown(err, cadScript);
 
-				const chunkText = decoder.decode(value);
-				const lines = chunkText.split('\n');
+		pushMessage('user', `[Auto-Repair] ${err.errorType} — requesting AI fix…`);
+		toast.info('Sending error context to AI…');
+		setIsGenerating(true);
 
-				for (const line of lines) {
-					if (!line.startsWith('data: ')) continue;
-					try {
-						const rawData = JSON.parse(line.slice(6));
-						if (rawData.chunk) {
-							accumulated += rawData.chunk;
-							setMessages((prev) => prev.map((m) => (m.id === assistantMessageId ? { ...m, content: accumulated } : m)));
-						}
-						if (rawData.script) fullScript = rawData.script;
-						if (rawData.parameters) {
-							finalParams = rawData.parameters;
-							setParameters(rawData.parameters);
-						}
-					} catch {}
-				}
+		const form = new FormData();
+		form.append('prompt',     repairPrompt);
+		form.append('model_name', selectedModel);
+		form.append('base_code',  cadScript);
+
+		try {
+			const script = await callAPI(form);
+			if (script) {
+				setCadScript(script);
+				pushMessage('assistant', 'Script repaired. Recompiling with WASM engine…');
+				toast.success('Repair successful');
 			}
-
-			if (fullScript) {
-				updatePythonScript(fullScript);
-				setActiveDrawerTab('code');
-				setIsDrawerOpen(true);
-				setStatusText('Script generated. Compiling 3D model...');
-
-				// Automatically trigger sync after generation
-				const currentSession = nextSessionId || sessionId;
-				if (currentSession) {
-					await performSync(fullScript, finalParams, currentSession);
-				}
-			} else {
-				throw new Error('No script returned from model.');
-			}
-		} catch (error) {
-			const errorText = error instanceof Error ? error.message : String(error);
-			setMessages((prev) => prev.map((m) => (m.id === assistantMessageId ? { ...m, content: `Error: ${errorText}` } : m)));
-			setStatusText(`Generation failed: ${errorText}`);
+		} catch (err) {
+			toast.error('Repair failed', { description: String(err) });
 		} finally {
 			setIsGenerating(false);
 		}
-	}
+	};
 
-	async function performSync(script: string, params: Record<string, any>, session: string) {
-		setIsRecompiling(true);
-		setStatusText('Syncing to backend engine...');
+	// ── Handler: Parameter Change ─────────────────────────────────────────────
+	const handleParamChange = (key: string, value: unknown) => {
+		const next = { ...parameters, [key]: value };
+		setParameters(next);
+		setCadScript(injectOpenScadParameters(cadScript, next));
+	};
 
-		try {
-			const response = await fetch('/api/render', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json', 'x-session-id': session },
-				body: JSON.stringify({ python_script: script, parameters: params }),
-			});
-
-			if (!response.ok) {
-				const errorMsg = await readErrorFromResponse(response, 'Render failed.');
-				throw new Error(errorMsg);
-			}
-
-			const payload = (await response.json()) as RenderPayload;
-			if (payload.artifacts?.stl_url) setStlUrl(resolveModelUrl(payload.artifacts.stl_url, Date.now().toString()));
-			if (payload.artifacts?.step_url) setStepUrl(resolveModelUrl(payload.artifacts.step_url));
-
-			setStatusText('Geometry recompiled successfully.');
-			toast.success('Sync successful');
-		} catch (error) {
-			const errorText = error instanceof Error ? error.message : String(error);
-			setStatusText(`Sync failed: ${errorText}`);
-			toast.error('Sync failed', { description: errorText });
-		} finally {
-			setIsRecompiling(false);
+	// ── Mesh click ────────────────────────────────────────────────────────────
+	const handleMeshClick = (point: [number, number, number] | null) => {
+		if (point) {
+			setSelection({ id: 'selected_feature', point });
+			setActiveTab('parameters');
+		} else {
+			setSelection(null);
 		}
-	}
+	};
 
-	async function handleRenderSync() {
-		if (!sessionId || !pythonScript) return;
-		await performSync(pythonScript, parameters, sessionId);
-	}
+	// ── Download STL ─────────────────────────────────────────────────────────
+	const handleDownload = () => {
+		if (!stlUrl) return;
+		const a = document.createElement('a');
+		a.href     = stlUrl;
+		a.download = 'cad-copilot-output.stl';
+		a.click();
+	};
 
-	async function handleDownloadArtifact(url: string | null, label: string) {
-		if (!url) return;
-
-		const setBusy = label === 'stl' ? setIsDownloadingStl : setIsDownloadingStep;
-		setBusy(true);
-		try {
-			const response = await fetch(url);
-			if (!response.ok) throw new Error(`Server returned ${response.status}`);
-
-			const blob = await response.blob();
-			const objectUrl = URL.createObjectURL(blob);
-			const link = document.createElement('a');
-			link.href = objectUrl;
-			const filename = url.split('/').pop()?.split('?')[0] || `model.${label}`;
-			link.download = filename;
-			document.body.appendChild(link);
-			link.click();
-			document.body.removeChild(link);
-			URL.revokeObjectURL(objectUrl);
-			toast.success(`${label} downloaded`, { description: filename });
-		} catch (error) {
-			toast.error(`Failed to download ${label}`);
-		} finally {
-			setBusy(false);
-		}
-	}
-
-	const parameterEntries = Object.entries(parameters);
-	const hasStl = Boolean(stlUrl);
-	const hasStep = Boolean(stepUrl);
+	// ── Render ────────────────────────────────────────────────────────────────
 
 	return (
-		<div className="dark h-screen w-full bg-black text-zinc-100 overflow-hidden">
-			<main className="flex h-full w-full gap-0">
-				<ChatPanel
-					messages={messages}
-					prompt={prompt}
-					setPrompt={setPrompt}
-					selectedModel={selectedModel}
-					setSelectedModel={setSelectedModel}
-					modelOptions={MODEL_OPTIONS}
-					selectedFile={selectedFile}
-					handleFileChange={setSelectedFile}
-					isGenerating={isGenerating}
-					onSubmit={handleGenerate}
-					width={chatWidth}
+		<div className="flex h-screen w-full overflow-hidden bg-[#050505] text-zinc-100 selection:bg-amber-500/20">
+
+			{/* ── Left: Chat Panel ─────────────────────────────────────────── */}
+			<ChatPanel
+				messages={messages}
+				prompt={prompt}
+				setPrompt={setPrompt}
+				selectedModel={selectedModel}
+				setSelectedModel={setSelectedModel}
+				modelOptions={MODEL_OPTIONS}
+				selectedFile={selectedFile}
+				onFileChange={setSelectedFile}
+				isGenerating={isGenerating}
+				onSubmit={handleGenerate}
+				width={chatWidth}
+			>
+				{/* Selection badge */}
+				{selection && (
+					<div className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 animate-in fade-in zoom-in-95 duration-150">
+						<div className="flex items-center gap-2">
+							<Focus size={12} className="text-amber-400" />
+							<span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-amber-400">
+								Focused: {selection.id}
+							</span>
+						</div>
+						<button
+							onClick={() => setSelection(null)}
+							className="text-zinc-700 hover:text-red-400 transition-colors"
+						>
+							<Trash2 size={11} />
+						</button>
+					</div>
+				)}
+			</ChatPanel>
+
+			{/* ── Resizer ───────────────────────────────────────────────────── */}
+			<div
+				className="w-[2px] shrink-0 cursor-col-resize bg-zinc-900 hover:bg-amber-500/40 transition-colors"
+				onMouseDown={() => { resizing.current = true; }}
+			/>
+
+			{/* ── Centre: Viewport ──────────────────────────────────────────── */}
+			<main className="relative flex flex-1 overflow-hidden">
+				<Viewport
+					stlUrl={stlUrl}
+					statusText={isGenerating ? 'AI Synthesising…' : statusText}
+					isCompiling={isRecompiling || isGenerating}
+					onMeshClick={handleMeshClick}
+					onDownloadStl={handleDownload}
 				/>
 
-				<div
-					className="group relative w-1 cursor-col-resize bg-zinc-900 transition-colors hover:bg-amber-500/50"
-					onMouseDown={() => {
-						isResizing.current = true;
-						document.body.style.cursor = 'col-resize';
-					}}
-				>
-					<div className="absolute inset-y-0 -left-1 w-3 opacity-0 group-hover:opacity-100" />
-				</div>
+				{/* WASM Error Banner */}
+				{engineError && (
+					<div className="absolute inset-x-6 bottom-6 z-30 flex items-start gap-4 rounded-2xl border border-red-500/25 bg-zinc-950/95 p-4 shadow-[0_0_40px_rgba(239,68,68,0.1)] backdrop-blur-xl animate-in slide-in-from-bottom-4 duration-300">
+						<div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-red-500/10 border border-red-500/20">
+							<AlertTriangle size={16} className="text-red-400" />
+						</div>
+						<div className="flex-1 min-w-0">
+							<div className="flex items-center gap-2 mb-1">
+								<span className="font-mono text-[9px] font-black uppercase tracking-[0.2em] text-red-400">
+									Kernel Exception
+								</span>
+								<span className="rounded-full bg-red-500/10 px-2 py-0.5 font-mono text-[8px] uppercase tracking-widest text-red-500/70">
+									{engineError.errorType}
+								</span>
+							</div>
+							<p className="font-mono text-[11px] text-zinc-400 truncate">{engineError.message}</p>
+							{engineError.details && (
+								<p className="mt-1 font-mono text-[9px] text-zinc-700 line-clamp-2">{engineError.details}</p>
+							)}
+						</div>
+						<button
+							onClick={() => handleSelfFix(engineError)}
+							className="shrink-0 flex items-center gap-2 rounded-xl bg-red-500 px-4 py-2 font-mono text-[10px] font-bold uppercase tracking-widest text-white transition-all hover:bg-red-400 active:scale-95"
+						>
+							<Zap size={12} fill="currentColor" />
+							Auto-Fix
+						</button>
+					</div>
+				)}
+			</main>
 
-				<CadViewport
-					stlUrl={stlUrl}
-					statusText={statusText}
-					isRecompiling={isRecompiling}
-					hasStl={hasStl}
-					hasStep={hasStep}
-					isDownloadingStl={isDownloadingStl}
-					isDownloadingStep={isDownloadingStep}
-					onDownloadStl={() => void handleDownloadArtifact(stlUrl, 'stl')}
-					onDownloadStep={() => void handleDownloadArtifact(stepUrl, 'step')}
-				>
-					{stlUrl ? <StlMesh url={stlUrl} /> : null}
-				</CadViewport>
-
-				<EditorDrawer
-					isOpen={isDrawerOpen}
-					setIsOpen={setIsDrawerOpen}
-					activeTab={activeDrawerTab}
-					setActiveTab={setActiveDrawerTab}
-					pythonScript={pythonScript}
-					onScriptChange={updatePythonScript}
-					onRenderSync={handleRenderSync}
-					isRecompiling={isRecompiling}
-					hasSession={Boolean(sessionId)}
-				>
-					<div className="space-y-4">
-						{parameterEntries.map(([key, value]) => (
+			{/* ── Right: Editor Drawer ──────────────────────────────────────── */}
+			<EditorDrawer
+				isOpen={drawerOpen}
+				setIsOpen={setDrawerOpen}
+				activeTab={activeTab}
+				setActiveTab={setActiveTab}
+				cadScript={cadScript}
+				onScriptChange={setCadScript}
+				onRebuild={rebuild}
+				isCompiling={isRecompiling}
+				hasScript={!!cadScript}
+			>
+				{Object.keys(parameters).length > 0 ? (
+					<div className="space-y-5">
+						{Object.entries(parameters).map(([key, val]) => (
 							<ParameterInput
 								key={key}
 								label={key}
-								value={value}
-								onChange={(nextValue) => {
-									const nextParams = setParameterValue(parameters, key, nextValue);
-									setParameters(nextParams);
-									const nextScript = injectParameters(pythonScript, nextParams);
-									if (nextScript !== pythonScript) {
-										updatePythonScript(nextScript);
-									}
-								}}
+								value={val}
+								isFocused={!!selection?.id.includes(key)}
+								onChange={(v) => handleParamChange(key, v)}
 							/>
 						))}
 					</div>
-				</EditorDrawer>
-			</main>
+				) : null}
+			</EditorDrawer>
 		</div>
 	);
 }

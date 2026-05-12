@@ -1,29 +1,31 @@
-import { Toaster } from '@/components/ui/sonner';
 import type { Metadata } from 'next';
-import { IBM_Plex_Mono } from 'next/font/google';
+import { IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google';
+import { Toaster } from '@/components/ui/sonner';
 import './globals.css';
 
-const ibmPlexMono = IBM_Plex_Mono({
-	weight: ['400', '500', '600', '700'],
-	variable: '--font-ibm-plex-mono',
+const plexSans = IBM_Plex_Sans({
+	weight: ['300', '400', '500', '600', '700'],
 	subsets: ['latin'],
+	variable: '--font-sans',
+});
+
+const plexMono = IBM_Plex_Mono({
+	weight: ['400', '500', '600', '700'],
+	subsets: ['latin'],
+	variable: '--font-mono',
 });
 
 export const metadata: Metadata = {
-	title: 'Docs-to-CAD Tactical Workspace',
-	description: 'Generate and refine CAD from documents with HITL controls.',
+	title: 'CAD Copilot — Docs-to-CAD Workstation',
+	description: 'AI-powered CAD generation from technical blueprints using Gemini and OpenSCAD-WASM.',
 };
 
-export default function RootLayout({
-	children,
-}: Readonly<{
-	children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="en" className={`${ibmPlexMono.variable} h-full antialiased`}>
-			<body className={`${ibmPlexMono.className} min-h-full flex flex-col`}>
+		<html lang="en" className={`${plexSans.variable} ${plexMono.variable} dark h-full`}>
+			<body className="h-full bg-[#050505] text-zinc-100 antialiased">
 				{children}
-				<Toaster richColors position="top-right" />
+				<Toaster richColors position="top-right" theme="dark" />
 			</body>
 		</html>
 	);

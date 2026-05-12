@@ -1,106 +1,106 @@
 'use client';
 
 import Editor from '@monaco-editor/react';
-import { ChevronLeft, ChevronRight, Wrench, Loader2, Code2, Sliders } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Code2, Loader2, Sliders, Wrench } from 'lucide-react';
 
-type DrawerTab = 'parameters' | 'code';
+type Tab = 'parameters' | 'code';
 
-type EditorDrawerProps = {
-	isOpen: boolean;
-	setIsOpen: (v: boolean) => void;
-	activeTab: DrawerTab;
-	setActiveTab: (v: DrawerTab) => void;
-	pythonScript: string;
+type Props = {
+	isOpen:         boolean;
+	setIsOpen:      (v: boolean) => void;
+	activeTab:      Tab;
+	setActiveTab:   (v: Tab) => void;
+	cadScript:      string;
 	onScriptChange: (v: string) => void;
-	onRenderSync: () => void;
-	isRecompiling: boolean;
-	hasSession: boolean;
-	children?: React.ReactNode; // For ParameterInputs
+	onRebuild:      () => void;
+	isCompiling:    boolean;
+	hasScript:      boolean;
+	children?:      React.ReactNode;  // parameter inputs slot
 };
 
+const TABS: { id: Tab; icon: typeof Sliders; label: string }[] = [
+	{ id: 'parameters', icon: Sliders, label: 'Params'  },
+	{ id: 'code',       icon: Code2,   label: 'Source'  },
+];
+
 export function EditorDrawer({
-	isOpen,
-	setIsOpen,
-	activeTab,
-	setActiveTab,
-	pythonScript,
-	onScriptChange,
-	onRenderSync,
-	isRecompiling,
-	hasSession,
-	children
-}: EditorDrawerProps) {
+	isOpen, setIsOpen,
+	activeTab, setActiveTab,
+	cadScript, onScriptChange,
+	onRebuild, isCompiling, hasScript,
+	children,
+}: Props) {
 	return (
 		<aside
-			className={`relative shrink-0 overflow-hidden border-l border-zinc-800 bg-[#09090b] transition-all duration-500 ease-[cubic-bezier(0.2,1,0.2,1)] ${
-				isOpen ? 'w-112.5' : 'w-16'
+			className={`relative flex shrink-0 flex-col border-l border-white/5 bg-[#050505] transition-all duration-500 ease-[cubic-bezier(0.2,1,0.2,1)] dot-grid ${
+				isOpen ? 'w-[440px]' : 'w-14'
 			}`}
 		>
+			{/* Collapse toggle */}
 			<button
 				onClick={() => setIsOpen(!isOpen)}
-				className="absolute left-4 top-5 flex size-8 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-amber-500 hover:text-amber-500 transition-all z-20"
+				className="absolute left-3 top-[18px] z-20 flex size-8 items-center justify-center rounded-xl border border-white/8 bg-zinc-900/60 text-zinc-500 transition-all hover:border-amber-500/50 hover:text-amber-400 backdrop-blur-sm"
 			>
-				{isOpen ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
+				{isOpen ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
 			</button>
 
-			<div className={`flex h-full flex-col ${!isOpen ? 'opacity-0' : 'opacity-100'} transition-opacity duration-300`}>
-				<header className="flex h-16 items-center justify-between border-b border-zinc-800 bg-zinc-950/50 px-6 pl-16">
-					<div className="flex gap-1">
+			{/* Content (hidden when collapsed) */}
+			<div className={`flex flex-1 flex-col overflow-hidden transition-all duration-500 ${
+				isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+			}`}>
+
+				{/* Header tabs */}
+				<header className="flex h-16 shrink-0 items-center gap-1.5 border-b border-white/5 glass pl-14 pr-5">
+					{TABS.map(({ id, icon: Icon, label }) => (
 						<button
-							onClick={() => setActiveTab('parameters')}
-							className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all ${
-								activeTab === 'parameters'
-									? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
-									: 'text-zinc-500 hover:text-zinc-300'
+							key={id}
+							onClick={() => setActiveTab(id)}
+							className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-[0.15em] transition-all ${
+								activeTab === id
+									? 'bg-amber-500 text-black shadow-[0_0_12px_rgba(245,158,11,0.25)]'
+									: 'text-zinc-600 hover:text-zinc-300 hover:bg-white/5'
 							}`}
 						>
-							<Sliders className="size-3" />
-							Params
+							<Icon size={11} />
+							{label}
 						</button>
-						<button
-							onClick={() => setActiveTab('code')}
-							className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all ${
-								activeTab === 'code'
-									? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
-									: 'text-zinc-500 hover:text-zinc-300'
-							}`}
-						>
-							<Code2 className="size-3" />
-							Engine
-						</button>
-					</div>
+					))}
 				</header>
 
-				<div className="flex-1 overflow-y-auto px-6 py-6 custom-scrollbar">
+				{/* Tab content */}
+				<div className="flex-1 overflow-y-auto">
 					{activeTab === 'parameters' ? (
-						<div className="space-y-6">
-							<div className="flex items-center justify-between">
-								<h2 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-600">Dynamic Props</h2>
-								<div className="h-px flex-1 mx-4 bg-zinc-800/50" />
+						<div className="space-y-1 p-5 animate-in fade-in slide-in-from-right-3 duration-200">
+							<div className="mb-4 flex items-center gap-3">
+								<h2 className="font-mono text-[9px] font-bold uppercase tracking-[0.25em] text-zinc-700">Properties</h2>
+								<div className="h-px flex-1 bg-zinc-900" />
 							</div>
-							{children}
+							{children ?? (
+								<p className="font-mono text-[10px] text-zinc-700">
+									No parameters — generate a script first.
+								</p>
+							)}
 						</div>
 					) : (
-						<div className="h-full flex flex-col">
-							<div className="mb-4 flex items-center justify-between">
-								<h2 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-600">Core Script</h2>
-								<span className="text-[10px] font-mono text-zinc-700">PYTHON 3.10 // BUILD123D</span>
+						<div className="flex h-full flex-col p-5 animate-in fade-in slide-in-from-right-3 duration-200">
+							<div className="mb-3 flex items-center justify-between">
+								<h2 className="font-mono text-[9px] font-bold uppercase tracking-[0.25em] text-zinc-700">OpenSCAD Source</h2>
+								<span className="font-mono text-[8px] uppercase tracking-tighter text-zinc-800">WASM / BOSL2</span>
 							</div>
-							<div className="flex-1 overflow-hidden rounded-xl border border-zinc-800 bg-black/50 shadow-inner">
+							<div className="flex-1 overflow-hidden rounded-xl border border-zinc-900 bg-black shadow-2xl">
 								<Editor
 									height="100%"
-									language="python"
+									language="cpp"
 									theme="vs-dark"
-									value={pythonScript}
-									onChange={(v) => onScriptChange(v || '')}
+									value={cadScript}
+									onChange={(v) => onScriptChange(v ?? '')}
 									options={{
-										minimap: { enabled: false },
-										fontSize: 12,
-										fontFamily: 'var(--font-mono)',
+										minimap:     { enabled: false },
+										fontSize:    12,
 										lineNumbers: 'on',
-										wordWrap: 'on',
+										wordWrap:    'on',
+										padding:     { top: 16 },
 										scrollBeyondLastLine: false,
-										padding: { top: 16 },
 									}}
 								/>
 							</div>
@@ -108,28 +108,27 @@ export function EditorDrawer({
 					)}
 				</div>
 
-				<div className="border-t border-zinc-800 p-6 bg-zinc-950/50 backdrop-blur-md">
+				{/* Rebuild button */}
+				<div className="shrink-0 border-t border-white/5 p-4">
 					<button
-						onClick={onRenderSync}
-						disabled={isRecompiling || !hasSession || !pythonScript}
-						className="group relative flex w-full items-center justify-center gap-3 overflow-hidden rounded-xl bg-emerald-500 py-3 text-xs font-bold uppercase tracking-widest text-black shadow-[0_0_20px_rgba(16,185,129,0.2)] hover:bg-emerald-400 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-40 disabled:scale-100 disabled:shadow-none"
+						onClick={onRebuild}
+						disabled={isCompiling || !hasScript}
+						className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-black shadow-lg shadow-emerald-500/15 transition-all hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-900 disabled:text-zinc-700 active:scale-[0.98]"
 					>
-						{isRecompiling ? (
-							<Loader2 className="size-4 animate-spin" />
-						) : (
-							<Wrench className="size-4 group-hover:rotate-45 transition-transform" />
-						)}
-						{isRecompiling ? 'Engine Working...' : 'Sync to Engine'}
-						<div className="absolute inset-0 -translate-x-full bg-linear-to-r from-transparent via-white/20 to-transparent group-hover:translate-x-full transition-transform duration-1000" />
+						{isCompiling
+							? <><Loader2 size={13} className="animate-spin" /> Compiling…</>
+							: <><Wrench  size={13} /> Rebuild Geometry</>
+						}
 					</button>
 				</div>
 			</div>
 
+			{/* Collapsed label */}
 			{!isOpen && (
-				<div className="flex h-full flex-col items-center gap-6 pt-20">
-					<div className="rotate-90 whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.4em] text-zinc-700">
-						Properties & Logic
-					</div>
+				<div className="absolute inset-y-0 inset-x-0 flex items-center justify-center pointer-events-none pt-16">
+					<span className="rotate-90 whitespace-nowrap font-mono text-[8px] font-bold uppercase tracking-[0.5em] text-zinc-800">
+						Config &amp; Source
+					</span>
 				</div>
 			)}
 		</aside>

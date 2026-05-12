@@ -1,112 +1,108 @@
 'use client';
 
-import { Suspense } from 'react';
+import { OrbitControls, PerspectiveCamera, Stage, Edges, Float, ContactShadows } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Stage, PerspectiveCamera } from '@react-three/drei';
-import { Loader2 } from 'lucide-react';
+import { Loader2, MousePointer2 } from 'lucide-react';
+import { Suspense, useState } from 'react';
 
 type CadViewportProps = {
-	stlUrl: string | null;
-	statusText: string;
-	isRecompiling: boolean;
-	hasStl: boolean;
-	hasStep: boolean;
-	isDownloadingStl: boolean;
-	isDownloadingStep: boolean;
-	onDownloadStl: () => void;
-	onDownloadStep: () => void;
-	children?: React.ReactNode; // For StlMesh
+    stlUrl: string | null;
+    statusText: string;
+    isRecompiling: boolean;
+    hasStl: boolean;
+    onDownloadStl: () => void;
+    children?: React.ReactNode;
+    onSelectPart?: (partName: string) => void;
 };
 
-export function CadViewport({
-	stlUrl,
-	statusText,
-	isRecompiling,
-	hasStl,
-	hasStep,
-	isDownloadingStl,
-	isDownloadingStep,
-	onDownloadStl,
-	onDownloadStep,
-	children
-}: CadViewportProps) {
-	return (
-		<section className="relative flex flex-1 flex-col overflow-hidden bg-black">
-			<header className="flex h-16 items-center justify-between border-b border-zinc-800 bg-[#09090b]/80 backdrop-blur-md px-6 z-10">
-				<div>
-					<p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Geometry Stream</p>
-					<p className="text-sm font-medium text-zinc-100 flex items-center gap-2">
-						<span className={`size-1.5 rounded-full ${stlUrl ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
-						{statusText}
-					</p>
-				</div>
-				
-				<div className="flex items-center gap-2">
-					{hasStl && (
-						<button
-							onClick={onDownloadStl}
-							disabled={isDownloadingStl}
-							className="flex h-9 items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-4 text-[11px] font-bold uppercase tracking-wider text-zinc-100 hover:border-zinc-500 hover:bg-zinc-800 transition-all disabled:opacity-50"
-						>
-							{isDownloadingStl ? <Loader2 className="size-3 animate-spin" /> : 'STL'}
-						</button>
-					)}
-					{hasStep && (
-						<button
-							onClick={onDownloadStep}
-							disabled={isDownloadingStep}
-							className="flex h-9 items-center gap-2 rounded-lg bg-amber-500 px-4 text-[11px] font-bold uppercase tracking-wider text-black hover:bg-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.2)] transition-all disabled:opacity-50"
-						>
-							{isDownloadingStep ? <Loader2 className="size-3 animate-spin" /> : 'STEP'}
-						</button>
-					)}
-				</div>
-			</header>
+export function CadViewport({ stlUrl, statusText, isRecompiling, children, onSelectPart, hasStl, onDownloadStl }: CadViewportProps) {
+    const [hovered, setHovered] = useState<string | null>(null);
 
-			<div className="relative flex-1">
-				<Canvas shadows dpr={[1, 2]}>
-					<PerspectiveCamera makeDefault position={[5, 5, 5]} fov={40} />
-					<color attach="background" args={['#000000']} />
-					
-					<Suspense fallback={null}>
-						<Stage intensity={0.5} environment="city" adjustCamera={false} shadows="contact">
-							{children}
-						</Stage>
-					</Suspense>
+    return (
+        <section className="relative flex h-full w-full flex-col overflow-hidden bg-transparent cursor-crosshair">
+            <header className="absolute top-0 inset-x-0 h-20 flex items-start justify-between p-6 z-10 pointer-events-none">
+                <div className="pointer-events-auto bg-black/40 backdrop-blur-md p-3 rounded-xl border border-white/5">
+                    <div className="flex items-center gap-3">
+                        <div className={`size-2 rounded-full ${stlUrl ? 'bg-cyan-500 shadow-[0_0_15px_#06b6d4]' : 'bg-amber-500 animate-pulse'}`} />
+                        <div className="flex flex-col">
+                            <span className="text-[10px] font-bold text-zinc-100 uppercase tracking-widest">{statusText}</span>
+                            <span className="text-[8px] text-zinc-500 uppercase tracking-tighter">WASM Render Thread: Active</span>
+                        </div>
+                    </div>
+                </div>
 
-					<gridHelper args={[20, 20, '#18181b', '#09090b']} position={[0, -0.01, 0]} />
-					<OrbitControls makeDefault enableDamping dampingFactor={0.05} minPolarAngle={0} maxPolarAngle={Math.PI / 1.75} />
-				</Canvas>
+                <div className="pointer-events-auto flex gap-2">
+                    {hovered && (
+                        <div className="bg-cyan-500/10 border border-cyan-500/20 px-3 py-1.5 rounded-md flex items-center gap-2">
+                            <MousePointer2 size={10} className="text-cyan-400" />
+                            <span className="text-[9px] font-bold text-cyan-400 uppercase tracking-widest">{hovered}</span>
+                        </div>
+                    )}
+                    {hasStl && (
+                        <button 
+                            onClick={onDownloadStl}
+                            className="bg-zinc-900 border border-zinc-800 px-4 py-2 rounded-lg text-[10px] font-bold text-zinc-400 hover:text-zinc-100 hover:border-zinc-500 transition-all"
+                        >
+                            EXPORT STL
+                        </button>
+                    )}
+                </div>
+            </header>
 
-				{!stlUrl && !isRecompiling && (
-					<div className="pointer-events-none absolute inset-0 flex items-center justify-center p-12">
-						<div className="max-w-md rounded-2xl border border-zinc-800/50 bg-zinc-900/30 backdrop-blur-xl p-8 text-center shadow-2xl">
-							<div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-xl bg-zinc-800/50 text-zinc-500">
-								<Loader2 className="size-6 opacity-20" />
-							</div>
-							<h3 className="mb-2 text-sm font-bold text-zinc-100">Waiting for CAD Parameters</h3>
-							<p className="text-xs text-zinc-500 leading-relaxed">
-								Upload a technical drawing and generate a script. Once generated, we'll render your 3D model here.
-							</p>
-						</div>
-					</div>
-				)}
+            {/* This flex-1 wrapper strictly bounds the Canvas to the remaining height */}
+            <div className="relative flex-1 h-full w-full">
+                <Canvas shadows dpr={[1, 2]} gl={{ antialias: true, preserveDrawingBuffer: true }} className="h-full w-full outline-none">
+                    <PerspectiveCamera makeDefault position={[10, 10, 10]} fov={25} />
+                    
+                    <Suspense fallback={null}>
+                        <Stage intensity={0.5} environment="warehouse" adjustCamera={false}>
+                            <Float speed={1.5} rotationIntensity={0.2} floatIntensity={0.5}>
+                                <group 
+                                    onPointerOver={(e) => { e.stopPropagation(); setHovered(e.object.name || null); }}
+                                    onPointerOut={() => setHovered(null)}
+                                    onClick={(e) => { e.stopPropagation(); onSelectPart?.(e.object.name); }}
+                                >
+                                    {children}
+                                    <Edges color="#06b6d4" threshold={15} opacity={0.3} transparent />
+                                </group>
+                            </Float>
+                        </Stage>
+                        <ContactShadows position={[0, -1, 0]} opacity={0.4} scale={20} blur={2.4} far={4.5} />
+                    </Suspense>
 
-				{isRecompiling && (
-					<div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-20 transition-all">
-						<div className="flex items-center gap-3 rounded-2xl border border-amber-500/30 bg-zinc-950 p-6 shadow-[0_0_30px_rgba(245,158,11,0.1)]">
-							<div className="relative">
-								<div className="absolute inset-0 size-5 animate-ping rounded-full bg-amber-500/20" />
-								<Loader2 className="size-5 animate-spin text-amber-500" />
-							</div>
-							<div className="flex flex-col">
-								<span className="text-xs font-bold uppercase tracking-widest text-zinc-100">Engine Active</span>
-								<span className="text-[10px] text-zinc-500">Recomputing Geometry Topology...</span>
-							</div>
-						</div>
-					</div>
-				)}
-			</div>
-		</section>
-	);
+                    <gridHelper args={[50, 50, '#1a1a1a', '#0a0a0a']} position={[0, -0.01, 0]} />
+                    <OrbitControls makeDefault enableDamping minPolarAngle={0} maxPolarAngle={Math.PI / 1.75} />
+                </Canvas>
+            </div>
+
+            {!stlUrl && !isRecompiling && (
+                <div className="absolute inset-0 flex items-center justify-center p-12 z-0 pointer-events-none">
+                    <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="size-96 glow-bg blur-[80px] opacity-10 bg-cyan-500" />
+                    </div>
+                    <div className="max-w-sm text-center relative z-10 pointer-events-auto">
+                        <div className="inline-flex size-14 items-center justify-center rounded-3xl bg-zinc-900/40 text-zinc-600 mb-8 border border-white/5 shadow-2xl backdrop-blur-md">
+                            <Loader2 size={28} className="opacity-40" />
+                        </div>
+                        <h3 className="text-xs font-black text-zinc-100 uppercase tracking-[0.4em] mb-4">Awaiting Geometry</h3>
+                        <p className="text-[11px] text-zinc-500 leading-relaxed font-medium max-w-[280px] mx-auto uppercase tracking-wider opacity-60">
+                            Initialize the neural pipeline by uploading a technical blueprint.
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {isRecompiling && (
+                <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center z-20 animate-in fade-in duration-300">
+                    <div className="flex flex-col items-center gap-4">
+                        <div className="relative">
+                            <div className="absolute inset-0 size-8 rounded-full bg-cyan-500/10 animate-ping" />
+                            <Loader2 size={32} className="text-cyan-500 animate-spin" />
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-500/80">Compiling Mesh</span>
+                    </div>
+                </div>
+            )}
+        </section>
+    );
 }

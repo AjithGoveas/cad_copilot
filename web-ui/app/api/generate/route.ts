@@ -118,7 +118,7 @@ export async function POST(request: Request): Promise<Response> {
 			method: 'POST',
 			body: formData,
 			headers: {
-				accept: 'text/event-stream',
+				accept: 'application/json',
 			},
 			cache: 'no-store',
 		});
@@ -133,22 +133,23 @@ export async function POST(request: Request): Promise<Response> {
 		);
 	}
 
-	if (!upstream.ok || !upstream.body) {
-		const parsed = await upstream.json().catch(() => null);
-		const extracted = extractErrorFromUnknown(parsed, 'AI engine failed to generate script.');
+	const upstreamPayload = await upstream.json().catch(() => null);
+	if (!upstream.ok || !upstreamPayload || typeof upstreamPayload !== 'object') {
+		const extracted = extractErrorFromUnknown(upstreamPayload, 'AI engine failed to generate script.');
 		return NextResponse.json(buildError(extracted.message, extracted.hint, session.id), {
 			status: upstream.status || 502,
 		});
 	}
 
+	const normalized = {
+		...upstreamPayload,
+		session_id: session.id,
+	};
+
 	const headers = new Headers();
-	headers.set('content-type', upstream.headers.get('content-type') ?? 'text/event-stream; charset=utf-8');
-	headers.set('cache-control', 'no-cache, no-transform');
-	headers.set('x-accel-buffering', 'no');
 	headers.set('x-session-id', session.id);
 
-	// Return the upstream ReadableStream directly so SSE chunks are not buffered.
-	return new Response(upstream.body, {
+	return NextResponse.json(normalized, {
 		status: upstream.status,
 		headers,
 	});
