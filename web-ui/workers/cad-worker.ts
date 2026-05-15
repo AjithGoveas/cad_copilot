@@ -4,10 +4,12 @@
 
 type WarmupRequest      = { type: 'warmup' };
 type CompileRequest     = { type: 'compile'; id: number; script: string };
-type WorkerRequest      = WarmupRequest | CompileRequest;
+type ExportRequest      = { type: 'export'; id: number; script: string; format: 'stl' | 'dxf' | 'off' | 'amf' | '3mf' };
+type WorkerRequest      = WarmupRequest | CompileRequest | ExportRequest;
 
 type ReadyMessage           = { type: 'ready' };
 type CompiledMessage        = { type: 'compiled'; id: number; stl: ArrayBuffer; durationMs: number };
+type ExportedMessage        = { type: 'exported'; id: number; data: ArrayBuffer; format: string; durationMs: number };
 
 // Structured error with type classification for the self-healing UI
 type ErrorMessage = {
@@ -18,7 +20,7 @@ type ErrorMessage = {
 	details: string;  // Full stack trace / WASM stderr
 };
 
-type WorkerMessage = ReadyMessage | CompiledMessage | ErrorMessage;
+type WorkerMessage = ReadyMessage | CompiledMessage | ExportedMessage | ErrorMessage;
 
 // ─── Engine Interface ────────────────────────────────────────────────────────
 
@@ -63,6 +65,19 @@ async function ensureEngine(): Promise<OpenScadInstance> {
 			return mod.createOpenSCAD({
 				print: (text: string) => console.log('[OpenSCAD]', text),
 				printErr: (text: string) => {
+					// Ignore harmless localization warnings
+					if (text.includes('localization')) return;
+
+        			// OpenSCAD outputs build stats to stderr. Filter them so they aren't treated as crashes.
+					const isStat = /Geometries|CGAL|rendering time|Top level object|Simple:|Vertices:|Halfedges:|Edges:|Halffacets:|Facets:|Volumes:/i.test(text);
+					
+					if (isStat) {
+						// Optional: You can log these as debug info, or just do nothing to hide them
+						// console.debug('[OpenSCAD Stat]', text); 
+						return; 
+					}
+
+					// If it makes it here, it's a real error (like a syntax error or math failure)
 					console.warn('[OpenSCAD Error]', text);
 					stderrCapture.push(text);
 				},
@@ -134,46 +149,69 @@ function normaliseThrown(err: unknown): Error & { details?: string; classified?:
 }
 
 const INPUT_PATH  = '/input.scad';
-const OUTPUT_PATH = '/output.stl';
+
+async function exportToFile(
+    script: string,
+    format: 'stl' | 'dxf' | 'off' | 'amf' | '3mf'
+): Promise<{ buffer: ArrayBuffer; durationMs: number }> {
+    const engine   = await ensureEngine();
+    const instance = engine.getInstance();
+    const fs       = instance.FS;
+
+    stderrCapture.length = 0; 
+    const started = performance.now();
+    const outputPath = `/output.${format}`;
+
+    try {
+        // Clean up any old files
+        try { if (fs.analyzePath(INPUT_PATH).exists) fs.unlink(INPUT_PATH); } catch (e) {}
+        try { if (fs.analyzePath(outputPath).exists) fs.unlink(outputPath); } catch (e) {}
+
+        // ── DXF Safety: OpenSCAD requires 2D geometry for DXF export ──────────
+        let finalScript = script;
+        if (format === 'dxf' && !script.includes('projection(')) {
+            console.log('[CAD-Worker] Applying projection() to final module call for DXF export...');
+            
+            // This regex finds the LAST function call in the file (e.g., "part_root();")
+            // and safely wraps ONLY that call in the projection modifier.
+            finalScript = script.replace(
+                /([\w]+\s*\([^)]*\)\s*;)(?=[^;]*$)/, 
+                "projection(cut=false) { $1 }"
+            );
+        }
+
+        fs.writeFile(INPUT_PATH, finalScript);
+
+        // Use callMain for direct CLI-style export
+        const exitCode = instance.callMain(['-o', outputPath, INPUT_PATH]);
+
+        if (exitCode !== 0 || !fs.analyzePath(outputPath).exists) {
+            const details = stderrCapture.join('\n');
+            throw Object.assign(
+                new Error(`OpenSCAD export to ${format.toUpperCase()} failed (exit ${exitCode}).`),
+                { details, classified: classifyError('compile', details) }
+            );
+        }
+
+        const outputData = fs.readFile(outputPath) as Uint8Array;
+        const buffer     = outputData.buffer.slice(outputData.byteOffset, outputData.byteOffset + outputData.byteLength) as ArrayBuffer;
+        const durationMs = Math.round(performance.now() - started);
+
+        console.log(`[CAD-Worker] Exported ${format.toUpperCase()} in ${durationMs}ms - ${Math.round(buffer.byteLength / 1024)} KB`);
+        return { buffer, durationMs };
+
+    } catch (err: unknown) {
+        throw normaliseThrown(err);
+    } finally {
+        try { if (fs.analyzePath(INPUT_PATH).exists) fs.unlink(INPUT_PATH); } catch (e) {}
+        try { if (fs.analyzePath(outputPath).exists) fs.unlink(outputPath); } catch (e) {}
+    }
+}
 
 async function compileToStl(
 	script: string
 ): Promise<{ buffer: ArrayBuffer; durationMs: number }> {
-	const engine   = await ensureEngine();
-	const instance = engine.getInstance();
-	const fs       = instance.FS;
-
-	stderrCapture.length = 0; 
-	const started = performance.now();
-
-	fs.writeFile(INPUT_PATH, script);
-
-	let stlText: string | null = null;
-	try {
-		stlText = await engine.renderToStl(script);
-
-		if (!stlText || stlText.trim().length === 0) {
-			const details = stderrCapture.join('\n');
-			throw Object.assign(
-				new Error('OpenSCAD returned empty STL output.'),
-				{ details, classified: classifyError('compile', details) }
-			);
-		}
-	} catch (err: unknown) {
-		throw normaliseThrown(err);
-	} finally {
-		try { if (fs.analyzePath(INPUT_PATH).exists) fs.unlink(INPUT_PATH); } catch (e) {}
-		try { if (fs.analyzePath(OUTPUT_PATH).exists) fs.unlink(OUTPUT_PATH); } catch (e) {}
-	}
-
-	const durationMs = Math.round(performance.now() - started);
-	const encoded    = new TextEncoder().encode(stlText);
-	stlText = null; // GC pressure relief
-	
-	const buffer = encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
-
-	console.log(`[CAD-Worker] Compiled in ${durationMs}ms - ${Math.round(buffer.byteLength / 1024)} KB`);
-	return { buffer, durationMs };
+	return exportToFile(script, 'stl');
 }
 
 // -- Message Handler ----------------------------------------------------------
@@ -203,29 +241,46 @@ workerScope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 						[result.buffer]
 					);
 				} catch (err: unknown) {
-					const e         = err as Error & { details?: string; classified?: ErrorMessage['errorType'] };
-					const message   = e.message ?? 'Unknown compile error';
-					const details   = e.details  ?? stderrCapture.join('\n');
-					const errorType = e.classified ?? classifyError(message, details);
+					handleWorkerError(err, data.id);
+				}
+				break;
+			}
 
-					workerScope.postMessage({
-						type: 'error',
-						id: data.id,
-						errorType,
-						message,
-						details,
-					} satisfies ErrorMessage);
+			case 'export': {
+				try {
+					const result = await exportToFile(data.script, data.format);
+					workerScope.postMessage(
+						{
+							type: 'exported',
+							id: data.id,
+							data: result.buffer,
+							format: data.format,
+							durationMs: result.durationMs,
+						} satisfies ExportedMessage,
+						[result.buffer]
+					);
+				} catch (err: unknown) {
+					handleWorkerError(err, data.id);
 				}
 				break;
 			}
 		}
 	} catch (outerErr: unknown) {
-		const message = outerErr instanceof Error ? outerErr.message : String(outerErr);
-		workerScope.postMessage({
-			type: 'error',
-			errorType: 'Unknown',
-			message,
-			details: stderrCapture.join('\n'),
-		} satisfies ErrorMessage);
+		handleWorkerError(outerErr);
 	}
 };
+
+function handleWorkerError(err: unknown, id?: number) {
+	const e         = normaliseThrown(err);
+	const message   = e.message ?? 'Unknown worker error';
+	const details   = e.details  ?? stderrCapture.join('\n');
+	const errorType = e.classified ?? classifyError(message, details);
+
+	workerScope.postMessage({
+		type: 'error',
+		id,
+		errorType,
+		message,
+		details,
+	} satisfies ErrorMessage);
+}
