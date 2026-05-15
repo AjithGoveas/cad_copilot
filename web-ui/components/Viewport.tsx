@@ -1,9 +1,9 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useState, useRef, useEffect, memo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Stage, ContactShadows } from '@react-three/drei';
-import { Loader2, Download, MousePointer2 } from 'lucide-react';
+import { Loader2, Download, MousePointer2, ChevronDown, Layers, Box } from 'lucide-react';
 import { StlMesh } from './StlMesh';
 
 type Props = {
@@ -12,10 +12,24 @@ type Props = {
 	isCompiling:   boolean;
 	onMeshClick?:  (point: [number, number, number] | null) => void;
 	onDownloadStl?: () => void;
+	onDownloadDxf?: () => void;
 };
 
-export function Viewport({ stlUrl, statusText, isCompiling, onMeshClick, onDownloadStl }: Props) {
+export const Viewport = memo(function Viewport({ stlUrl, statusText, isCompiling, onMeshClick, onDownloadStl, onDownloadDxf }: Props) {
 	const [hintVisible, setHintVisible] = useState(false);
+	const [isExportOpen, setIsExportOpen] = useState(false);
+	const dropdownRef = useRef<HTMLDivElement>(null);
+
+	// Close dropdown on outside click
+	useEffect(() => {
+		const handleClickOutside = (event: MouseEvent) => {
+			if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+				setIsExportOpen(false);
+			}
+		};
+		document.addEventListener('mousedown', handleClickOutside);
+		return () => document.removeEventListener('mousedown', handleClickOutside);
+	}, []);
 
 	return (
 		<section className="relative flex-1 overflow-hidden bg-[#030303]">
@@ -59,7 +73,7 @@ export function Viewport({ stlUrl, statusText, isCompiling, onMeshClick, onDownl
 					/>
 				</Suspense>
 
-				<gridHelper args={[40, 40, '#111', '#0a0a0a']} position={[0, -0.01, 0]} />
+				{/* <gridHelper args={[40, 40, '#111', '#0a0a0a']} position={[0, -0.01, 0]} /> */}
 				<OrbitControls
 					makeDefault
 					enableDamping
@@ -88,15 +102,37 @@ export function Viewport({ stlUrl, statusText, isCompiling, onMeshClick, onDownl
 
 			{/* ── Action bar (top-right) ──────────────────────────────────── */}
 			{(stlUrl || hintVisible) && (
-				<div className="absolute top-5 right-5 z-10 flex items-center gap-2">
-					{stlUrl && onDownloadStl && (
-						<button
-							onClick={onDownloadStl}
-							className="glass flex items-center gap-2 rounded-xl px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-zinc-300 transition-all hover:bg-white/10 active:scale-95"
-						>
-							<Download size={12} />
-							Export STL
-						</button>
+				<div className="absolute top-5 right-5 z-10 flex items-center gap-2" ref={dropdownRef}>
+					{stlUrl && (
+						<div className="relative">
+							<button
+								onClick={() => setIsExportOpen(!isExportOpen)}
+								className="glass flex items-center gap-2 rounded-xl px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-300 transition-all hover:bg-white/10 active:scale-95 shadow-lg ring-1 ring-white/5"
+							>
+								<Download size={14} className={isExportOpen ? 'text-amber-500' : ''} />
+								Export
+								<ChevronDown size={12} className={`transition-transform duration-200 ${isExportOpen ? 'rotate-180' : ''}`} />
+							</button>
+
+							{isExportOpen && (
+								<div className="absolute right-0 mt-2 w-48 origin-top-right rounded-xl border border-zinc-800 bg-[#0c0c0e]/95 p-1.5 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200">
+									<button
+										onClick={() => { onDownloadStl?.(); setIsExportOpen(false); }}
+										className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-400 transition-colors hover:bg-white/5 hover:text-white"
+									>
+										<Box size={14} className="text-amber-500/60" />
+										3D Mesh (.STL)
+									</button>
+									<button
+										onClick={() => { onDownloadDxf?.(); setIsExportOpen(false); }}
+										className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-400 transition-colors hover:bg-white/5 hover:text-white"
+									>
+										<Layers size={14} className="text-emerald-500/60" />
+										2D Blueprint (.DXF)
+									</button>
+								</div>
+							)}
+						</div>
 					)}
 				</div>
 			)}
@@ -144,4 +180,4 @@ export function Viewport({ stlUrl, statusText, isCompiling, onMeshClick, onDownl
 			)}
 		</section>
 	);
-}
+});

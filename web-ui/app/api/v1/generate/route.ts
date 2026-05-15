@@ -1,49 +1,99 @@
-import { type NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
 
-const BACKEND_URL = process.env.BACKEND_URL ?? 'http://127.0.0.1:8000';
+const prisma = new PrismaClient();
+const PYTHON_BACKEND_URL = process.env.FASTAPI_URL;
 
 /**
- * POST /api/v1/generate
- *
- * Next.js Route Handler that acts as a resilient proxy to the FastAPI backend.
- * Using a Route Handler instead of next.config.ts rewrites gives us:
- *  - Configurable timeout (Gemini calls can take 30-60s)
- *  - Proper error forwarding (no silent ECONNRESET to the client)
- *  - Header passthrough without the dev-proxy's hard 30s socket limit
+ * Robust parameter extractor for OpenSCAD scripts.
+ * Looks for top-level assignments like `param = 10; // [0:100]`
  */
-export const maxDuration = 120; // seconds — Vercel/Edge: up to 300s on Pro
+function extractParameters(code: string): Record<string, any> {
+    const params: Record<string, any> = {};
+    const lines = code.split('\n');
+    
+    // Regex to match: name = value; // comments
+    // Matches numbers, booleans, and strings
+    const paramRegex = /^([a-zA-Z0-9_]+)\s*=\s*([^;]+);/i;
+    
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('//') || !trimmed.includes('=')) continue;
+        
+        const match = trimmed.match(paramRegex);
+        if (match) {
+            const [, name, rawValue] = match;
+            let val: any = rawValue.trim();
+            
+            // Basic type conversion
+            if (val.toLowerCase() === 'true') val = true;
+            else if (val.toLowerCase() === 'false') val = false;
+            else if (!isNaN(Number(val))) val = Number(val);
+            else if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+            
+            params[name] = val;
+        }
+    }
+    return params;
+}
 
 export async function POST(req: NextRequest) {
-	// Forward the raw multipart FormData directly to FastAPI
-	const body = await req.blob();
+    try {
+        const formData = await req.formData();
+        const prompt = formData.get('prompt') as string;
+        const model = formData.get('model') as string;
+        const image = formData.get('image') as File | null;
 
-	let backendRes: Response;
-	try {
-		backendRes = await fetch(`${BACKEND_URL}/api/v1/generate`, {
-			method:  'POST',
-			headers: {
-				// Forward content-type (includes boundary for multipart)
-				'content-type': req.headers.get('content-type') ?? 'application/octet-stream',
-			},
-			body,
-			// Node 18+ fetch does not have a built-in timeout; wrap with AbortSignal
-			signal: AbortSignal.timeout(110_000), // 110s — just under maxDuration
-		});
-	} catch (err: unknown) {
-		const msg = err instanceof Error ? err.message : String(err);
-		console.error('[proxy /api/v1/generate]', msg);
-		return NextResponse.json(
-			{ error: { message: `Backend unreachable: ${msg}` } },
-			{ status: 502 }
-		);
-	}
+        if (!prompt) {
+            return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
+        }
 
-	// Relay the response body and status verbatim
-	const responseBody = await backendRes.arrayBuffer();
-	return new NextResponse(responseBody, {
-		status:  backendRes.status,
-		headers: {
-			'content-type': backendRes.headers.get('content-type') ?? 'application/json',
-		},
-	});
+        // 1. Forward request to Python AI Backend
+        const backendFormData = new FormData();
+        backendFormData.append('prompt', prompt);
+        backendFormData.append('model', model);
+        if (image) {
+            backendFormData.append('image', image);
+        }
+
+        const backendRes = await fetch(`${PYTHON_BACKEND_URL}/generate`, {
+            method: 'POST',
+            body: backendFormData,
+        });
+
+        if (!backendRes.ok) {
+            const errorText = await backendRes.text();
+            throw new Error(`AI Engine failed: ${errorText}`);
+        }
+
+        const data = await backendRes.json();
+        const cadCode = data.openscad_script || '';
+        
+        // 2. Extract parameters for persistence
+        const parameters = extractParameters(cadCode);
+
+        // 3. Persist session to Database
+        const session = await prisma.session.create({
+            data: {
+                prompt,
+                cadScript: cadCode,
+                parameters: parameters,
+            },
+        });
+
+        // 4. Return result with DB ID
+        return NextResponse.json({
+            id: session.id,
+            code: cadCode,
+            parameters: parameters,
+            createdAt: session.createdAt,
+        });
+
+    } catch (err: any) {
+        console.error('[API/Generate] Error:', err);
+        return NextResponse.json(
+            { error: err.message || 'Internal Server Error' },
+            { status: 500 }
+        );
+    }
 }

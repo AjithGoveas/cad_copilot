@@ -8,10 +8,10 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-model CadSession {
+model Session {
   id           String   @id @default(cuid())
   prompt       String
-  pythonScript String?
+  cadScript    String?
   parameters   Json?
   stlUrl       String?
   stepUrl      String?

@@ -119,6 +119,34 @@ export function useCADEngine({
 		executeCompile(script);
 	}, [script, executeCompile]);
 
+	const exportFile = useCallback(async (format: 'stl' | 'dxf' | 'off' | 'amf' | '3mf') => {
+		if (!script) return null;
+
+		const worker = new Worker(
+			new URL('../workers/cad-worker.ts', import.meta.url),
+			{ type: 'module' }
+		);
+
+		return new Promise<string | null>((resolve, reject) => {
+			worker.onmessage = (e: MessageEvent) => {
+				const data = e.data;
+				if (data.type === 'ready') {
+					worker.postMessage({ type: 'export', script, format, id: Date.now() });
+				}
+				if (data.type === 'exported') {
+					const url = URL.createObjectURL(new Blob([data.data], { type: 'application/octet-stream' }));
+					worker.terminate();
+					resolve(url);
+				}
+				if (data.type === 'error') {
+					worker.terminate();
+					reject(new Error(data.message));
+				}
+			};
+			worker.postMessage({ type: 'warmup' });
+		});
+	}, [script]);
+
 	// ── Debounced Auto-Rebuild ────────────────────────────────────────────────
 	useEffect(() => {
 		if (!enabled || !script) return;
@@ -152,5 +180,6 @@ export function useCADEngine({
 		isRecompiling: status === 'compiling',
 		rebuild,
 		respawn,
+		exportFile,
 	};
 }
