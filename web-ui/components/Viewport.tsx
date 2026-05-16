@@ -2,34 +2,42 @@
 
 import { Suspense, useState, useRef, useEffect, memo } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, PerspectiveCamera, Stage, ContactShadows } from '@react-three/drei';
-import { Loader2, Download, MousePointer2, ChevronDown, Layers, Box } from 'lucide-react';
+import { OrbitControls, PerspectiveCamera, Stage, ContactShadows, Center } from '@react-three/drei';
+import { Loader2, Download, MousePointer2, ChevronDown, Layers, Box, ChevronRight } from 'lucide-react';
 import { StlMesh } from './StlMesh';
 
-type Props = {
-	stlUrl:        string | null;
-	statusText:    string;
-	isCompiling:   boolean;
-	onMeshClick?:  (point: [number, number, number] | null) => void;
-	onDownloadStl?: () => void;
-	onDownloadDxf?: () => void;
+import { 
+	DropdownMenu, 
+	DropdownMenuTrigger, 
+	DropdownMenuContent, 
+	DropdownMenuItem, 
+	DropdownMenuSub, 
+	DropdownMenuSubTrigger, 
+	DropdownMenuSubContent,
+	DropdownMenuSeparator,
+	DropdownMenuPortal
+} from './ui/dropdown-menu';
+
+type Selection = {
+	id:    string;
+	point: [number, number, number];
 };
 
-export const Viewport = memo(function Viewport({ stlUrl, statusText, isCompiling, onMeshClick, onDownloadStl, onDownloadDxf }: Props) {
-	const [hintVisible, setHintVisible] = useState(false);
-	const [isExportOpen, setIsExportOpen] = useState(false);
-	const dropdownRef = useRef<HTMLDivElement>(null);
+type Props = {
+	stlUrls:       Map<string, string>;
+	statusText:    string;
+	isCompiling:   boolean;
+	selection?:    Selection | null;
+	onMeshClick?:  (id: string | null, point: [number, number, number] | null) => void;
+	onDownloadStl?: () => void;
+	onDownloadDxf?: (mode: 'silhouette' | 'section' | 'blueprint') => void;
+	onDownloadScad?: () => void;
+};
 
-	// Close dropdown on outside click
-	useEffect(() => {
-		const handleClickOutside = (event: MouseEvent) => {
-			if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-				setIsExportOpen(false);
-			}
-		};
-		document.addEventListener('mousedown', handleClickOutside);
-		return () => document.removeEventListener('mousedown', handleClickOutside);
-	}, []);
+export const Viewport = memo(function Viewport({ stlUrls, statusText, isCompiling, selection, onMeshClick, onDownloadStl, onDownloadDxf, onDownloadScad }: Props) {
+	const [hintVisible, setHintVisible] = useState(false);
+
+	const hasGeometry = stlUrls.size > 0;
 
 	return (
 		<section className="relative flex-1 overflow-hidden bg-[#030303]">
@@ -49,20 +57,26 @@ export const Viewport = memo(function Viewport({ stlUrl, statusText, isCompiling
 
 				<Suspense fallback={null}>
 					<Stage
-						intensity={0.5}
-						environment="warehouse"
-						adjustCamera={false}
+						intensity={0.8}
+						environment="city"
+						adjustCamera={true}
 						shadows="contact"
+						preset="rembrandt"
 					>
-						{stlUrl && (
-							<StlMesh
-								url={stlUrl}
-								onMeshClick={(pt) => {
-									onMeshClick?.(pt);
-									setHintVisible(false);
-								}}
-							/>
-						)}
+						<Center>
+							{Array.from(stlUrls.entries()).map(([id, url]) => (
+								<StlMesh
+									key={id}
+									id={id}
+									url={url}
+									isSelected={selection?.id === id}
+									onMeshClick={(pt) => {
+										onMeshClick?.(id, pt);
+										setHintVisible(false);
+									}}
+								/>
+							))}
+						</Center>
 					</Stage>
 					<ContactShadows
 						position={[0, -1.2, 0]}
@@ -89,7 +103,7 @@ export const Viewport = memo(function Viewport({ stlUrl, statusText, isCompiling
 						className={`size-2 shrink-0 rounded-full ${
 							isCompiling
 								? 'bg-amber-500 animate-pulse'
-								: stlUrl
+								: hasGeometry
 								? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]'
 								: 'bg-zinc-600'
 						}`}
@@ -101,44 +115,78 @@ export const Viewport = memo(function Viewport({ stlUrl, statusText, isCompiling
 			</div>
 
 			{/* ── Action bar (top-right) ──────────────────────────────────── */}
-			{(stlUrl || hintVisible) && (
-				<div className="absolute top-5 right-5 z-10 flex items-center gap-2" ref={dropdownRef}>
-					{stlUrl && (
-						<div className="relative">
-							<button
-								onClick={() => setIsExportOpen(!isExportOpen)}
-								className="glass flex items-center gap-2 rounded-xl px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-300 transition-all hover:bg-white/10 active:scale-95 shadow-lg ring-1 ring-white/5"
-							>
-								<Download size={14} className={isExportOpen ? 'text-amber-500' : ''} />
-								Export
-								<ChevronDown size={12} className={`transition-transform duration-200 ${isExportOpen ? 'rotate-180' : ''}`} />
-							</button>
+			{(hasGeometry || hintVisible) && (
+				<div className="absolute top-5 right-5 z-10 flex items-center gap-2">
+					{hasGeometry && (
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<button
+									className="glass flex items-center gap-2 rounded-xl px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-300 transition-all hover:bg-white/10 active:scale-95 shadow-lg ring-1 ring-white/5 data-[state=open]:ring-amber-500/50"
+								>
+									<Download size={14} className="group-data-[state=open]:text-amber-500" />
+									Export
+									<ChevronDown size={12} className="transition-transform duration-200 group-data-[state=open]:rotate-180" />
+								</button>
+							</DropdownMenuTrigger>
 
-							{isExportOpen && (
-								<div className="absolute right-0 mt-2 w-48 origin-top-right rounded-xl border border-zinc-800 bg-[#0c0c0e]/95 p-1.5 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200">
-									<button
-										onClick={() => { onDownloadStl?.(); setIsExportOpen(false); }}
-										className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-400 transition-colors hover:bg-white/5 hover:text-white"
+							<DropdownMenuContent align="end" className="w-52 border-zinc-800 bg-[#0c0c0e]/95 backdrop-blur-xl shadow-2xl p-1.5 rounded-xl">
+								<DropdownMenuItem 
+									onClick={onDownloadScad}
+									className="flex items-center gap-3 rounded-lg px-3 py-2 text-[10px] font-medium uppercase tracking-widest text-zinc-400 focus:bg-white/5 focus:text-white"
+								>
+									<Box size={14} className="text-blue-500/60" />
+									Source Code (.SCAD)
+								</DropdownMenuItem>
+								
+								<DropdownMenuItem 
+									onClick={onDownloadStl}
+									className="flex items-center gap-3 rounded-lg px-3 py-2 text-[10px] font-medium uppercase tracking-widest text-zinc-400 focus:bg-white/5 focus:text-white"
+								>
+									<Box size={14} className="text-amber-500/60" />
+									3D Mesh (.STL)
+								</DropdownMenuItem>
+
+								<DropdownMenuSub>
+									<DropdownMenuSubTrigger 
+										className="flex items-center justify-between rounded-lg px-3 py-2 text-[10px] font-medium uppercase tracking-widest text-zinc-400 focus:bg-white/5 focus:text-white data-[state=open]:bg-white/5 data-[state=open]:text-white"
 									>
-										<Box size={14} className="text-amber-500/60" />
-										3D Mesh (.STL)
-									</button>
-									<button
-										onClick={() => { onDownloadDxf?.(); setIsExportOpen(false); }}
-										className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[10px] font-medium uppercase tracking-widest text-zinc-400 transition-colors hover:bg-white/5 hover:text-white"
-									>
-										<Layers size={14} className="text-emerald-500/60" />
-										2D Blueprint (.DXF)
-									</button>
-								</div>
-							)}
-						</div>
+										<div className="flex items-center gap-3">
+											<Layers size={14} className="text-emerald-500/60" />
+											2D Blueprint (.DXF)
+										</div>
+									</DropdownMenuSubTrigger>
+									<DropdownMenuPortal>
+										<DropdownMenuSubContent className="w-48 border-zinc-800 bg-[#0c0c0e]/95 backdrop-blur-xl shadow-2xl p-1.5 rounded-xl ml-1">
+											<DropdownMenuItem 
+												onClick={() => onDownloadDxf?.('silhouette')}
+												className="rounded-lg px-3 py-2 text-[10px] font-medium uppercase tracking-widest text-zinc-400 focus:bg-white/5 focus:text-white"
+											>
+												Silhouette Outline
+											</DropdownMenuItem>
+											<DropdownMenuItem 
+												onClick={() => onDownloadDxf?.('section')}
+												className="rounded-lg px-3 py-2 text-[10px] font-medium uppercase tracking-widest text-zinc-400 focus:bg-white/5 focus:text-white"
+											>
+												Cross-Section Slice
+											</DropdownMenuItem>
+											<DropdownMenuSeparator className="bg-zinc-800/50" />
+											<DropdownMenuItem 
+												onClick={() => onDownloadDxf?.('blueprint')}
+												className="rounded-lg px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-emerald-400 focus:bg-emerald-500/10 focus:text-emerald-300"
+											>
+												Multi-View Sheet
+											</DropdownMenuItem>
+										</DropdownMenuSubContent>
+									</DropdownMenuPortal>
+								</DropdownMenuSub>
+							</DropdownMenuContent>
+						</DropdownMenu>
 					)}
 				</div>
 			)}
 
 			{/* ── Click-to-Edit hint (bottom) ─────────────────────────────── */}
-			{stlUrl && (
+			{hasGeometry && (
 				<div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
 					<div className="glass flex items-center gap-2 rounded-full px-4 py-2">
 						<MousePointer2 size={11} className="text-zinc-500" />
@@ -150,7 +198,7 @@ export const Viewport = memo(function Viewport({ stlUrl, statusText, isCompiling
 			)}
 
 			{/* ── Empty State ─────────────────────────────────────────────── */}
-			{!stlUrl && !isCompiling && (
+			{!hasGeometry && !isCompiling && (
 				<div className="absolute inset-0 flex flex-col items-center justify-center gap-6 pointer-events-none">
 					<div className="size-24 rounded-full bg-amber-500/5 animate-glow blur-2xl absolute" />
 					<div className="glass flex size-16 items-center justify-center rounded-3xl">

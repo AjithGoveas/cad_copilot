@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useEffect, useRef } from 'react';
 
 type Props = {
     label: string;
@@ -10,14 +10,26 @@ type Props = {
 };
 
 export function ParameterInput({ label, value, isFocused, onChange }: Props) {
+    const containerRef = useRef<HTMLDivElement>(null);
     const displayLabel = useMemo(() => label.replace(/_/g, ' '), [label]);
+
+    useEffect(() => {
+        if (isFocused && containerRef.current) {
+            containerRef.current.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center',
+            });
+        }
+    }, [isFocused]);
 
     // For larger inputs (like objects/strings), we stack them. 
     // For simple inputs (numbers/booleans), we use a clean horizontal row.
     const isComplex = typeof value !== 'number' && typeof value !== 'boolean' && typeof value !== 'string';
 
     return (
-        <div className={`group flex py-2.5 transition-colors border-b border-zinc-800/40 last:border-0 ${
+        <div 
+            ref={containerRef}
+            className={`group flex py-2.5 transition-colors border-b border-zinc-800/40 last:border-0 ${
             isComplex ? 'flex-col gap-2' : 'items-center justify-between gap-4'
         } ${isFocused ? 'bg-amber-500/5 -mx-4 px-4 border-y border-amber-500/20' : ''}`}>
             

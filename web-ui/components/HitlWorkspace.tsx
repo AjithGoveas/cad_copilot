@@ -47,7 +47,16 @@ export default function HitlWorkspace() {
 	const [selection,   setSelection]   = useState<Selection | null>(null);
 
 	// WASM engine
-	const { stlUrl, statusText, engineError, isRecompiling, rebuild, respawn, exportFile } = useCADEngine({
+	const { 
+		stlUrls, 
+		statusText, 
+		engineError, 
+		isRecompiling, 
+		isExporting,
+		rebuild, 
+		respawn, 
+		exportModel 
+	} = useCADEngine({
 		script:    cadScript,
 		enabled:   !!cadScript,
 	});
@@ -107,23 +116,57 @@ export default function HitlWorkspace() {
 	}, []);
 
 	// ── Handlers ─────────────────────────────────────────────────────────────
-	const handleMeshClick = useCallback((point: [number, number, number] | null) => {
-		if (point) {
-			setSelection({ id: 'selected_feature', point });
+	const handleMeshClick = useCallback((id: string | null, point: [number, number, number] | null) => {
+		if (point && id) {
+			setSelection({ id, point });
 			setActiveTab('parameters');
 		} else {
 			setSelection(null);
 		}
 	}, []);
 
-	const handleDownload = useCallback(() => {
-		if (!stlUrl) return;
+	const handleExport = useCallback(async (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => {
+		if (!cadScript) return;
+		const label = format.toUpperCase();
+		const modeLabel = dxfMode ? ` (${dxfMode})` : '';
+		toast.info(`Exporting ${label}${modeLabel}…`, { description: `Preparing ${label} geometry kernel…` });
+		
+		try {
+			const buffer = await exportModel(format, dxfMode);
+			const blob = new Blob([buffer], { type: 'application/octet-stream' });
+			const url = URL.createObjectURL(blob);
+			
+			const filename = dxfMode === 'blueprint' 
+				? `technical_blueprint.dxf` 
+				: `generated_model.${format}`;
+
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = filename;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			URL.revokeObjectURL(url);
+			
+			toast.success(`${label} Exported Successfully`);
+		} catch (err) {
+			toast.error(`${label} Export Failed`, { description: String(err) });
+		}
+	}, [cadScript, exportModel]);
+
+	const handleDownloadScad = useCallback(() => {
+		if (!cadScript) return;
+		const blob = new Blob([cadScript], { type: 'text/plain' });
+		const url = URL.createObjectURL(blob);
 		const a = document.createElement('a');
-		a.href     = stlUrl;
-		a.download = 'cad-copilot-output.stl';
+		a.href = url;
+		a.download = 'generated_part.scad';
+		document.body.appendChild(a);
 		a.click();
-		toast.success('STL Exported');
-	}, [stlUrl]);
+		document.body.removeChild(a);
+		URL.revokeObjectURL(url);
+		toast.success('SCAD File Downloaded');
+	}, [cadScript]);
 
 	const handleLoadSession = useCallback((script: string, params: any) => {
 		setCadScript(script);
@@ -131,24 +174,6 @@ export default function HitlWorkspace() {
 		setActiveTab('parameters');
 		toast.success('Session loaded from history');
 	}, []);
-
-	const handleDownloadDxf = useCallback(async () => {
-		if (!cadScript) return;
-		toast.info('Generating DXF…', { description: 'Running 2D projection kernel…' });
-		try {
-			const url = await exportFile('dxf');
-			if (url) {
-				const a = document.createElement('a');
-				a.href = url;
-				a.download = 'cad-copilot-blueprint.dxf';
-				a.click();
-				URL.revokeObjectURL(url);
-				toast.success('DXF Exported');
-			}
-		} catch (err) {
-			toast.error('DXF Export failed', { description: String(err) });
-		}
-	}, [cadScript, exportFile]);
 
 	const memoizedParams = useMemo(() => {
 		return Object.entries(parameters);
@@ -220,12 +245,14 @@ export default function HitlWorkspace() {
 			{/* ── Main Viewport Area ───────────────────────────────────────── */}
 			<main className="relative flex flex-1 flex-col overflow-hidden">
 				<Viewport
-					stlUrl={stlUrl}
+					stlUrls={stlUrls}
 					statusText={statusText}
 					isCompiling={isRecompiling || isGenerating}
+					selection={selection}
 					onMeshClick={handleMeshClick}
-					onDownloadStl={handleDownload}
-					onDownloadDxf={handleDownloadDxf}
+					onDownloadStl={() => handleExport('stl')}
+					onDownloadDxf={(mode) => handleExport('dxf', mode)}
+					onDownloadScad={handleDownloadScad}
 				/>
 
 				{/* WASM Error Banner */}
@@ -262,11 +289,13 @@ export default function HitlWorkspace() {
 				onScriptChange={setCadScript}
 				onRebuild={rebuild}
 				isCompiling={isRecompiling}
+				isExporting={isExporting}
 				hasScript={!!cadScript}
 				selection={selection}
 				onClearSelection={() => setSelection(null)}
 				onLoadSession={handleLoadSession}
-				onDownloadDxf={handleDownloadDxf}
+				onExport={handleExport}
+				onDownloadScad={handleDownloadScad}
 			>
 				{memoizedParams.length > 0 ? (
 					<div className="space-y-6">
@@ -275,6 +304,7 @@ export default function HitlWorkspace() {
 								key={key}
 								label={key}
 								value={val}
+								isFocused={selection?.id === key}
 								onChange={(newVal) => handleParamChange(key, newVal)}
 							/>
 						))}

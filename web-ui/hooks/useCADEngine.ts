@@ -40,146 +40,168 @@ export function useCADEngine({
 	debounceMs   = 600,
 }: CADEngineConfig) {
 
-	const [stlUrl,      setStlUrl]      = useState<string | null>(null);
+	const [stlUrls,     setStlUrls]     = useState<Map<string, string>>(new Map());
 	const [status,      setStatus]      = useState<EngineStatus>('idle');
 	const [engineError, setEngineError] = useState<EngineError | null>(null);
+	const [isExporting, setIsExporting] = useState(false);
 
-	// Refs
-	const currentWorkerRef = useRef<Worker | null>(null);
+	// Refs for persistence and coordination
+	const workerRef = useRef<Worker | null>(null);
+	const lastRequestIdRef = useRef<number>(0);
+	const pendingRequestsRef = useRef<Map<number, (data: any) => void>>(new Map());
 
-	// ── Core: One-Shot Compilation ───────────────────────────────────────────
-	const executeCompile = useCallback(async (code: string) => {
-		// 1. Terminate any previous pending worker to avoid race conditions
-		if (currentWorkerRef.current) {
-			currentWorkerRef.current.terminate();
+	// ── Worker Management ───────────────────────────────────────────────────
+
+	const terminateWorker = useCallback(() => {
+		if (workerRef.current) {
+			workerRef.current.terminate();
+			workerRef.current = null;
 		}
+		pendingRequestsRef.current.clear();
+	}, []);
 
-		setStatus('compiling');
-		setEngineError(null);
+	const getWorker = useCallback(() => {
+		if (workerRef.current) return workerRef.current;
 
+		console.log('[useCADEngine] Spawning persistent worker...');
 		const worker = new Worker(
 			new URL('../workers/cad-worker.ts', import.meta.url),
 			{ type: 'module' }
 		);
-		currentWorkerRef.current = worker;
 
-		return new Promise<void>((resolve) => {
-			worker.onmessage = (e: MessageEvent) => {
-				const data = e.data;
+		worker.onmessage = (e: MessageEvent) => {
+			const data = e.data;
+			
+			// Handle structured messages
+			if (data.type === 'ready') {
+				// Worker is ready to receive commands
+				return;
+			}
 
-				if (data.type === 'ready') {
-					// In the one-shot pattern, we warmup then immediately compile
-					worker.postMessage({ type: 'compile', script: code, id: Date.now() });
-				}
-
-				if (data.type === 'compiled') {
-					setStlUrl(prev => {
-						if (prev) URL.revokeObjectURL(prev);
-						return URL.createObjectURL(new Blob([data.stl], { type: 'model/stl' }));
-					});
-					setStatus('ready');
-					worker.terminate();
-					currentWorkerRef.current = null;
-					resolve();
-				}
-
-				if (data.type === 'error') {
-					setEngineError({
-						errorType: data.errorType ?? 'Unknown',
-						message:   data.message   ?? 'Unknown engine error.',
-						details:   data.details   ?? '',
-					});
-					setStatus('error');
-					worker.terminate();
-					currentWorkerRef.current = null;
-					resolve();
-				}
-			};
-
-			worker.onerror = (e) => {
+			if (data.type === 'error') {
 				setEngineError({
-					errorType: 'Unknown',
-					message:   'WASM Worker crashed.',
-					details:   e.message ?? '',
+					errorType: data.errorType ?? 'Unknown',
+					message:   data.message   ?? 'Unknown engine error.',
+					details:   data.details   ?? '',
 				});
 				setStatus('error');
-				worker.terminate();
-				currentWorkerRef.current = null;
-				resolve();
-			};
+			}
 
-			// Start the cycle
-			worker.postMessage({ type: 'warmup' });
+			// If this message has an ID, check if we have a pending promise for it
+			if (data.id && pendingRequestsRef.current.has(data.id)) {
+				const resolve = pendingRequestsRef.current.get(data.id);
+				if (resolve) {
+					resolve(data);
+					pendingRequestsRef.current.delete(data.id);
+				}
+			}
+
+			// Specific handlers for background updates (compilation)
+			if (data.type === 'compiled' && data.id === lastRequestIdRef.current) {
+				setStlUrls(prev => {
+					// Revoke old URLs
+					prev.forEach(url => URL.revokeObjectURL(url));
+					
+					const next = new Map<string, string>();
+					data.parts.forEach((p: { id: string; buffer: ArrayBuffer }) => {
+						next.set(p.id, URL.createObjectURL(new Blob([p.buffer], { type: 'model/stl' })));
+					});
+					return next;
+				});
+				setStatus('ready');
+			}
+		};
+
+		worker.onerror = (e) => {
+			console.error('[useCADEngine] Worker error:', e);
+			setEngineError({
+				errorType: 'Unknown',
+				message:   'WASM Worker crashed.',
+				details:   e.message ?? '',
+			});
+			setStatus('error');
+			terminateWorker(); // Force respawn on next request
+		};
+
+		worker.postMessage({ type: 'warmup' });
+		workerRef.current = worker;
+		return worker;
+	}, [terminateWorker]);
+
+	// ── Actions ────────────────────────────────────────────────────────────
+
+	const executeCompile = useCallback(async (code: string) => {
+		const worker = getWorker();
+		const requestId = Date.now();
+		lastRequestIdRef.current = requestId;
+
+		setStatus('compiling');
+		setEngineError(null);
+
+		worker.postMessage({ type: 'compile', script: code, id: requestId });
+	}, [getWorker]);
+
+	const exportModel = useCallback(async (
+		format: 'stl' | 'dxf', 
+		dxfMode?: 'silhouette' | 'section' | 'blueprint'
+	): Promise<ArrayBuffer> => {
+		if (!script) throw new Error('No script to export');
+
+		const worker = getWorker();
+		const requestId = Date.now();
+		
+		setIsExporting(true);
+		
+		return new Promise<ArrayBuffer>((resolve, reject) => {
+			pendingRequestsRef.current.set(requestId, (data) => {
+				if (data.type === 'exported') {
+					resolve(data.data);
+				} else if (data.type === 'error') {
+					reject(new Error(data.message));
+				}
+			});
+
+			worker.postMessage({ type: 'export', script, format, dxfMode, id: requestId });
+		}).finally(() => {
+			setIsExporting(false);
 		});
-	}, []);
+	}, [script, getWorker]);
 
-	// ── External API ─────────────────────────────────────────────────────────
 	const rebuild = useCallback(() => {
 		if (!script) return;
 		executeCompile(script);
 	}, [script, executeCompile]);
 
-	const exportFile = useCallback(async (format: 'stl' | 'dxf' | 'off' | 'amf' | '3mf') => {
-		if (!script) return null;
+	// ── Lifecycle ──────────────────────────────────────────────────────────
 
-		const worker = new Worker(
-			new URL('../workers/cad-worker.ts', import.meta.url),
-			{ type: 'module' }
-		);
-
-		return new Promise<string | null>((resolve, reject) => {
-			worker.onmessage = (e: MessageEvent) => {
-				const data = e.data;
-				if (data.type === 'ready') {
-					worker.postMessage({ type: 'export', script, format, id: Date.now() });
-				}
-				if (data.type === 'exported') {
-					const url = URL.createObjectURL(new Blob([data.data], { type: 'application/octet-stream' }));
-					worker.terminate();
-					resolve(url);
-				}
-				if (data.type === 'error') {
-					worker.terminate();
-					reject(new Error(data.message));
-				}
-			};
-			worker.postMessage({ type: 'warmup' });
-		});
-	}, [script]);
-
-	// ── Debounced Auto-Rebuild ────────────────────────────────────────────────
 	useEffect(() => {
 		if (!enabled || !script) return;
 		const timer = setTimeout(() => {
 			executeCompile(script);
 		}, debounceMs);
 
-		return () => {
-			clearTimeout(timer);
-		};
+		return () => clearTimeout(timer);
 	}, [script, enabled, executeCompile, debounceMs]);
 
-	// Unmount cleanup
 	useEffect(() => {
-		return () => {
-			currentWorkerRef.current?.terminate();
-		};
-	}, []);
+		return () => terminateWorker();
+	}, [terminateWorker]);
 
-	// Respawn is now just a re-trigger of executeCompile
 	const respawn = useCallback(() => {
+		terminateWorker();
 		if (script) executeCompile(script);
-	}, [script, executeCompile]);
+	}, [script, executeCompile, terminateWorker]);
 
 	return {
-		stlUrl,
+		stlUrls,
 		status,
 		statusText:    STATUS_LABELS[status] || 'Initialising…',
 		engineError,
 		error:         engineError?.message ?? null,
 		isRecompiling: status === 'compiling',
+		isExporting,
 		rebuild,
 		respawn,
-		exportFile,
+		exportModel,
 	};
 }

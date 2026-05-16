@@ -61,14 +61,19 @@ SYSTEM_INSTRUCTION = """
 Transform a JSON feature-map into a modular, parametric OpenSCAD script for high-performance WASM rendering.
 
 # ==============================================================================
-# RULE #1 - THE EPSILON PROTOCOL (CRITICAL)
+# RULE #1 - THE EPSILON PROTOCOL (CRITICAL FOR MANIFOLD STABILITY)
 # ==============================================================================
-To prevent CGAL kernel crashes (Pointer 1168136) caused by zero-thickness faces:
+To prevent CGAL kernel crashes caused by zero-thickness coplanar faces:
 Every subtractive volume (hole, slot, cutout) inside a `difference()` block MUST:
   1. Be extended by `eps` in height/depth → `h = dimension + eps`
   2. Be shifted by `eps/2` against the cut direction → `translate([0, 0, -eps/2])`
 
 # ==============================================================================
+# RULE #2 - THE PART_ROOT PROTOCOL (CRITICAL FOR DXF EXPORT PARSING)
+# ==============================================================================
+**MANDATORY**: ALL final assembly geometry and boolean operations (`difference()`, `union()`) MUST be contained inside a single top-level module named `part_root()`.
+The absolute last line of your script MUST be the single execution call: `part_root();`
+Do NOT leave raw boolean operations floating outside a module at the bottom of the script.
 
 ## ENGINEERING GUIDELINES
 - **Stateless Vanilla**: Use standard `cube()`, `cylinder()`, `sphere()`. NO LIBRARIES.
@@ -78,11 +83,12 @@ Every subtractive volume (hole, slot, cutout) inside a `difference()` block MUST
 - **Resolution**: Global `$fn = 32;` is the hard limit for WASM stability.
 
 ## MANDATORY FILE STRUCTURE
-1. `$fn = 250;`
+1. `$fn = 32;`
 2. `/* PARAMETERS_JSON { ... } */`
 3. `// PARAMETERS_START` ... `// PARAMETERS_END` (Include `eps = 0.02;`)
 4. One `module` per logical feature with `// @id: name` tags.
-5. Final top-level assembly call.
+5. `module part_root() { ... }` containing the final assembly logic.
+6. `part_root();` as the exact, final line of the script.
 
 ## PERFORMANCE CONSTRAINTS
 - No `minkowski()` - causes heap overflow.
@@ -91,7 +97,7 @@ Every subtractive volume (hole, slot, cutout) inside a `difference()` block MUST
 """
 
 CANONICAL_EXAMPLE = """
-$fn = 250;
+$fn = 32;
 
 /* PARAMETERS_JSON
 {
@@ -114,30 +120,41 @@ num_slots = 3;
 eps = 0.02;  // CGAL crash prevention
 // PARAMETERS_END
 
-module core_drill() {
-    difference() {
-        // @id: main_body
-        union() {
-            cylinder(d=shank_dia, h=shank_length);
-            translate([0, 0, shank_length])
-                cylinder(d=body_dia, h=body_length);
-        }
+// @id: main_body
+module main_body() {
+    union() {
+        cylinder(d=shank_dia, h=shank_length);
+        translate([0, 0, shank_length])
+            cylinder(d=body_dia, h=body_length);
+    }
+}
 
-        // @id: inner_hollow - Epsilon Applied (+eps height, -eps/2 shift)
-        translate([0, 0, shank_length + wall_thickness])
-            cylinder(d=body_dia - 2*wall_thickness, h=body_length + eps);
+// @id: inner_hollow
+module inner_hollow() {
+    // Epsilon Applied (+eps height, -eps/2 shift)
+    translate([0, 0, shank_length + wall_thickness - eps/2])
+        cylinder(d=body_dia - 2*wall_thickness, h=body_length + eps);
+}
 
-        // @id: chip_slots
-        for (a = [0 : 360/num_slots : 359]) {
-            rotate([0, 0, a])
-            translate([body_dia/2, 0, shank_length + body_length/2])
-            cube([20, 10, body_length + eps], center=true);
-        }
+// @id: chip_slots
+module chip_slots() {
+    for (a = [0 : 360/num_slots : 359]) {
+        rotate([0, 0, a])
+        translate([body_dia/2, 0, shank_length + body_length/2])
+        cube([20, 10, body_length + eps], center=true);
     }
 }
 
 // @id: part_root
-core_drill();
+module part_root() {
+    difference() {
+        main_body();
+        inner_hollow();
+        chip_slots();
+    }
+}
+
+part_root();
 """.strip()
 
 

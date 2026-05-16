@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import { ChevronLeft, ChevronRight, Code2, Loader2, Sliders, Target, X, Play, Copy, Check, Download, History, AlertTriangle, Clock, ArrowRight, Layers } from 'lucide-react';
 import { type ReactNode, useEffect, useState, memo, useMemo } from 'react';
 import useSWR from 'swr';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSeparator, DropdownMenuPortal, DropdownMenuSubTrigger } from './ui/dropdown-menu';
 
 // Dynamic import for Monaco to prevent blocking initial load
 const Editor = dynamic(() => import('@monaco-editor/react'), { 
@@ -36,11 +37,13 @@ type Props = {
     onScriptChange: (v: string) => void;
     onRebuild: () => void;
     isCompiling: boolean;
+    isExporting?: boolean;
     hasScript: boolean;
     selection?: { id: string; point: [number, number, number] } | null;
     onClearSelection?: () => void;
     onLoadSession?: (script: string, params: any) => void;
-    onDownloadDxf?: () => void;
+    onExport?: (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => void;
+    onDownloadScad?: () => void;
     children?: ReactNode;
 };
 
@@ -48,12 +51,13 @@ export const EditorDrawer = memo(function EditorDrawer({
     isOpen, setIsOpen,
     activeTab, setActiveTab,
     cadScript, onScriptChange,
-    onRebuild, isCompiling, hasScript,
+    onRebuild, isCompiling, isExporting, hasScript,
     selection, onClearSelection,
-    onLoadSession, onDownloadDxf,
+    onLoadSession, onExport, onDownloadScad,
     children,
 }: Props) {
     const [isCopied, setIsCopied] = useState(false);
+    const [isExportOpen, setIsExportOpen] = useState(false);
 
     // Optimized API fetching with SWR
     const { data: historySessions, isLoading: isLoadingHistory } = useSWR<Session[]>(
@@ -67,19 +71,6 @@ export const EditorDrawer = memo(function EditorDrawer({
         await navigator.clipboard.writeText(cadScript);
         setIsCopied(true);
         setTimeout(() => setIsCopied(false), 2000);
-    };
-
-    const handleDownload = () => {
-        if (!cadScript) return;
-        const blob = new Blob([cadScript], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'generated_part.scad';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
     };
 
     return (
@@ -167,17 +158,83 @@ export const EditorDrawer = memo(function EditorDrawer({
 
                     {activeTab === 'code' && (
                         <div className="relative flex h-full flex-col p-4 pb-32 group/editor">
-                            <div className="absolute right-6 top-6 z-10 flex items-center gap-1.5 rounded-md border border-zinc-700/50 bg-zinc-800/90 p-1 opacity-0 shadow-lg backdrop-blur-sm transition-opacity group-hover/editor:opacity-100">
-                                <button onClick={handleCopyCode} title="Copy Code" className="flex size-7 items-center justify-center rounded transition-colors hover:bg-zinc-700 hover:text-white text-zinc-300">
-                                    {isCopied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                                </button>
-                                <div className="h-3 w-px bg-zinc-600" />
-                                <button onClick={handleDownload} title="Download .scad" className="flex size-7 items-center justify-center rounded transition-colors hover:bg-zinc-700 hover:text-white text-zinc-300">
-                                    <Download size={14} />
-                                </button>
-                                <button onClick={onDownloadDxf} title="Download .dxf" className="flex size-7 items-center justify-center rounded transition-colors hover:bg-zinc-700 hover:text-white text-zinc-300">
-                                    <Layers size={14} />
-                                </button>
+                            <div className="absolute right-6 top-6 z-10 flex items-center gap-1.5">
+                                <div className="flex items-center gap-1.5 rounded-md border border-zinc-700/50 bg-zinc-800/90 p-1 shadow-lg backdrop-blur-sm transition-opacity group-hover/editor:opacity-100 opacity-0">
+                                    <button 
+                                        onClick={handleCopyCode} 
+                                        title="Copy Code" 
+                                        className="flex size-7 items-center justify-center rounded transition-colors hover:bg-zinc-700 hover:text-white text-zinc-300"
+                                    >
+                                        {isCopied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                                    </button>
+                                    
+                                    <div className="h-3 w-px bg-zinc-600" />
+                                    
+                                    <div className="relative">
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <button 
+                                                    disabled={isExporting}
+                                                    title="Export" 
+                                                    className="flex size-7 items-center justify-center rounded transition-colors hover:bg-zinc-700 hover:text-white text-zinc-300 disabled:opacity-50 data-[state=open]:bg-zinc-700 data-[state=open]:text-white"
+                                                >
+                                                    {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                                                </button>
+                                            </DropdownMenuTrigger>
+
+                                            <DropdownMenuContent align="end" className="w-40 border-zinc-700 bg-zinc-800 p-1 shadow-xl rounded-lg">
+                                                <DropdownMenuItem 
+                                                    onClick={onDownloadScad}
+                                                    className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-300 focus:bg-zinc-700 focus:text-white"
+                                                >
+                                                    <div className="size-1.5 rounded-full bg-blue-500" />
+                                                    .SCAD
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem 
+                                                    onClick={() => onExport?.('stl')}
+                                                    className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-300 focus:bg-zinc-700 focus:text-white"
+                                                >
+                                                    <div className="size-1.5 rounded-full bg-amber-500" />
+                                                    .STL
+                                                </DropdownMenuItem>
+
+                                                <DropdownMenuSub>
+                                                    <DropdownMenuSubTrigger 
+                                                        className="flex items-center justify-between rounded-md px-2 py-1.5 text-xs text-zinc-300 focus:bg-zinc-700 focus:text-white data-[state=open]:bg-zinc-700 data-[state=open]:text-white"
+                                                    >
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="size-1.5 rounded-full bg-emerald-500" />
+                                                            .DXF (2D)
+                                                        </div>
+                                                    </DropdownMenuSubTrigger>
+                                                    <DropdownMenuPortal>
+                                                        <DropdownMenuSubContent className="w-44 border-zinc-700 bg-zinc-800 p-1 shadow-xl rounded-lg ml-1">
+                                                            <DropdownMenuItem 
+                                                                onClick={() => onExport?.('dxf', 'silhouette')}
+                                                                className="rounded-md px-2 py-1.5 text-[10px] text-zinc-400 focus:bg-zinc-700 focus:text-white uppercase tracking-wider"
+                                                            >
+                                                                Silhouette Outline
+                                                            </DropdownMenuItem>
+                                                            <DropdownMenuItem 
+                                                                onClick={() => onExport?.('dxf', 'section')}
+                                                                className="rounded-md px-2 py-1.5 text-[10px] text-zinc-400 focus:bg-zinc-700 focus:text-white uppercase tracking-wider"
+                                                            >
+                                                                Cross-Section Slice
+                                                            </DropdownMenuItem>
+                                                            <DropdownMenuSeparator className="bg-zinc-700" />
+                                                            <DropdownMenuItem 
+                                                                onClick={() => onExport?.('dxf', 'blueprint')}
+                                                                className="rounded-md px-2 py-1.5 text-[10px] font-bold text-emerald-400 focus:bg-zinc-700 focus:text-emerald-300 uppercase tracking-wider"
+                                                            >
+                                                                Orthographic Sheet
+                                                            </DropdownMenuItem>
+                                                        </DropdownMenuSubContent>
+                                                    </DropdownMenuPortal>
+                                                </DropdownMenuSub>
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
+                                    </div>
+                                </div>
                             </div>
                             <div className="flex-1 overflow-hidden rounded-lg border border-zinc-800/80 bg-[#18181b] shadow-inner">
                                 <Editor
@@ -274,4 +331,4 @@ export const EditorDrawer = memo(function EditorDrawer({
             )}
         </aside>
     );
-});
+});

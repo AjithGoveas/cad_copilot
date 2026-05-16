@@ -1,53 +1,96 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState, memo } from 'react';
 import { useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
 import * as THREE from 'three';
+import { Edges, Outlines } from '@react-three/drei';
+
+// Technical Specification: Stainless Steel Brushed
+const BRUSHED_STEEL_CONFIG = {
+	color: '#94a3b8',
+	metalness: 1.0,
+	roughness: 0.42,
+	clearcoat: 0.05,
+	clearcoatRoughness: 0.3,
+	envMapIntensity: 1.2,
+};
+
+const SELECTION_CONFIG = {
+	color: '#94a3b8',
+	metalness: 0.6,
+	roughness: 0.2,
+	emissive: '#94a3b8',
+	emissiveIntensity: 0.15,
+};
 
 type Props = {
+	id:  string;
 	url: string;
+	isSelected?: boolean;
 	onMeshClick?: (point: [number, number, number] | null) => void;
 };
 
-const MATERIAL = new THREE.MeshStandardMaterial({
-	color: '#e2e8f0',
-	metalness: 0.12,
-	roughness: 0.28,
-	flatShading: false,
-});
-
-export function StlMesh({ url, onMeshClick }: Props) {
+export const StlMesh = memo(function StlMesh({ id, url, isSelected, onMeshClick }: Props) {
+	// useLoader caches the geometry by URL automatically
 	const geometry = useLoader(STLLoader, url);
+	const [hovered, setHovered] = useState(false);
 
-	// Auto-centre and normalise size to ≈ 2 units
-	const { geo, scale } = useMemo(() => {
+	// Ensure geometry is clean and sharp
+	const geo = useMemo(() => {
 		const g = geometry.clone();
-		g.computeVertexNormals();
-		g.computeBoundingBox();
-
-		const box  = g.boundingBox ?? new THREE.Box3();
-		const size = new THREE.Vector3();
-		box.getSize(size);
-
-		const maxDim = Math.max(size.x, size.y, size.z, 0.001);
-		g.center();
-
-		return { geo: g, scale: 2 / maxDim };
+		// Avoid computeVertexNormals to prevent the "balloon" effect
+		return g;
 	}, [geometry]);
 
 	return (
-		<mesh
-			geometry={geo}
-			material={MATERIAL}
-			scale={scale}
-			castShadow
-			receiveShadow
-			onClick={(e) => {
-				e.stopPropagation();
-				onMeshClick?.([e.point.x, e.point.y, e.point.z]);
-			}}
-			onPointerMissed={() => onMeshClick?.(null)}
-		/>
+		<group>
+			<mesh
+				geometry={geo}
+				castShadow
+				receiveShadow
+				onPointerOver={(e) => { e.stopPropagation(); setHovered(true); }}
+				onPointerOut={() => setHovered(false)}
+				onClick={(e) => {
+					e.stopPropagation();
+					onMeshClick?.([e.point.x, e.point.y, e.point.z]);
+				}}
+				onPointerMissed={() => onMeshClick?.(null)}
+			>
+				{isSelected ? (
+					<meshStandardMaterial 
+						{...SELECTION_CONFIG}
+						flatShading={true}
+					/>
+				) : (
+					<meshPhysicalMaterial 
+						{...BRUSHED_STEEL_CONFIG}
+						color={hovered ? '#cbd5e1' : BRUSHED_STEEL_CONFIG.color}
+						flatShading={true}
+					/>
+				)}
+				
+				{/* High-performance Edge highlighting */}
+				{(isSelected || hovered) && (
+					<Edges 
+						scale={1.001} // Slight offset to prevent z-fighting
+						threshold={25} 
+						color={isSelected ? '#f59e0b' : '#94a3b8'} 
+						opacity={isSelected ? 1 : 0.4}
+						transparent
+					/>
+				)}
+				
+				{/* Premium selection outline */}
+				{/* {isSelected && (
+					<Outlines 
+						thickness={2} 
+						color="#fbbf24" 
+						transparent 
+						opacity={0.4} 
+					/>
+				)} */}
+			</mesh>
+		</group>
 	);
-}
+});
