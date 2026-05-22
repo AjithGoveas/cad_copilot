@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, memo } from 'react';
+import { useMemo, useState, useEffect, memo } from 'react';
 import { useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
 import * as THREE from 'three';
@@ -29,19 +29,39 @@ type Props = {
 	url: string;
 	isSelected?: boolean;
 	onMeshClick?: (point: [number, number, number] | null) => void;
+	onGeometryLoaded?: (center: [number, number, number], scale: number) => void;
 };
 
-export const StlMesh = memo(function StlMesh({ id, url, isSelected, onMeshClick }: Props) {
+export const StlMesh = memo(function StlMesh({ id, url, isSelected, onMeshClick, onGeometryLoaded }: Props) {
 	// useLoader caches the geometry by URL automatically
 	const geometry = useLoader(STLLoader, url);
 	const [hovered, setHovered] = useState(false);
 
-	// Ensure geometry is clean and sharp
-	const geo = useMemo(() => {
-		const g = geometry.clone();
-		// Avoid computeVertexNormals to prevent the "balloon" effect
-		return g;
+	const [geo, setGeo] = useState<THREE.BufferGeometry | null>(null);
+
+	// Ensure geometry is clean and sharp, and disposed on cleanup
+	useEffect(() => {
+		const cloned = geometry.clone();
+		setGeo(cloned);
+
+		return () => {
+			cloned.dispose();
+		};
 	}, [geometry]);
+
+	useEffect(() => {
+		if (geo) {
+			geo.computeBoundingBox();
+			const box = geo.boundingBox;
+			if (box) {
+				const center = new THREE.Vector3();
+				box.getCenter(center);
+				onGeometryLoaded?.([center.x, center.y, center.z], 1.0);
+			}
+		}
+	}, [geo, onGeometryLoaded]);
+
+	if (!geo) return null;
 
 	return (
 		<group>
@@ -74,7 +94,7 @@ export const StlMesh = memo(function StlMesh({ id, url, isSelected, onMeshClick 
 				{(isSelected || hovered) && (
 					<Edges 
 						scale={1.001} // Slight offset to prevent z-fighting
-						threshold={25} 
+						threshold={30} 
 						color={isSelected ? '#f59e0b' : '#94a3b8'} 
 						opacity={isSelected ? 1 : 0.4}
 						transparent

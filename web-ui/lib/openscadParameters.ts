@@ -1,5 +1,35 @@
 export type OpenScadParameters = Record<string, unknown>;
 
+export type AnnotationEntry = {
+	type?: 'diameter' | 'height' | 'chamfer';
+	p1?: [number, number, number];
+	p2?: [number, number, number];
+	center?: [number, number, number];
+	axis?: [number, number, number];
+	value?: number;
+	offset?: number;
+	radius?: number;
+};
+
+export type OpenScadAnnotations = Record<string, AnnotationEntry>;
+
+/**
+ * Parses the /* PARAMETERS_JSON ... * / block from the OpenSCAD script
+ * to extract the 3D coordinate annotations.
+ */
+export function extractStructuredAnnotations(script: string): OpenScadAnnotations {
+	const match = /\/\*\s*PARAMETERS_JSON\s*([\s\S]*?)\*\//.exec(script);
+	if (!match) return {};
+	try {
+		const jsonText = match[1].trim();
+		return JSON.parse(jsonText) as OpenScadAnnotations;
+	} catch (e) {
+		console.error("Failed to parse PARAMETERS_JSON from script:", e);
+		return {};
+	}
+}
+
+
 const START_TAG = '// PARAMETERS_START';
 const END_TAG   = '// PARAMETERS_END';
 

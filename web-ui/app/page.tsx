@@ -1,5 +1,5 @@
-import HitlWorkspace from '@/components/HitlWorkspace';
+import { redirect } from 'next/navigation';
 
 export default function Page() {
-	return <HitlWorkspace />;
+	redirect('/app');
 }

@@ -1,13 +1,13 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { ChevronLeft, ChevronRight, Code2, Loader2, Sliders, Target, X, Play, Copy, Check, Download, History, AlertTriangle, Clock, ArrowRight, Layers } from 'lucide-react';
-import { type ReactNode, useEffect, useState, memo, useMemo } from 'react';
+import { ChevronLeft, ChevronRight, Code2, Loader2, Sliders, Target, X, Play, Copy, Check, Download, History, AlertTriangle, Clock, ArrowRight } from 'lucide-react';
+import { type ReactNode, useState, memo } from 'react';
 import useSWR from 'swr';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSeparator, DropdownMenuPortal, DropdownMenuSubTrigger } from './ui/dropdown-menu';
 
 // Dynamic import for Monaco to prevent blocking initial load
-const Editor = dynamic(() => import('@monaco-editor/react'), { 
+const Editor = dynamic(() => import('@monaco-editor/react'), {
     ssr: false,
     loading: () => (
         <div className="flex h-full w-full items-center justify-center bg-[#18181b]">
@@ -20,11 +20,11 @@ const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 type Tab = 'parameters' | 'code' | 'history';
 
-type Session = {
+type Project = {
     id: string;
     prompt: string;
-    cadScript: string;
-    parameters: any;
+    scadCode: string;
+    parametersJson: any;
     createdAt: string;
 };
 
@@ -57,10 +57,10 @@ export const EditorDrawer = memo(function EditorDrawer({
     children,
 }: Props) {
     const [isCopied, setIsCopied] = useState(false);
-    const [isExportOpen, setIsExportOpen] = useState(false);
+    const [] = useState(false);
 
     // Optimized API fetching with SWR
-    const { data: historySessions, isLoading: isLoadingHistory } = useSWR<Session[]>(
+    const { data: historySessions, isLoading: isLoadingHistory } = useSWR<Project[]>(
         activeTab === 'history' ? '/api/history' : null,
         fetcher,
         { revalidateOnFocus: false, dedupingInterval: 60000 }
@@ -129,30 +129,7 @@ export const EditorDrawer = memo(function EditorDrawer({
                 <div className="custom-scrollbar flex-1 overflow-y-auto overflow-x-hidden relative">
                     {activeTab === 'parameters' && (
                         <div className="flex flex-col p-4 pb-32">
-                            {selection && (
-                                <div className="mb-6 flex items-center justify-between rounded-lg bg-amber-500/10 px-3 py-2.5 ring-1 ring-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.05)]">
-                                    <div className="flex items-center gap-2 text-xs font-medium text-amber-500">
-                                        <Target size={14} />
-                                        <span className="max-w-[200px] truncate">Selected: {selection.id}</span>
-                                    </div>
-                                    <button onClick={onClearSelection} className="rounded-full p-1 text-amber-600/60 transition-colors hover:bg-amber-500/20 hover:text-amber-400">
-                                        <X size={14} />
-                                    </button>
-                                </div>
-                            )}
-                            <div className="flex flex-col">
-                                <h3 className="mb-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Properties</h3>
-                                <div className="flex flex-col rounded-lg border border-zinc-800/60 bg-[#121214] p-4 shadow-sm">
-                                    {children ?? (
-                                        <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
-                                            <div className="rounded-full bg-zinc-900/50 p-3 ring-1 ring-zinc-800">
-                                                <Sliders size={18} className="text-zinc-600" />
-                                            </div>
-                                            <p className="text-xs text-zinc-500">Generate a script to edit parameters</p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
+                            {children}
                         </div>
                     )}
 
@@ -242,7 +219,7 @@ export const EditorDrawer = memo(function EditorDrawer({
                                     language="cpp"
                                     theme="vs-dark"
                                     value={cadScript}
-                                    onChange={(v) => onScriptChange(v ?? '')}
+                                    onChange={(v: string | undefined) => onScriptChange(v ?? '')}
                                     options={{
                                         minimap: { enabled: false },
                                         fontSize: 13,
@@ -272,7 +249,7 @@ export const EditorDrawer = memo(function EditorDrawer({
                                     {historySessions.map((session) => (
                                         <button
                                             key={session.id}
-                                            onClick={() => onLoadSession?.(session.cadScript, session.parameters)}
+                                            onClick={() => onLoadSession?.(session.scadCode || '', session.parametersJson)}
                                             className="flex flex-col items-start gap-2 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 transition-all hover:bg-zinc-800 hover:ring-1 hover:ring-amber-500/20 text-left group"
                                         >
                                             <div className="flex w-full items-center justify-between">

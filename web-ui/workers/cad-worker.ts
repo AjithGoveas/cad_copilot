@@ -148,6 +148,59 @@ function normaliseThrown(err: unknown): Error & { details?: string; classified?:
     return e;
 }
 
+class LRUCache<K, V> {
+    private max: number;
+    private cache: Map<K, V>;
+
+    constructor(max = 20) {
+        this.max = max;
+        this.cache = new Map();
+    }
+
+    get(key: K): V | undefined {
+        const item = this.cache.get(key);
+        if (item !== undefined) {
+            this.cache.delete(key);
+            this.cache.set(key, item);
+        }
+        return item;
+    }
+
+    set(key: K, val: V): void {
+        if (this.cache.has(key)) {
+            this.cache.delete(key);
+        } else if (this.cache.size >= this.max) {
+            const firstKey = this.cache.keys().next().value;
+            if (firstKey !== undefined) {
+                this.cache.delete(firstKey);
+            }
+        }
+        this.cache.set(key, val);
+    }
+}
+
+async function computeHash(text: string): Promise<string> {
+    try {
+        const msgUint8 = new TextEncoder().encode(text);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (e) {
+        // Fallback polynomial hash (cyrb53)
+        let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+        for (let i = 0, ch; i < text.length; i++) {
+            ch = text.charCodeAt(i);
+            h1 = Math.imul(h1 ^ ch, 2654435761);
+            h2 = Math.imul(h2 ^ ch, 1597334677);
+        }
+        h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+        h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+        return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
+    }
+}
+
+const geometryCache = new LRUCache<string, { buffer: ArrayBuffer }>(20);
+
 const INPUT_PATH  = '/input.scad';
 
 async function exportToFile(
@@ -155,19 +208,31 @@ async function exportToFile(
     format: 'stl' | 'dxf',
     dxfMode: 'silhouette' | 'section' | 'blueprint' = 'silhouette'
 ): Promise<{ buffer: ArrayBuffer; durationMs: number }> {
-    
-    // THE FIX: Pass `true` here to force a fresh WebAssembly instance every single time.
-    // This completely wipes the corrupted C++ global state from previous runs.
-    const engine   = await ensureEngine(true); 
-    
-    const instance = engine.getInstance();
-    const fs       = instance.FS;
+    const hash = await computeHash(script);
+    const cacheKey = `${format}:${dxfMode}:${hash}`;
+    const cached = geometryCache.get(cacheKey);
+    if (cached) {
+        console.log(`[CAD-Worker] Cache Hit for: ${cacheKey}`);
+        return {
+            buffer: cached.buffer.slice(0),
+            durationMs: 0
+        };
+    }
 
-    stderrCapture.length = 0; 
+    let fs: FS | undefined;
     const started = performance.now();
     const outputPath = `/output.${format}`;
 
     try {
+        // THE FIX: Pass `true` here to force a fresh WebAssembly instance every single time.
+        // This completely wipes the corrupted C++ global state from previous runs.
+        const engine   = await ensureEngine(true); 
+        
+        const instance = engine.getInstance();
+        fs       = instance.FS;
+
+        stderrCapture.length = 0; 
+
         try { if (fs.analyzePath(INPUT_PATH).exists) fs.unlink(INPUT_PATH); } catch (e) {}
         try { if (fs.analyzePath(outputPath).exists) fs.unlink(outputPath); } catch (e) {}
 
@@ -237,14 +302,34 @@ translate([0, 0]) projection(cut=false) children() { ${script} }
         const buffer     = outputData.buffer.slice(outputData.byteOffset, outputData.byteOffset + outputData.byteLength) as ArrayBuffer;
         const durationMs = Math.round(performance.now() - started);
 
+        // Store a clone of the buffer in the cache
+        geometryCache.set(cacheKey, { buffer: buffer.slice(0) });
+
         console.log(`[CAD-Worker] Exported ${format.toUpperCase()} in ${durationMs}ms - ${Math.round(buffer.byteLength / 1024)} KB`);
         return { buffer, durationMs };
 
     } catch (err: unknown) {
         throw normaliseThrown(err);
     } finally {
-        try { if (fs.analyzePath(INPUT_PATH).exists) fs.unlink(INPUT_PATH); } catch (e) {}
-        try { if (fs.analyzePath(outputPath).exists) fs.unlink(outputPath); } catch (e) {}
+        if (fs) {
+            const filesToCleanup = [
+                INPUT_PATH,
+                outputPath,
+                '/input.scad',
+                '/output.stl',
+                '/output.dxf',
+                '/output.amf',
+                '/output.dxf.tmp',
+                '/output.stl.tmp'
+            ];
+            for (const file of filesToCleanup) {
+                try {
+                    if (fs.analyzePath(file).exists) {
+                        fs.unlink(file);
+                    }
+                } catch (e) {}
+            }
+        }
     }
 }
 

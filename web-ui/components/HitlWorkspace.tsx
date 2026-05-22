@@ -1,11 +1,10 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
-import { Viewport } from './Viewport';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { ChatPanel } from './ChatPanel';
 import { EditorDrawer } from './EditorDrawer';
-import { ParameterInput } from './ParameterInput';
-import { useCADEngine } from '@/hooks/useCADEngine';
+import { CADViewer, type CADViewerRef } from './CADViewer';
+import { ParameterDrawer } from './ParameterDrawer';
 import { toast } from 'sonner';
 import { Target, AlertCircle } from 'lucide-react';
 import { extractOpenScadParameters, injectOpenScadParameters } from '@/lib/openscadParameters';
@@ -37,6 +36,8 @@ export default function HitlWorkspace() {
 	const [parameters,  setParameters]  = useState<Record<string, any>>({});
 	const [isGenerating, setIsGenerating] = useState(false);
 
+	const [activeFeatureId, setActiveFeatureId] = useState<string | null>(null);
+
 	const modelValueOptions = useMemo(() => 
 		MODEL_OPTIONS.map(m => ({ value: m.id, label: m.name })), 
 	[]);
@@ -46,20 +47,9 @@ export default function HitlWorkspace() {
 	const [chatWidth,    setChatWidth]    = useState(450);
 	const [selection,   setSelection]   = useState<Selection | null>(null);
 
-	// WASM engine
-	const { 
-		stlUrls, 
-		statusText, 
-		engineError, 
-		isRecompiling, 
-		isExporting,
-		rebuild, 
-		respawn, 
-		exportModel 
-	} = useCADEngine({
-		script:    cadScript,
-		enabled:   !!cadScript,
-	});
+	// CAD Viewer references and compilation status
+	const viewerRef = useRef<CADViewerRef>(null);
+	const [engineStatus, setEngineStatus] = useState({ isCompiling: false, isExporting: false });
 
 	// ── Generation ────────────────────────────────────────────────────────────
 	const handleGenerate = async (e?: React.FormEvent) => {
@@ -132,7 +122,8 @@ export default function HitlWorkspace() {
 		toast.info(`Exporting ${label}${modeLabel}…`, { description: `Preparing ${label} geometry kernel…` });
 		
 		try {
-			const buffer = await exportModel(format, dxfMode);
+			const buffer = await viewerRef.current?.exportModel(format, dxfMode);
+			if (!buffer) throw new Error('No export buffer generated');
 			const blob = new Blob([buffer], { type: 'application/octet-stream' });
 			const url = URL.createObjectURL(blob);
 			
@@ -152,7 +143,7 @@ export default function HitlWorkspace() {
 		} catch (err) {
 			toast.error(`${label} Export Failed`, { description: String(err) });
 		}
-	}, [cadScript, exportModel]);
+	}, [cadScript]);
 
 	const handleDownloadScad = useCallback(() => {
 		if (!cadScript) return;
@@ -175,9 +166,7 @@ export default function HitlWorkspace() {
 		toast.success('Session loaded from history');
 	}, []);
 
-	const memoizedParams = useMemo(() => {
-		return Object.entries(parameters);
-	}, [parameters]);
+
 
 	// ── Render ────────────────────────────────────────────────────────────────
 
@@ -244,39 +233,25 @@ export default function HitlWorkspace() {
 
 			{/* ── Main Viewport Area ───────────────────────────────────────── */}
 			<main className="relative flex flex-1 flex-col overflow-hidden">
-				<Viewport
-					stlUrls={stlUrls}
-					statusText={statusText}
-					isCompiling={isRecompiling || isGenerating}
+				<CADViewer
+					ref={viewerRef}
+					code={cadScript}
+					activeFeatureId={activeFeatureId || selection?.id}
 					selection={selection}
 					onMeshClick={handleMeshClick}
-					onDownloadStl={() => handleExport('stl')}
-					onDownloadDxf={(mode) => handleExport('dxf', mode)}
-					onDownloadScad={handleDownloadScad}
+					onSelectParameter={(key) => {
+						if (key) {
+							setSelection({ id: key, point: [0, 0, 0] });
+							setActiveTab('parameters');
+						} else {
+							setSelection(null);
+						}
+					}}
+					onHoverParameter={setActiveFeatureId}
+					isGenerating={isGenerating}
+					showExport={true}
+					onStatusChange={(status) => setEngineStatus(status)}
 				/>
-
-				{/* WASM Error Banner */}
-				{engineError && (
-					<div className="absolute bottom-6 left-6 right-6 z-30">
-						<div className="glass flex items-center justify-between rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-4 shadow-2xl backdrop-blur-2xl animate-in slide-in-from-bottom-4 duration-500">
-							<div className="flex items-center gap-4">
-								<div className="flex size-10 items-center justify-center rounded-xl bg-red-500/20 border border-red-500/40">
-									<AlertCircle size={20} className="text-red-500" />
-								</div>
-								<div>
-									<h4 className="text-xs font-bold uppercase tracking-widest text-red-500">Geometry Engine Error</h4>
-									<p className="mt-1 text-xs text-red-200/60 font-medium">{engineError.message}</p>
-								</div>
-							</div>
-							<button
-								onClick={respawn}
-								className="rounded-lg bg-red-500 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-white transition-all hover:bg-red-400 active:scale-95"
-							>
-								Respawn Kernel
-							</button>
-						</div>
-					</div>
-				)}
 			</main>
 
 			{/* ── Right: Editor Drawer ─────────────────────────────────────── */}
@@ -287,9 +262,9 @@ export default function HitlWorkspace() {
 				setActiveTab={setActiveTab}
 				cadScript={cadScript}
 				onScriptChange={setCadScript}
-				onRebuild={rebuild}
-				isCompiling={isRecompiling}
-				isExporting={isExporting}
+				onRebuild={() => viewerRef.current?.rebuild()}
+				isCompiling={engineStatus.isCompiling}
+				isExporting={engineStatus.isExporting}
 				hasScript={!!cadScript}
 				selection={selection}
 				onClearSelection={() => setSelection(null)}
@@ -297,19 +272,14 @@ export default function HitlWorkspace() {
 				onExport={handleExport}
 				onDownloadScad={handleDownloadScad}
 			>
-				{memoizedParams.length > 0 ? (
-					<div className="space-y-6">
-						{memoizedParams.map(([key, val]) => (
-							<ParameterInput
-								key={key}
-								label={key}
-								value={val}
-								isFocused={selection?.id === key}
-								onChange={(newVal) => handleParamChange(key, newVal)}
-							/>
-						))}
-					</div>
-				) : null}
+				<ParameterDrawer
+					parameters={parameters}
+					selection={selection}
+					activeFeatureId={activeFeatureId}
+					onClearSelection={() => setSelection(null)}
+					onChangeParameter={handleParamChange}
+					onHoverParameter={setActiveFeatureId}
+				/>
 			</EditorDrawer>
 
 		</div>

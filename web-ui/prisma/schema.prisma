@@ -8,13 +8,23 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-model Session {
-  id           String   @id @default(cuid())
-  prompt       String
-  cadScript    String?
-  parameters   Json?
-  stlUrl       String?
-  stepUrl      String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  projects     Project[]
+}
+
+model Project {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prompt         String
+  scadCode       String?
+  parametersJson Json?
+  stlUrl         String?
+  stepUrl        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }

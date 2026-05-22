@@ -1,10 +1,12 @@
 'use client';
 
-import { Suspense, useState, useRef, useEffect, memo } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Suspense, useState, useRef, useEffect, useMemo, memo } from 'react';
+import { Canvas, events } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Stage, ContactShadows, Center } from '@react-three/drei';
 import { Loader2, Download, MousePointer2, ChevronDown, Layers, Box, ChevronRight } from 'lucide-react';
 import { StlMesh } from './StlMesh';
+import { DimensionOverlay } from './DimensionOverlay';
+import { CameraRig } from './CameraRig';
 
 import { 
 	DropdownMenu, 
@@ -32,10 +34,34 @@ type Props = {
 	onDownloadStl?: () => void;
 	onDownloadDxf?: (mode: 'silhouette' | 'section' | 'blueprint') => void;
 	onDownloadScad?: () => void;
+	annotations?:  Record<string, any>;
+	activeFeatureId?: string | null;
+	onSelectParameter?: (key: string | null) => void;
+	onHoverParameter?: (key: string | null) => void;
 };
 
-export const Viewport = memo(function Viewport({ stlUrls, statusText, isCompiling, selection, onMeshClick, onDownloadStl, onDownloadDxf, onDownloadScad }: Props) {
+export const Viewport = memo(function Viewport({ 
+	stlUrls, 
+	statusText, 
+	isCompiling, 
+	selection, 
+	onMeshClick, 
+	onDownloadStl, 
+	onDownloadDxf, 
+	onDownloadScad,
+	annotations = {},
+	activeFeatureId = null,
+	onSelectParameter,
+	onHoverParameter,
+}: Props) {
 	const [hintVisible, setHintVisible] = useState(false);
+	const [geometryCenter, setGeometryCenter] = useState<[number, number, number]>([0, 0, 0]);
+	const [geometryScale, setGeometryScale] = useState<number>(1.0);
+
+	const geometryInfo = useMemo(() => ({
+		center: geometryCenter,
+		scale: geometryScale,
+	}), [geometryCenter, geometryScale]);
 
 	const hasGeometry = stlUrls.size > 0;
 
@@ -51,15 +77,37 @@ export const Viewport = memo(function Viewport({ stlUrls, statusText, isCompilin
 					logarithmicDepthBuffer: true,
 				}}
 				className="absolute inset-0"
+				events={(store) => {
+					const defaultEvents = events(store);
+					const originalPointerMove = defaultEvents.handlers?.onPointerMove;
+					if (defaultEvents.handlers && originalPointerMove) {
+						let pendingEvent: any = null;
+						let animationFrameId: number | null = null;
+
+						defaultEvents.handlers.onPointerMove = (event: any) => {
+							pendingEvent = event;
+							if (animationFrameId === null) {
+								animationFrameId = requestAnimationFrame(() => {
+									animationFrameId = null;
+									if (pendingEvent) {
+										originalPointerMove(pendingEvent);
+										pendingEvent = null;
+									}
+								});
+							}
+						};
+					}
+					return defaultEvents;
+				}}
 			>
-				<PerspectiveCamera makeDefault position={[8, 8, 8]} fov={30} />
+				<PerspectiveCamera makeDefault position={[5, 5, 5]} fov={40} />
 				<color attach="background" args={['#030303']} />
 
 				<Suspense fallback={null}>
 					<Stage
 						intensity={0.8}
 						environment="city"
-						adjustCamera={true}
+						adjustCamera={false}
 						shadows="contact"
 						preset="rembrandt"
 					>
@@ -74,6 +122,10 @@ export const Viewport = memo(function Viewport({ stlUrls, statusText, isCompilin
 										onMeshClick?.(id, pt);
 										setHintVisible(false);
 									}}
+									onGeometryLoaded={(center, scale) => {
+										setGeometryCenter(center);
+										setGeometryScale(scale);
+									}}
 								/>
 							))}
 						</Center>
@@ -87,12 +139,31 @@ export const Viewport = memo(function Viewport({ stlUrls, statusText, isCompilin
 					/>
 				</Suspense>
 
-				{/* <gridHelper args={[40, 40, '#111', '#0a0a0a']} position={[0, -0.01, 0]} /> */}
+				{/* Frame Interceptor Camera Rig Layer */}
+				<CameraRig 
+					activeParameter={activeFeatureId}
+					annotations={annotations}
+					geometryInfo={geometryInfo}
+				/>
+
+				{/* Dimension overlay - rendered at Canvas root level */}
+				{geometryInfo && (
+					<DimensionOverlay
+						annotations={annotations}
+						activeParameter={activeFeatureId}
+						geometryScale={geometryScale}
+						geometryCenter={geometryCenter}
+						onSelectParameter={onSelectParameter}
+						onHoverParameter={onHoverParameter}
+					/>
+				)}
+
 				<OrbitControls
 					makeDefault
 					enableDamping
-					dampingFactor={0.06}
-					maxPolarAngle={Math.PI / 1.8}
+					dampingFactor={0.05}
+					minPolarAngle={0}
+					maxPolarAngle={Math.PI / 1.75}
 				/>
 			</Canvas>
 
@@ -117,7 +188,7 @@ export const Viewport = memo(function Viewport({ stlUrls, statusText, isCompilin
 			{/* ── Action bar (top-right) ──────────────────────────────────── */}
 			{(hasGeometry || hintVisible) && (
 				<div className="absolute top-5 right-5 z-10 flex items-center gap-2">
-					{hasGeometry && (
+					{hasGeometry && (onDownloadStl || onDownloadDxf || onDownloadScad) && (
 						<DropdownMenu>
 							<DropdownMenuTrigger asChild>
 								<button

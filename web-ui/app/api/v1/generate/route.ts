@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
 
-const prisma = new PrismaClient();
 const PYTHON_BACKEND_URL = process.env.FASTAPI_URL;
 
 /**
@@ -11,26 +12,26 @@ const PYTHON_BACKEND_URL = process.env.FASTAPI_URL;
 function extractParameters(code: string): Record<string, any> {
     const params: Record<string, any> = {};
     const lines = code.split('\n');
-    
+
     // Regex to match: name = value; // comments
     // Matches numbers, booleans, and strings
     const paramRegex = /^([a-zA-Z0-9_]+)\s*=\s*([^;]+);/i;
-    
+
     for (const line of lines) {
         const trimmed = line.trim();
         if (trimmed.startsWith('//') || !trimmed.includes('=')) continue;
-        
+
         const match = trimmed.match(paramRegex);
         if (match) {
             const [, name, rawValue] = match;
             let val: any = rawValue.trim();
-            
+
             // Basic type conversion
             if (val.toLowerCase() === 'true') val = true;
             else if (val.toLowerCase() === 'false') val = false;
             else if (!isNaN(Number(val))) val = Number(val);
             else if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
-            
+
             params[name] = val;
         }
     }
@@ -39,6 +40,10 @@ function extractParameters(code: string): Record<string, any> {
 
 export async function POST(req: NextRequest) {
     try {
+        const authSession = await getServerSession(authOptions);
+        if (!authSession || !authSession.user || !authSession.user.id) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
         const formData = await req.formData();
         const prompt = formData.get('prompt') as string;
         const model = formData.get('model') as string;
@@ -68,25 +73,26 @@ export async function POST(req: NextRequest) {
 
         const data = await backendRes.json();
         const cadCode = data.openscad_script || '';
-        
+
         // 2. Extract parameters for persistence
         const parameters = extractParameters(cadCode);
 
-        // 3. Persist session to Database
-        const session = await prisma.session.create({
+        // 3. Persist project to Database
+        const project = await prisma.project.create({
             data: {
+                userId: authSession.user.id,
                 prompt,
-                cadScript: cadCode,
-                parameters: parameters,
+                scadCode: cadCode,
+                parametersJson: parameters,
             },
         });
 
         // 4. Return result with DB ID
         return NextResponse.json({
-            id: session.id,
+            id: project.id,
             code: cadCode,
             parameters: parameters,
-            createdAt: session.createdAt,
+            createdAt: project.createdAt,
         });
 
     } catch (err: any) {

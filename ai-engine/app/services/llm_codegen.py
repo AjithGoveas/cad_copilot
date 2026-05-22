@@ -32,6 +32,7 @@ Analyze the provided technical drawing and extract a structured feature-map.
 1. Identify all primary and secondary features.
 2. Extract exact dimensions and spatial relationships (offsets, patterns).
 3. Determine topological connectivity (which holes belong to which face).
+4. Define exact 3D start and end coordinates (p1 and p2) for every key dimension to construct annotation overlays.
 
 ## OUTPUT: JSON only - no prose, no markdown
 {
@@ -75,6 +76,20 @@ Every subtractive volume (hole, slot, cutout) inside a `difference()` block MUST
 The absolute last line of your script MUST be the single execution call: `part_root();`
 Do NOT leave raw boolean operations floating outside a module at the bottom of the script.
 
+# ==============================================================================
+# RULE #3 - PARAMETERS_JSON ANNOTATION PROTOCOL
+# ==============================================================================
+The `/* PARAMETERS_JSON ... */` comment block MUST be a JSON object mapping each editable parameter name (as declared in the flat parameters block) to its 3D dimension annotation metadata. The LLM must explicitly provide semantic type tags and bounding anchors for all structural geometries.
+Enforce the following structures:
+  - Diameters/Radii: Provide type `"diameter"`, absolute center position `center: [x, y, z]`, a flat normal/axis vector `axis: [nx, ny, nz]`, and the numerical value.
+    Example: `"shank_dia": {"type": "diameter", "center": [0, 0, 17.5], "axis": [0, 0, 1], "value": 19.05}`
+  - Heights/Thicknesses: Provide type `"height"`, starting anchor position `p1: [x, y, z]`, and terminating end position `p2: [x, y, z]`.
+    Example: `"shank_length": {"type": "height", "p1": [0, 0, 0], "p2": [0, 0, 35.0]}`
+  - Chamfers/Fillets: Provide type `"chamfer"`, target edge center location `center: [x, y, z]`, and specific offset size.
+    Example: `"flange_chamfer": {"type": "chamfer", "center": [0, 0, 35.0], "offset": 1.5, "radius": 40.0}`
+
+These coordinates must represent the actual dimension endpoints in the OpenSCAD design space (relative to the part origin).
+
 ## ENGINEERING GUIDELINES
 - **Stateless Vanilla**: Use standard `cube()`, `cylinder()`, `sphere()`. NO LIBRARIES.
 - **Parametric Consistency**: Declare all dimensions in the PARAMETERS block. Never use magic numbers in modules.
@@ -84,7 +99,7 @@ Do NOT leave raw boolean operations floating outside a module at the bottom of t
 
 ## MANDATORY FILE STRUCTURE
 1. `$fn = 32;`
-2. `/* PARAMETERS_JSON { ... } */`
+2. `/* PARAMETERS_JSON { ... } */` mapping each flat parameter to its 3D annotation metadata using the semantic types above.
 3. `// PARAMETERS_START` ... `// PARAMETERS_END` (Include `eps = 0.02;`)
 4. One `module` per logical feature with `// @id: name` tags.
 5. `module part_root() { ... }` containing the final assembly logic.
@@ -101,12 +116,44 @@ $fn = 32;
 
 /* PARAMETERS_JSON
 {
-  "shank_dia": 19.05,
-  "shank_length": 35.0,
-  "body_dia": 80.0,
-  "body_length": 50.0,
-  "wall_thickness": 3.0,
-  "num_slots": 3
+  "shank_dia": {
+    "type": "diameter",
+    "center": [0, 0, 17.5],
+    "axis": [0, 0, 1],
+    "value": 19.05
+  },
+  "shank_length": {
+    "type": "height",
+    "p1": [0, 0, 0],
+    "p2": [0, 0, 35.0]
+  },
+  "body_dia": {
+    "type": "diameter",
+    "center": [0, 0, 60.0],
+    "axis": [0, 0, 1],
+    "value": 80.0
+  },
+  "body_length": {
+    "type": "height",
+    "p1": [0, 0, 35.0],
+    "p2": [0, 0, 85.0]
+  },
+  "wall_thickness": {
+    "type": "height",
+    "p1": [37.0, 0, 60.0],
+    "p2": [40.0, 0, 60.0]
+  },
+  "num_slots": {
+    "type": "height",
+    "p1": [0, 0, 60.0],
+    "p2": [40.0, 0, 60.0]
+  },
+  "lip_chamfer": {
+    "type": "chamfer",
+    "center": [0, 0, 85.0],
+    "offset": 2.0,
+    "radius": 40.0
+  }
 }
 */
 
@@ -117,6 +164,7 @@ body_dia = 80.0;
 body_length = 50.0;
 wall_thickness = 3.0;
 num_slots = 3;
+lip_chamfer = 2.0;
 eps = 0.02;  // CGAL crash prevention
 // PARAMETERS_END
 
@@ -136,6 +184,16 @@ module inner_hollow() {
         cylinder(d=body_dia - 2*wall_thickness, h=body_length + eps);
 }
 
+// @id: lip_chamfer_cut
+module lip_chamfer_cut() {
+    // Chamfer at the top lip of the body
+    translate([0, 0, shank_length + body_length - lip_chamfer])
+        difference() {
+            cylinder(d=body_dia + eps, h=lip_chamfer + eps);
+            cylinder(d1=body_dia - 2*lip_chamfer, d2=body_dia, h=lip_chamfer + eps);
+        }
+}
+
 // @id: chip_slots
 module chip_slots() {
     for (a = [0 : 360/num_slots : 359]) {
@@ -150,6 +208,7 @@ module part_root() {
     difference() {
         main_body();
         inner_hollow();
+        lip_chamfer_cut();
         chip_slots();
     }
 }

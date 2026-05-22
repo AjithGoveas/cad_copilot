@@ -25,7 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 		<html lang="en" className={`${plexSans.variable} ${plexMono.variable} dark h-full`}>
 			<body className="h-full bg-[#050505] text-zinc-100 antialiased">
 				{children}
-				<Toaster richColors position="top-right" theme="dark" />
+				<Toaster richColors position="top-right" theme="dark" closeButton={true}/>
 			</body>
 		</html>
 	);

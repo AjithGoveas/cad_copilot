@@ -32,6 +32,56 @@ const STATUS_LABELS: Record<EngineStatus, string> = {
 	error:              'Kernel Exception',
 };
 
+// ── Singleton Worker ─────────────────────────────────────────────────────────
+
+let globalWorker: Worker | null = null;
+const globalListeners = new Set<(e: MessageEvent) => void>();
+const globalErrorListeners = new Set<(e: ErrorEvent) => void>();
+
+function getGlobalWorker(): Worker {
+	if (typeof window === 'undefined') {
+		throw new Error('Worker cannot be created on server side');
+	}
+	if (!globalWorker) {
+		console.log('[useCADEngine] Spawning global singleton worker...');
+		globalWorker = new Worker(
+			new URL('../workers/cad-worker.ts', import.meta.url),
+			{ type: 'module' }
+		);
+		
+		globalWorker.onmessage = (e: MessageEvent) => {
+			globalListeners.forEach(listener => {
+				try {
+					listener(e);
+				} catch (err) {
+					console.error('[useCADEngine] Error in global message listener:', err);
+				}
+			});
+		};
+		
+		globalWorker.onerror = (e: ErrorEvent) => {
+			globalErrorListeners.forEach(listener => {
+				try {
+					listener(e);
+				} catch (err) {
+					console.error('[useCADEngine] Error in global error listener:', err);
+				}
+			});
+		};
+		
+		globalWorker.postMessage({ type: 'warmup' });
+	}
+	return globalWorker;
+}
+
+function terminateGlobalWorker() {
+	if (globalWorker) {
+		console.log('[useCADEngine] Terminating global singleton worker...');
+		globalWorker.terminate();
+		globalWorker = null;
+	}
+}
+
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useCADEngine({
@@ -46,37 +96,27 @@ export function useCADEngine({
 	const [isExporting, setIsExporting] = useState(false);
 
 	// Refs for persistence and coordination
-	const workerRef = useRef<Worker | null>(null);
 	const lastRequestIdRef = useRef<number>(0);
 	const pendingRequestsRef = useRef<Map<number, (data: any) => void>>(new Map());
 
 	// ── Worker Management ───────────────────────────────────────────────────
 
 	const terminateWorker = useCallback(() => {
-		if (workerRef.current) {
-			workerRef.current.terminate();
-			workerRef.current = null;
-		}
+		terminateGlobalWorker();
 		pendingRequestsRef.current.clear();
 	}, []);
 
 	const getWorker = useCallback(() => {
-		if (workerRef.current) return workerRef.current;
+		return getGlobalWorker();
+	}, []);
 
-		console.log('[useCADEngine] Spawning persistent worker...');
-		const worker = new Worker(
-			new URL('../workers/cad-worker.ts', import.meta.url),
-			{ type: 'module' }
-		);
+	// ── Worker Message Hub ──────────────────────────────────────────────────
 
-		worker.onmessage = (e: MessageEvent) => {
+	useEffect(() => {
+		const handleMessage = (e: MessageEvent) => {
 			const data = e.data;
 			
-			// Handle structured messages
-			if (data.type === 'ready') {
-				// Worker is ready to receive commands
-				return;
-			}
+			if (data.type === 'ready') return;
 
 			if (data.type === 'error') {
 				setEngineError({
@@ -99,9 +139,7 @@ export function useCADEngine({
 			// Specific handlers for background updates (compilation)
 			if (data.type === 'compiled' && data.id === lastRequestIdRef.current) {
 				setStlUrls(prev => {
-					// Revoke old URLs
 					prev.forEach(url => URL.revokeObjectURL(url));
-					
 					const next = new Map<string, string>();
 					data.parts.forEach((p: { id: string; buffer: ArrayBuffer }) => {
 						next.set(p.id, URL.createObjectURL(new Blob([p.buffer], { type: 'model/stl' })));
@@ -112,7 +150,7 @@ export function useCADEngine({
 			}
 		};
 
-		worker.onerror = (e) => {
+		const handleError = (e: ErrorEvent) => {
 			console.error('[useCADEngine] Worker error:', e);
 			setEngineError({
 				errorType: 'Unknown',
@@ -120,12 +158,16 @@ export function useCADEngine({
 				details:   e.message ?? '',
 			});
 			setStatus('error');
-			terminateWorker(); // Force respawn on next request
+			terminateWorker();
 		};
 
-		worker.postMessage({ type: 'warmup' });
-		workerRef.current = worker;
-		return worker;
+		globalListeners.add(handleMessage);
+		globalErrorListeners.add(handleError);
+
+		return () => {
+			globalListeners.delete(handleMessage);
+			globalErrorListeners.delete(handleError);
+		};
 	}, [terminateWorker]);
 
 	// ── Actions ────────────────────────────────────────────────────────────
@@ -184,8 +226,10 @@ export function useCADEngine({
 	}, [script, enabled, executeCompile, debounceMs]);
 
 	useEffect(() => {
-		return () => terminateWorker();
-	}, [terminateWorker]);
+		return () => {
+			pendingRequestsRef.current.clear();
+		};
+	}, []);
 
 	const respawn = useCallback(() => {
 		terminateWorker();

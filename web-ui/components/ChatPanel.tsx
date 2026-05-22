@@ -1,8 +1,9 @@
 'use client';
 
 import { type FormEvent, useEffect, useRef } from 'react';
-import { SendHorizontal, Upload, X, Loader2, Sparkles, Binary } from 'lucide-react';
+import { SendHorizontal, Upload, X, Loader2, Sparkles, Binary, LogOut } from 'lucide-react';
 import { ChatBubble } from './ChatBubble';
+import { signOut } from 'next-auth/react';
 
 type Message = { id: string; role: 'user' | 'assistant' | 'system'; content: string };
 
@@ -58,23 +59,33 @@ export function ChatPanel({
 					</div>
 				</div>
 
-				{/* Model selector */}
-				<div className="group flex items-center gap-2 rounded-xl border border-white/[0.03] bg-zinc-900/40 px-3 py-1.5 hover:border-white/10 transition-all">
-					<div className="relative flex size-2 items-center justify-center">
-						<span className="absolute size-full rounded-full bg-emerald-500/40 animate-ping" />
-						<span className="relative size-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+				{/* Model selector & Sign Out */}
+				<div className="flex items-center gap-2">
+					<div className="group flex items-center gap-2 rounded-xl border border-white/3 bg-zinc-900/40 px-3 py-1.5 hover:border-white/10 transition-all">
+						<div className="relative flex size-2 items-center justify-center">
+							<span className="absolute size-full rounded-full bg-emerald-500/40 animate-ping" />
+							<span className="relative size-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+						</div>
+						<select
+							value={selectedModel}
+							onChange={(e) => setSelectedModel(e.target.value)}
+							className="bg-transparent font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500 focus:outline-none cursor-pointer group-hover:text-zinc-300 transition-colors"
+						>
+							{modelOptions.map((o) => (
+								<option key={o.value} value={o.value} className="bg-zinc-900">
+									{o.label}
+								</option>
+							))}
+						</select>
 					</div>
-					<select
-						value={selectedModel}
-						onChange={(e) => setSelectedModel(e.target.value)}
-						className="bg-transparent font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500 focus:outline-none cursor-pointer group-hover:text-zinc-300 transition-colors"
+
+					<button
+						onClick={() => signOut({ callbackUrl: '/app/login' })}
+						title="Sign Out"
+						className="flex size-8 items-center justify-center rounded-xl border border-white/3 bg-zinc-900/40 text-zinc-500 hover:text-red-400 hover:border-red-500/20 hover:bg-red-500/5 transition-all cursor-pointer"
 					>
-						{modelOptions.map((o) => (
-							<option key={o.value} value={o.value} className="bg-zinc-900">
-								{o.label}
-							</option>
-						))}
-					</select>
+						<LogOut size={13} />
+					</button>
 				</div>
 			</header>
 
@@ -92,7 +103,7 @@ export function ChatPanel({
 
 				{/* File badge */}
 				{selectedFile && (
-					<div className="flex items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.03] px-3.5 py-2.5 animate-in slide-in-from-bottom-2 duration-300">
+					<div className="flex items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/3 px-3.5 py-2.5 animate-in slide-in-from-bottom-2 duration-300">
 						<div className="flex size-6 items-center justify-center rounded-lg bg-amber-500/10 border border-amber-500/20">
 							<Binary size={12} className="text-amber-500" />
 						</div>
@@ -102,8 +113,8 @@ export function ChatPanel({
 							</p>
 							<p className="font-mono text-[8px] text-amber-700 uppercase">Context Active</p>
 						</div>
-						<button 
-							onClick={() => onFileChange(null)} 
+						<button
+							onClick={() => onFileChange(null)}
 							className="rounded-lg p-1 text-zinc-600 hover:bg-white/5 hover:text-zinc-200 transition-all"
 						>
 							<X size={14} />
@@ -114,7 +125,7 @@ export function ChatPanel({
 				{/* Compose form */}
 				<form
 					onSubmit={onSubmit}
-					className="group relative rounded-2xl border border-white/[0.05] bg-zinc-900/30 transition-all duration-300 focus-within:border-amber-500/40 focus-within:bg-zinc-900/50"
+					className="group relative rounded-2xl border border-white/5 bg-zinc-900/30 transition-all duration-300 focus-within:border-amber-500/40 focus-within:bg-zinc-900/50"
 				>
 					<textarea
 						value={prompt}
@@ -125,7 +136,7 @@ export function ChatPanel({
 						className="w-full resize-none bg-transparent px-4 pt-4 pb-2 font-sans text-sm text-zinc-100 placeholder:text-zinc-700 focus:outline-none"
 					/>
 
-					<div className="flex items-center justify-between border-t border-white/[0.03] px-4 py-3">
+					<div className="flex items-center justify-between border-t border-white/3 px-4 py-3">
 						<label className="group/upload relative flex cursor-pointer items-center gap-2 rounded-xl px-2 py-1 transition-all hover:bg-white/5">
 							<Upload size={14} className="text-zinc-600 group-hover/upload:text-amber-400 transition-colors" />
 							<span className="font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-700 group-hover/upload:text-zinc-400">Context</span>
