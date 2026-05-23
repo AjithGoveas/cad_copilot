@@ -44,21 +44,31 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
 
 	// ── Demo Limits State ─────────────────────────────────────────────────────
 	const [promptCount, setPromptCount] = useState(0);
-	const [demoLimitReason, setDemoLimitReason] = useState<'time' | 'prompt' | 'export' | null>(null);
+	const [demoLimitReason, setDemoLimitReason] = useState<'time' | 'prompt' | 'export' | 'entry-limit' | null>(null);
 	const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
-	// Demo Timer Effect
+	// Demo Entry Count Tracking
 	useEffect(() => {
 		if (!isDemoMode) return;
 		
-		const storedStartTime = sessionStorage.getItem('demoStartTime');
-		let startTime = storedStartTime ? parseInt(storedStartTime, 10) : Date.now();
-		
-		if (!storedStartTime) {
-			sessionStorage.setItem('demoStartTime', startTime.toString());
+		const currentCount = parseInt(localStorage.getItem('demoEntryCount') || '0', 10);
+		if (currentCount >= 3) {
+			setDemoLimitReason('entry-limit');
+		} else {
+			localStorage.setItem('demoEntryCount', (currentCount + 1).toString());
 		}
+	}, [isDemoMode]);
 
-		const totalTime = 5 * 60 * 1000; // 5 minutes
+	// Demo Timer Effect
+	const demoStartTimeRef = useRef<number | null>(null);
+	useEffect(() => {
+		if (!isDemoMode || demoLimitReason === 'entry-limit') return;
+		
+		if (demoStartTimeRef.current === null) {
+			demoStartTimeRef.current = Date.now();
+		}
+		const startTime = demoStartTimeRef.current;
+		const totalTime = 2 * 60 * 1000; // 2 minutes
 		
 		const interval = setInterval(() => {
 			if (demoLimitReason) return; // Stop timer if modal is up

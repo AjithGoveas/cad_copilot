@@ -4,7 +4,7 @@ import React from 'react';
 import { useRouter } from 'next/navigation';
 import { Lock, Clock, FileWarning, ArrowRight } from 'lucide-react';
 
-type DemoLimitReason = 'time' | 'prompt' | 'export';
+type DemoLimitReason = 'time' | 'prompt' | 'export' | 'entry-limit';
 
 interface DemoLimitModalProps {
     reason: DemoLimitReason;
@@ -19,7 +19,7 @@ export function DemoLimitModal({ reason }: DemoLimitModalProps) {
                 return {
                     icon: <Clock size={32} className="text-amber-500" />,
                     title: 'Demo session expired',
-                    desc: 'Your 5-minute playground session has ended. To continue prototyping and saving your work, create a free account.'
+                    desc: 'Your 2-minute playground session has ended. To continue prototyping and saving your work, create a free account.'
                 };
             case 'prompt':
                 return {
@@ -32,6 +32,12 @@ export function DemoLimitModal({ reason }: DemoLimitModalProps) {
                     icon: <Lock size={32} className="text-zinc-400" />,
                     title: 'Export locked',
                     desc: 'Sign up to export production-ready STL, DXF, and STEP models. Anonymous exports are disabled in the demo.'
+                };
+            case 'entry-limit':
+                return {
+                    icon: <Lock size={32} className="text-red-500" />,
+                    title: 'Demo Limit Exceeded',
+                    desc: 'You have entered the demo playground 3 times. Please sign in or create a free account to continue prototyping.'
                 };
         }
     };
