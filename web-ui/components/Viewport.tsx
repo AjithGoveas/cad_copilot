@@ -1,317 +1,107 @@
 'use client';
 
-import { Suspense, useState, useRef, useEffect, useMemo, memo } from 'react';
+import { Suspense, useState, useMemo, memo, useCallback } from 'react';
 import { Canvas, events } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Stage, ContactShadows, Center } from '@react-three/drei';
-import { Loader2, Download, MousePointer2, ChevronDown, Layers, Box, ChevronRight, Share2 } from 'lucide-react';
+import { Loader2, MousePointer2 } from 'lucide-react';
 import { StlMesh } from './StlMesh';
 import { DimensionOverlay } from './DimensionOverlay';
 import { CameraRig } from './CameraRig';
 
-import { 
-	DropdownMenu, 
-	DropdownMenuTrigger, 
-	DropdownMenuContent, 
-	DropdownMenuItem, 
-	DropdownMenuSub, 
-	DropdownMenuSubTrigger, 
-	DropdownMenuSubContent,
-	DropdownMenuSeparator,
-	DropdownMenuPortal
-} from './ui/dropdown-menu';
-
-type Selection = {
-	id:    string;
-	point: [number, number, number];
-};
+type Selection = { id: string; point: [number, number, number] };
 
 type Props = {
-	stlUrls:       Map<string, string>;
-	statusText:    string;
-	isCompiling:   boolean;
-	selection?:    Selection | null;
-	onMeshClick?:  (id: string | null, point: [number, number, number] | null) => void;
-	onDownloadStl?: () => void;
-	onDownloadDxf?: (mode: 'silhouette' | 'section' | 'blueprint') => void;
-	onDownloadScad?: () => void;
-	onShare?:      () => void;
-	annotations?:  Record<string, any>;
-	activeFeatureId?: string | null;
-	onSelectParameter?: (key: string | null) => void;
-	onHoverParameter?: (key: string | null) => void;
+    stlUrls: Map<string, string>; statusText: string; isCompiling: boolean;
+    selection?: Selection | null; onMeshClick?: (id: string | null, point: [number, number, number] | null) => void;
+    annotations?: Record<string, any>; activeFeatureId?: string | null;
+    onSelectParameter?: (key: string | null) => void; onHoverParameter?: (key: string | null) => void;
 };
 
 export const Viewport = memo(function Viewport({ 
-	stlUrls, 
-	statusText, 
-	isCompiling, 
-	selection, 
-	onMeshClick, 
-	onDownloadStl, 
-	onDownloadDxf, 
-	onDownloadScad,
-	onShare,
-	annotations = {},
-	activeFeatureId = null,
-	onSelectParameter,
-	onHoverParameter,
+    stlUrls, statusText, isCompiling, selection, onMeshClick,
+    annotations = {}, activeFeatureId = null, onSelectParameter, onHoverParameter,
 }: Props) {
-	const [hintVisible, setHintVisible] = useState(false);
-	const [geometryCenter, setGeometryCenter] = useState<[number, number, number]>([0, 0, 0]);
-	const [geometryScale, setGeometryScale] = useState<number>(1.0);
+    const [geometryCenter, setGeometryCenter] = useState<[number, number, number]>([0, 0, 0]);
+    const [geometryScale, setGeometryScale] = useState<number>(1.0);
 
-	const geometryInfo = useMemo(() => ({
-		center: geometryCenter,
-		scale: geometryScale,
-	}), [geometryCenter, geometryScale]);
+    const handleGeometryLoaded = useCallback((center: [number, number, number], scale: number) => {
+        setGeometryCenter(prev => {
+            if (prev[0] === center[0] && prev[1] === center[1] && prev[2] === center[2]) return prev;
+            return center;
+        });
+        setGeometryScale(scale);
+    }, []);
 
-	const hasGeometry = stlUrls.size > 0;
+    const geometryInfo = useMemo(() => ({ center: geometryCenter, scale: geometryScale }), [geometryCenter, geometryScale]);
+    const hasGeometry = stlUrls.size > 0;
 
-	return (
-		<section className="relative flex-1 overflow-hidden bg-[#030303]">
+    return (
+        // VS Code App Background Color
+        <section className="relative flex-1 overflow-hidden bg-[#181818] shadow-[inset_0_0_40px_rgba(0,0,0,0.5)]">
+            <Canvas
+                shadows="percentage" dpr={[1, 2]}
+                gl={{ antialias: true, logarithmicDepthBuffer: true }}
+                className="absolute inset-0"
+            >
+                <PerspectiveCamera makeDefault position={[5, 5, 5]} fov={40} />
+                <color attach="background" args={['#181818']} />
 
-			{/* ── 3-D Canvas ─────────────────────────────────────────────── */}
-			<Canvas
-				shadows="percentage"
-				dpr={[1, 2]}
-				gl={{
-					antialias: true,
-					logarithmicDepthBuffer: true,
-				}}
-				className="absolute inset-0"
-				events={(store) => {
-					const defaultEvents = events(store);
-					const originalPointerMove = defaultEvents.handlers?.onPointerMove;
-					if (defaultEvents.handlers && originalPointerMove) {
-						let pendingEvent: any = null;
-						let animationFrameId: number | null = null;
+                <Suspense fallback={null}>
+                    <Stage intensity={0.8} environment="city" adjustCamera={false} shadows="contact" preset="rembrandt">
+                        <Center
+                            onCentered={({ center }) => handleGeometryLoaded([center.x, center.y, center.z], 1.0)}
+                        >
+                            {Array.from(stlUrls.entries()).map(([id, url]) => (
+                                <StlMesh
+                                    key={id} id={id} url={url}
+                                    isSelected={selection?.id === id}
+                                    onMeshClick={(pt) => onMeshClick?.(id, pt)}
+                                />
+                            ))}
+                        </Center>
+                    </Stage>
+                    <ContactShadows position={[0, -1.2, 0]} opacity={0.35} scale={20} blur={2} far={4} />
+                </Suspense>
 
-						defaultEvents.handlers.onPointerMove = (event: any) => {
-							pendingEvent = event;
-							if (animationFrameId === null) {
-								animationFrameId = requestAnimationFrame(() => {
-									animationFrameId = null;
-									if (pendingEvent) {
-										originalPointerMove(pendingEvent);
-										pendingEvent = null;
-									}
-								});
-							}
-						};
-					}
-					return defaultEvents;
-				}}
-			>
-				<PerspectiveCamera makeDefault position={[5, 5, 5]} fov={40} />
-				<color attach="background" args={['#030303']} />
+                <CameraRig activeParameter={activeFeatureId} annotations={annotations} geometryInfo={geometryInfo} />
+                {geometryInfo && (
+                    <DimensionOverlay
+                        annotations={annotations} activeParameter={activeFeatureId}
+                        geometryScale={geometryScale} geometryCenter={geometryCenter}
+                        onSelectParameter={onSelectParameter} onHoverParameter={onHoverParameter}
+                    />
+                )}
+                <OrbitControls makeDefault enableDamping dampingFactor={0.05} minPolarAngle={0} maxPolarAngle={Math.PI / 1.75} />
+            </Canvas>
 
-				<Suspense fallback={null}>
-					<Stage
-						intensity={0.8}
-						environment="city"
-						adjustCamera={false}
-						shadows="contact"
-						preset="rembrandt"
-					>
-						<Center>
-							{Array.from(stlUrls.entries()).map(([id, url]) => (
-								<StlMesh
-									key={id}
-									id={id}
-									url={url}
-									isSelected={selection?.id === id}
-									onMeshClick={(pt) => {
-										onMeshClick?.(id, pt);
-										setHintVisible(false);
-									}}
-									onGeometryLoaded={(center, scale) => {
-										setGeometryCenter(center);
-										setGeometryScale(scale);
-									}}
-								/>
-							))}
-						</Center>
-					</Stage>
-					<ContactShadows
-						position={[0, -1.2, 0]}
-						opacity={0.35}
-						scale={20}
-						blur={2}
-						far={4}
-					/>
-				</Suspense>
+            {/* Top Left Status Bar */}
+            <div className="absolute top-4 left-4 z-10">
+                <div className="flex items-center gap-2.5 rounded-md border border-[#3C3C3C]/60 bg-[#252526]/80 backdrop-blur-md px-3.5 py-2 shadow-lg transition-all duration-300 hover:bg-[#252526]">
+                    <div className={`size-1.5 rounded-full shadow-sm ${isCompiling ? 'bg-amber-500 animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.6)]' : hasGeometry ? 'bg-[#007ACC] shadow-[0_0_8px_rgba(0,122,204,0.6)]' : 'bg-[#A6A6A6]'}`} />
+                    <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-[#D4D4D4]">{statusText}</span>
+                </div>
+            </div>
 
-				{/* Frame Interceptor Camera Rig Layer */}
-				<CameraRig 
-					activeParameter={activeFeatureId}
-					annotations={annotations}
-					geometryInfo={geometryInfo}
-				/>
+            {hasGeometry && (
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none animate-in slide-in-from-bottom-4 duration-500">
+                    <div className="flex items-center gap-2 rounded-full border border-[#3C3C3C]/50 bg-[#252526]/80 backdrop-blur-md px-4 py-1.5 shadow-xl">
+                        <MousePointer2 size={12} className="text-[#A6A6A6]" />
+                        <span className="font-sans text-[10px] font-medium tracking-wide text-[#D4D4D4]">Click mesh to focus parameter</span>
+                    </div>
+                </div>
+            )}
 
-				{/* Dimension overlay - rendered at Canvas root level */}
-				{geometryInfo && (
-					<DimensionOverlay
-						annotations={annotations}
-						activeParameter={activeFeatureId}
-						geometryScale={geometryScale}
-						geometryCenter={geometryCenter}
-						onSelectParameter={onSelectParameter}
-						onHoverParameter={onHoverParameter}
-					/>
-				)}
-
-				<OrbitControls
-					makeDefault
-					enableDamping
-					dampingFactor={0.05}
-					minPolarAngle={0}
-					maxPolarAngle={Math.PI / 1.75}
-				/>
-			</Canvas>
-
-			{/* ── Status Bar (top-left) ───────────────────────────────────── */}
-			<div className="absolute top-5 left-5 z-10">
-				<div className="glass flex items-center gap-2.5 rounded-xl px-4 py-2.5">
-					<div
-						className={`size-2 shrink-0 rounded-full ${
-							isCompiling
-								? 'bg-amber-500 animate-pulse'
-								: hasGeometry
-								? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]'
-								: 'bg-zinc-600'
-						}`}
-					/>
-					<span className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-300">
-						{statusText}
-					</span>
-				</div>
-			</div>
-
-			{/* ── Action bar (top-right) ──────────────────────────────────── */}
-			{(hasGeometry || hintVisible) && (
-				<div className="absolute top-5 right-5 z-10 flex items-center gap-2">
-					{hasGeometry && (onDownloadStl || onDownloadDxf || onDownloadScad) && (
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
-								<button
-									className="glass flex items-center gap-2 rounded-xl px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-300 transition-all hover:bg-white/10 active:scale-95 shadow-lg ring-1 ring-white/5 data-[state=open]:ring-amber-500/50"
-								>
-									<Download size={14} className="group-data-[state=open]:text-amber-500" />
-									Export
-									<ChevronDown size={12} className="transition-transform duration-200 group-data-[state=open]:rotate-180" />
-								</button>
-							</DropdownMenuTrigger>
-
-							<DropdownMenuContent align="end" className="w-52 border-zinc-800 bg-[#0c0c0e]/95 backdrop-blur-xl shadow-2xl p-1.5 rounded-xl">
-								<DropdownMenuItem 
-									onClick={onDownloadScad}
-									className="flex items-center gap-3 rounded-lg px-3 py-2 text-[10px] font-medium uppercase tracking-widest text-zinc-400 focus:bg-white/5 focus:text-white"
-								>
-									<Box size={14} className="text-blue-500/60" />
-									Source Code (.SCAD)
-								</DropdownMenuItem>
-								
-								<DropdownMenuItem 
-									onClick={onDownloadStl}
-									className="flex items-center gap-3 rounded-lg px-3 py-2 text-[10px] font-medium uppercase tracking-widest text-zinc-400 focus:bg-white/5 focus:text-white"
-								>
-									<Box size={14} className="text-amber-500/60" />
-									3D Mesh (.STL)
-								</DropdownMenuItem>
-
-								<DropdownMenuSub>
-									<DropdownMenuSubTrigger 
-										className="flex items-center justify-between rounded-lg px-3 py-2 text-[10px] font-medium uppercase tracking-widest text-zinc-400 focus:bg-white/5 focus:text-white data-[state=open]:bg-white/5 data-[state=open]:text-white"
-									>
-										<div className="flex items-center gap-3">
-											<Layers size={14} className="text-emerald-500/60" />
-											2D Blueprint (.DXF)
-										</div>
-									</DropdownMenuSubTrigger>
-									<DropdownMenuPortal>
-										<DropdownMenuSubContent className="w-48 border-zinc-800 bg-[#0c0c0e]/95 backdrop-blur-xl shadow-2xl p-1.5 rounded-xl ml-1">
-											<DropdownMenuItem 
-												onClick={() => onDownloadDxf?.('silhouette')}
-												className="rounded-lg px-3 py-2 text-[10px] font-medium uppercase tracking-widest text-zinc-400 focus:bg-white/5 focus:text-white"
-											>
-												Silhouette Outline
-											</DropdownMenuItem>
-											<DropdownMenuItem 
-												onClick={() => onDownloadDxf?.('section')}
-												className="rounded-lg px-3 py-2 text-[10px] font-medium uppercase tracking-widest text-zinc-400 focus:bg-white/5 focus:text-white"
-											>
-												Cross-Section Slice
-											</DropdownMenuItem>
-											<DropdownMenuSeparator className="bg-zinc-800/50" />
-											<DropdownMenuItem 
-												onClick={() => onDownloadDxf?.('blueprint')}
-												className="rounded-lg px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-emerald-400 focus:bg-emerald-500/10 focus:text-emerald-300"
-											>
-												Multi-View Sheet
-											</DropdownMenuItem>
-										</DropdownMenuSubContent>
-									</DropdownMenuPortal>
-								</DropdownMenuSub>
-
-								{onShare && (
-									<>
-										<DropdownMenuSeparator className="bg-zinc-800/50" />
-										<DropdownMenuItem 
-											onClick={onShare}
-											className="flex items-center gap-3 rounded-lg px-3 py-2 text-[10px] font-medium uppercase tracking-widest text-zinc-400 focus:bg-white/5 focus:text-white"
-										>
-											<Share2 size={14} className="text-indigo-500/60" />
-											Share Link
-										</DropdownMenuItem>
-									</>
-								)}
-							</DropdownMenuContent>
-						</DropdownMenu>
-					)}
-				</div>
-			)}
-
-			{/* ── Click-to-Edit hint (bottom) ─────────────────────────────── */}
-			{hasGeometry && (
-				<div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
-					<div className="glass flex items-center gap-2 rounded-full px-4 py-2">
-						<MousePointer2 size={11} className="text-zinc-500" />
-						<span className="font-mono text-[9px] uppercase tracking-widest text-zinc-600">
-							Click mesh to focus feature
-						</span>
-					</div>
-				</div>
-			)}
-
-			{/* ── Empty State ─────────────────────────────────────────────── */}
-			{!hasGeometry && !isCompiling && (
-				<div className="absolute inset-0 flex flex-col items-center justify-center gap-6 pointer-events-none">
-					<div className="size-24 rounded-full bg-amber-500/5 animate-glow blur-2xl absolute" />
-					<div className="glass flex size-16 items-center justify-center rounded-3xl">
-						<Loader2 size={28} className="text-zinc-700" />
-					</div>
-					<div className="text-center">
-						<p className="font-mono text-[11px] font-bold uppercase tracking-[0.35em] text-zinc-300">
-							Awaiting Geometry
-						</p>
-						<p className="mt-2 font-mono text-[9px] uppercase tracking-widest text-zinc-600">
-							Upload a blueprint to initialise the pipeline
-						</p>
-					</div>
-				</div>
-			)}
-
-			{/* ── Compiling Overlay ───────────────────────────────────────── */}
-			{isCompiling && (
-				<div className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
-					<div className="glass flex flex-col items-center gap-4 rounded-2xl p-8">
-						<Loader2 size={32} className="animate-spin text-amber-500" />
-						<span className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-amber-500/80">
-							Compiling Geometry…
-						</span>
-					</div>
-				</div>
-			)}
-		</section>
-	);
+            {!hasGeometry && !isCompiling && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 pointer-events-none">
+                    <div className="flex size-14 items-center justify-center rounded-2xl bg-[#252526]/50 border border-[#3C3C3C] shadow-2xl backdrop-blur-xl animate-in zoom-in duration-700">
+                        <Loader2 size={24} className="text-[#A6A6A6] opacity-50" />
+                    </div>
+                    <div className="text-center animate-in fade-in slide-in-from-bottom-2 duration-700 delay-100">
+                        <p className="font-sans text-xs font-semibold tracking-wide text-[#D4D4D4]">Awaiting Geometry</p>
+                        <p className="mt-1 font-sans text-[11px] text-[#A6A6A6]">Upload a blueprint or prompt to begin</p>
+                    </div>
+                </div>
+            )}
+        </section>
+    );
 });

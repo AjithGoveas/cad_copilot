@@ -4,8 +4,19 @@ import { useState, useCallback, useMemo, useEffect, useImperativeHandle, forward
 import { Viewport } from './Viewport';
 import { useCADEngine } from '@/hooks/useCADEngine';
 import { toast } from 'sonner';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Share2, Download, ChevronDown, Layers, Box, Loader2 } from 'lucide-react';
 import { extractStructuredAnnotations } from '@/lib/openscadParameters';
+import {
+	DropdownMenu,
+	DropdownMenuTrigger,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSub,
+	DropdownMenuSubTrigger,
+	DropdownMenuSubContent,
+	DropdownMenuSeparator,
+	DropdownMenuPortal
+} from './ui/dropdown-menu';
 
 export type CADViewerRef = {
 	rebuild: () => void;
@@ -137,15 +148,90 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
 				isCompiling={isRecompiling || isGenerating}
 				selection={selection}
 				onMeshClick={onMeshClick}
-				onDownloadStl={showExport ? () => handleExport('stl') : undefined}
-				onDownloadDxf={showExport ? (mode) => handleExport('dxf', mode) : undefined}
-				onDownloadScad={showExport ? handleDownloadScad : undefined}
-				onShare={showExport ? onShare : undefined}
 				annotations={annotations}
 				activeFeatureId={activeFeatureId || selection?.id}
 				onSelectParameter={onSelectParameter}
 				onHoverParameter={onHoverParameter}
 			/>
+
+			{/* ── Top Bar (Share & Export) ── */}
+			{showExport && stlUrls.size > 0 && (
+				<div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+					{onShare && (
+						<button 
+							onClick={onShare} 
+							className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#252526]/80 hover:bg-[#3C3C3C] border border-[#3C3C3C] shadow-lg backdrop-blur-md text-[11px] font-medium text-[#D4D4D4] transition-colors"
+						>
+							<Share2 size={13} className="text-[#007ACC]" />
+							Share Link
+						</button>
+					)}
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<button 
+								disabled={isExporting} 
+								className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#252526]/80 hover:bg-[#3C3C3C] border border-[#3C3C3C] shadow-lg backdrop-blur-md text-[11px] font-medium text-[#D4D4D4] transition-colors disabled:opacity-50"
+							>
+								{isExporting ? <Loader2 size={13} className="animate-spin text-[#007ACC]" /> : <Download size={13} className="text-[#007ACC]" />}
+								Export
+								<ChevronDown size={11} className="text-[#A6A6A6] ml-0.5" />
+							</button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end" className="w-48 border-[#3C3C3C] bg-[#252526] p-1 shadow-2xl rounded-md">
+							<DropdownMenuItem onClick={handleDownloadScad} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+								<div className="flex items-center gap-2.5">
+									<div className="flex size-5 items-center justify-center rounded bg-white/10">
+										<Layers size={11} className="text-white" />
+									</div>
+									<div className="flex flex-col">
+										<span>OpenSCAD Script</span>
+										<span className="text-[9px] text-white/60">.SCAD Text File</span>
+									</div>
+								</div>
+							</DropdownMenuItem>
+							<DropdownMenuSeparator className="bg-[#3C3C3C]" />
+							<DropdownMenuItem onClick={() => handleExport('stl')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+								<div className="flex items-center gap-2.5">
+									<div className="flex size-5 items-center justify-center rounded bg-amber-500/20">
+										<Box size={11} className="text-amber-500" />
+									</div>
+									<div className="flex flex-col">
+										<span>3D Printable Mesh</span>
+										<span className="text-[9px] text-white/60">.STL Binary</span>
+									</div>
+								</div>
+							</DropdownMenuItem>
+							<DropdownMenuSub>
+								<DropdownMenuSubTrigger className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+									<div className="flex items-center gap-2.5">
+										<div className="flex size-5 items-center justify-center rounded bg-emerald-500/20">
+											<Layers size={11} className="text-emerald-500" />
+										</div>
+										<div className="flex flex-col text-left">
+											<span>2D Vector Drawing</span>
+											<span className="text-[9px] text-white/60">.DXF Outline</span>
+										</div>
+									</div>
+								</DropdownMenuSubTrigger>
+								<DropdownMenuPortal>
+									<DropdownMenuSubContent alignOffset={-5} className="min-w-32 border-[#3C3C3C] bg-[#252526] p-1 shadow-2xl rounded-md">
+										<DropdownMenuItem onClick={() => handleExport('dxf', 'silhouette')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+											Top-Down Silhouette
+										</DropdownMenuItem>
+										<DropdownMenuItem onClick={() => handleExport('dxf', 'section')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+											Cross-Section Slice
+										</DropdownMenuItem>
+										<DropdownMenuSeparator className="bg-[#3C3C3C]" />
+										<DropdownMenuItem onClick={() => handleExport('dxf', 'blueprint')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer font-bold text-emerald-400">
+											Multi-View Sheet
+										</DropdownMenuItem>
+									</DropdownMenuSubContent>
+								</DropdownMenuPortal>
+							</DropdownMenuSub>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</div>
+			)}
 
 			{/* WASM Error Banner */}
 			{engineError && (

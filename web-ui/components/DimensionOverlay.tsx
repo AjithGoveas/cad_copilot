@@ -108,9 +108,10 @@ function HeightDimension({
 				onPointerOut={(e) => {
 					onHover?.(false);
 				}}
+				renderOrder={1000}
 			>
 				<sphereGeometry args={[0.02, 16, 16]} />
-				<meshBasicMaterial color="#f59e0b" transparent opacity={0.35} depthTest={true} />
+				<meshBasicMaterial color="#007ACC" transparent opacity={0.35} depthTest={false} />
 			</mesh>
 		);
 	}
@@ -118,11 +119,11 @@ function HeightDimension({
 	return (
 		<group>
 			{/* Main Dimension Line */}
-			<Line points={[transformedP1, transformedP2]} color="#f59e0b" lineWidth={2.5} />
+			<Line points={[transformedP1, transformedP2]} color="#007ACC" lineWidth={2.5} depthTest={false} />
 			
 			{/* Endcap ticks */}
-			<Line points={tick1} color="#f59e0b" lineWidth={2} />
-			<Line points={tick2} color="#f59e0b" lineWidth={2} />
+			<Line points={tick1} color="#007ACC" lineWidth={2} depthTest={false} />
+			<Line points={tick2} color="#007ACC" lineWidth={2} depthTest={false} />
 			
 			{/* Midpoint Sphere */}
 			<mesh 
@@ -138,21 +139,22 @@ function HeightDimension({
 				onPointerOut={(e) => {
 					onHover?.(false);
 				}}
+				renderOrder={1000}
 			>
 				<sphereGeometry args={[0.035, 16, 16]} />
-				<meshBasicMaterial color="#f59e0b" />
+				<meshBasicMaterial color="#f59e0b" depthTest={false} />
 			</mesh>
 			
 			{/* HTML Label */}
-			<Html position={midpoint} center distanceFactor={15}>
+			<Html position={midpoint} center distanceFactor={15} zIndexRange={[100, 0]}>
 				<div
 					onClick={(e) => {
 						e.stopPropagation();
 						onClick?.();
 					}}
 					style={{
-						background: 'rgba(12, 12, 14, 0.85)',
-						border: '1px solid rgba(245, 158, 11, 0.5)',
+						background: 'rgba(37, 37, 38, 0.9)',
+						border: '1px solid rgba(0, 122, 204, 0.5)',
 						borderRadius: '6px',
 						padding: '4px 8px',
 						display: 'flex',
@@ -160,7 +162,7 @@ function HeightDimension({
 						alignItems: 'center',
 						gap: '1px',
 						backdropFilter: 'blur(8px)',
-						boxShadow: '0 0 12px rgba(245,158,11,0.25)',
+						boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
 						transform: 'translateY(-24px)',
 						whiteSpace: 'nowrap',
 						cursor: 'pointer',
@@ -169,7 +171,7 @@ function HeightDimension({
 				>
 					<span
 						style={{
-							color: '#f59e0b',
+							color: '#9CDCFE',
 							fontSize: '9px',
 							fontWeight: 800,
 							letterSpacing: '0.1em',
@@ -181,7 +183,7 @@ function HeightDimension({
 					</span>
 					<span
 						style={{
-							color: '#fafafa',
+							color: '#D4D4D4',
 							fontSize: '11px',
 							fontWeight: 700,
 							fontFamily: 'monospace',
@@ -258,9 +260,10 @@ function DiameterDimension({
 				onPointerOut={(e) => {
 					onHover?.(false);
 				}}
+				renderOrder={1000}
 			>
 				<sphereGeometry args={[0.02, 16, 16]} />
-				<meshBasicMaterial color="#f59e0b" transparent opacity={0.35} depthTest={true} />
+				<meshBasicMaterial color="#007ACC" transparent opacity={0.35} depthTest={false} />
 			</mesh>
 		);
 	}
@@ -268,13 +271,13 @@ function DiameterDimension({
 	return (
 		<group>
 			{/* Circular Ring */}
-			<Line points={circlePoints.points} color="#f59e0b" lineWidth={2} />
+			<Line points={circlePoints.points} color="#007ACC" lineWidth={2} depthTest={false} />
 
 			{/* Diameter line */}
-			<Line points={diamLinePoints} color="#f59e0b" lineWidth={1.5} dashed={true} dashScale={5} />
+			<Line points={diamLinePoints} color="#007ACC" lineWidth={1.5} dashed={true} dashScale={5} depthTest={false} />
 
 			{/* Center Sphere */}
-			<mesh
+			<mesh 
 				position={transformedCenter}
 				onClick={(e) => {
 					e.stopPropagation();
@@ -287,21 +290,22 @@ function DiameterDimension({
 				onPointerOut={(e) => {
 					onHover?.(false);
 				}}
+				renderOrder={1000}
 			>
 				<sphereGeometry args={[0.035, 16, 16]} />
-				<meshBasicMaterial color="#f59e0b" />
+				<meshBasicMaterial color="#f59e0b" depthTest={false} />
 			</mesh>
 
 			{/* HTML Label */}
-			<Html position={transformedCenter} center distanceFactor={15}>
+			<Html position={transformedCenter} center distanceFactor={15} zIndexRange={[100, 0]}>
 				<div
 					onClick={(e) => {
 						e.stopPropagation();
 						onClick?.();
 					}}
 					style={{
-						background: 'rgba(12, 12, 14, 0.85)',
-						border: '1px solid rgba(245, 158, 11, 0.5)',
+						background: 'rgba(37, 37, 38, 0.9)',
+						border: '1px solid rgba(0, 122, 204, 0.5)',
 						borderRadius: '6px',
 						padding: '4px 8px',
 						display: 'flex',
@@ -309,7 +313,7 @@ function DiameterDimension({
 						alignItems: 'center',
 						gap: '1px',
 						backdropFilter: 'blur(8px)',
-						boxShadow: '0 0 12px rgba(245,158,11,0.25)',
+						boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
 						transform: 'translateY(-24px)',
 						whiteSpace: 'nowrap',
 						cursor: 'pointer',
@@ -318,7 +322,7 @@ function DiameterDimension({
 				>
 					<span
 						style={{
-							color: '#f59e0b',
+							color: '#9CDCFE',
 							fontSize: '9px',
 							fontWeight: 800,
 							letterSpacing: '0.1em',
@@ -330,7 +334,7 @@ function DiameterDimension({
 					</span>
 					<span
 						style={{
-							color: '#fafafa',
+							color: '#D4D4D4',
 							fontSize: '11px',
 							fontWeight: 700,
 							fontFamily: 'monospace',
@@ -383,9 +387,10 @@ function ChamferDimension({
 				onPointerOut={(e) => {
 					onHover?.(false);
 				}}
+				renderOrder={1000}
 			>
 				<sphereGeometry args={[0.02, 16, 16]} />
-				<meshBasicMaterial color="#06b6d4" transparent opacity={0.35} depthTest={true} />
+				<meshBasicMaterial color="#4EC9B0" transparent opacity={0.35} depthTest={false} />
 			</mesh>
 		);
 	}
@@ -407,21 +412,22 @@ function ChamferDimension({
 				onPointerOut={(e) => {
 					onHover?.(false);
 				}}
+				renderOrder={1000}
 			>
 				<torusGeometry args={[radius, 0.015, 16, 64]} />
-				<meshBasicMaterial color="#06b6d4" transparent opacity={0.8} />
+				<meshBasicMaterial color="#4EC9B0" transparent opacity={0.8} depthTest={false} />
 			</mesh>
 
 			{/* HTML Label */}
-			<Html position={transformedCenter} center distanceFactor={15}>
+			<Html position={transformedCenter} center distanceFactor={15} zIndexRange={[100, 0]}>
 				<div
 					onClick={(e) => {
 						e.stopPropagation();
 						onClick?.();
 					}}
 					style={{
-						background: 'rgba(12, 12, 14, 0.85)',
-						border: '1px solid rgba(6, 182, 212, 0.5)',
+						background: 'rgba(37, 37, 38, 0.9)',
+						border: '1px solid rgba(78, 201, 176, 0.5)',
 						borderRadius: '6px',
 						padding: '4px 8px',
 						display: 'flex',
@@ -429,7 +435,7 @@ function ChamferDimension({
 						alignItems: 'center',
 						gap: '1px',
 						backdropFilter: 'blur(8px)',
-						boxShadow: '0 0 12px rgba(6,182,212,0.25)',
+						boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
 						transform: 'translateY(-24px)',
 						whiteSpace: 'nowrap',
 						cursor: 'pointer',
@@ -438,7 +444,7 @@ function ChamferDimension({
 				>
 					<span
 						style={{
-							color: '#06b6d4',
+							color: '#4EC9B0',
 							fontSize: '9px',
 							fontWeight: 800,
 							letterSpacing: '0.1em',
@@ -450,7 +456,7 @@ function ChamferDimension({
 					</span>
 					<span
 						style={{
-							color: '#fafafa',
+							color: '#D4D4D4',
 							fontSize: '11px',
 							fontWeight: 700,
 							fontFamily: 'monospace',

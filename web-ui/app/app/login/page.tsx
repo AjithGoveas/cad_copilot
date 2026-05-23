@@ -49,33 +49,33 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col items-center justify-center bg-[#050505] px-4 selection:bg-amber-500/20">
-      {/* Background ambient gold glow */}
-      <div className="absolute top-1/4 left-1/2 -z-10 h-80 w-80 -translate-x-1/2 rounded-full bg-amber-500/5 blur-[120px]" />
-      <div className="absolute bottom-1/4 left-1/3 -z-10 h-96 w-96 rounded-full bg-amber-500/[0.02] blur-[150px]" />
+    <div className="relative flex min-h-screen w-full flex-col items-center justify-center bg-[#181818] px-4 selection:bg-[#007ACC]/20">
+      {/* Background ambient blue glow */}
+      <div className="absolute top-1/4 left-1/2 -z-10 h-80 w-80 -translate-x-1/2 rounded-full bg-[#007ACC]/5 blur-[120px]" />
+      <div className="absolute bottom-1/4 left-1/3 -z-10 h-96 w-96 rounded-full bg-[#007ACC]/[0.02] blur-[150px]" />
 
       <div className="w-full max-w-md space-y-6">
         {/* Logo/Brand Header */}
         <div className="flex flex-col items-center text-center space-y-2">
-          <div className="flex size-12 items-center justify-center rounded-2xl border border-amber-500/20 bg-amber-500/[0.03] shadow-[0_0_20px_rgba(245,158,11,0.05)] ring-1 ring-amber-500/10">
-            <ShieldCheck className="h-6 w-6 text-amber-400" />
+          <div className="flex size-12 items-center justify-center rounded-2xl border border-[#007ACC]/20 bg-[#007ACC]/[0.03] shadow-[0_0_20px_rgba(0,122,204,0.05)] ring-1 ring-[#007ACC]/10">
+            <ShieldCheck className="h-6 w-6 text-[#007ACC]" />
           </div>
-          <h1 className="font-mono text-[11px] font-black uppercase tracking-widest text-amber-500">
+          <h1 className="font-mono text-[11px] font-black uppercase tracking-widest text-[#007ACC]">
             CAD Copilot — Auth Gateway
           </h1>
-          <p className="text-2xl font-bold text-zinc-100 tracking-tight">Welcome back to CAD Copilot</p>
-          <p className="text-xs text-zinc-500">Sign in to your secure workstation workspace</p>
+          <p className="text-2xl font-bold text-[#DFE1E5] tracking-tight">Welcome back to CAD Copilot</p>
+          <p className="text-xs text-[#868A91]">Sign in to your secure workstation workspace</p>
         </div>
 
         {/* Login Form Card */}
-        <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/40 p-8 shadow-2xl backdrop-blur-xl">
+        <div className="rounded-2xl border border-[#3C3C3C]/80 bg-[#252526]/80 p-8 shadow-2xl backdrop-blur-xl">
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
-              <label htmlFor="login-email" className="text-xs font-semibold text-zinc-400">
+              <label htmlFor="login-email" className="text-xs font-semibold text-[#A6A6A6]">
                 Email Address
               </label>
               <div className="relative">
-                <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-zinc-600">
+                <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-[#A6A6A6]">
                   <Mail className="h-4 w-4" />
                 </span>
                 <input
@@ -84,7 +84,7 @@ export default function LoginPage() {
                   placeholder="name@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950/80 py-2.5 pl-10 pr-4 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition-all focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/50"
+                  className="w-full rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] py-2.5 pl-10 pr-4 text-sm text-[#DFE1E5] placeholder-[#868A91] outline-none transition-all focus:border-[#007ACC]/50 focus:ring-1 focus:ring-[#007ACC]/50"
                   required
                   disabled={isLoading}
                 />
@@ -93,12 +93,12 @@ export default function LoginPage() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label htmlFor="login-password" className="text-xs font-semibold text-zinc-400">
+                <label htmlFor="login-password" className="text-xs font-semibold text-[#A6A6A6]">
                   Password
                 </label>
               </div>
               <div className="relative">
-                <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-zinc-600">
+                <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-[#A6A6A6]">
                   <Lock className="h-4 w-4" />
                 </span>
                 <input
@@ -107,7 +107,7 @@ export default function LoginPage() {
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950/80 py-2.5 pl-10 pr-4 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition-all focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/50"
+                  className="w-full rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] py-2.5 pl-10 pr-4 text-sm text-[#DFE1E5] placeholder-[#868A91] outline-none transition-all focus:border-[#007ACC]/50 focus:ring-1 focus:ring-[#007ACC]/50"
                   required
                   disabled={isLoading}
                 />
@@ -118,10 +118,10 @@ export default function LoginPage() {
               id="login-submit-btn"
               type="submit"
               disabled={isLoading}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 py-3 text-sm font-bold text-amber-950 shadow-[0_4px_14px_rgba(245,158,11,0.25)] transition-all hover:bg-amber-400 hover:shadow-[0_6px_20px_rgba(245,158,11,0.4)] active:scale-[0.98] disabled:pointer-events-none disabled:bg-zinc-800 disabled:text-zinc-500 disabled:shadow-none"
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#007ACC] py-3 text-sm font-bold text-white shadow-[0_4px_14px_rgba(0,122,204,0.25)] transition-all hover:bg-[#007ACC]/90 hover:shadow-[0_6px_20px_rgba(0,122,204,0.4)] active:scale-[0.98] disabled:pointer-events-none disabled:bg-[#3C3C3C] disabled:text-[#868A91] disabled:shadow-none"
             >
               {isLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
+                <Loader2 className="h-4 w-4 animate-spin text-white" />
               ) : (
                 <>
                   <LogIn className="h-4 w-4" />
@@ -131,13 +131,13 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <div className="mt-6 border-t border-zinc-800/80 pt-6 text-center">
-            <p className="text-xs text-zinc-500">
+          <div className="mt-6 border-t border-[#3C3C3C]/80 pt-6 text-center">
+            <p className="text-xs text-[#868A91]">
               New to CAD Copilot?{" "}
               <Link
                 id="signup-link"
                 href="/app/signup"
-                className="font-semibold text-amber-400 hover:text-amber-300 transition-colors inline-flex items-center gap-1 group"
+                className="font-semibold text-[#007ACC] hover:text-[#007ACC]/80 transition-colors inline-flex items-center gap-1 group"
               >
                 Create Account
                 <ArrowRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
@@ -147,8 +147,8 @@ export default function LoginPage() {
         </div>
 
         {/* Footer */}
-        <p className="text-center text-[10px] text-zinc-600 font-mono">
-          SECURE WORKSTATION GATEWAY &copy; {new Date().getFullYear()}
+        <p className="text-center text-[10px] text-[#868A91] font-mono">
+          SECURE WORKSTATION GATEWAY &copy; {new Date().getFullYear()} | ALL RIGHTS RESERVED TO DATAVEX.AI
         </p>
       </div>
     </div>

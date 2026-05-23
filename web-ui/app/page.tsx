@@ -461,7 +461,7 @@ export default function LandingPage() {
             {/* ── FOOTER ── */}
             <footer className="border-t-4 border-[#00F0FF] bg-[#000000] px-6 py-12 flex flex-col md:flex-row justify-between items-center gap-6 font-sans font-bold text-sm uppercase tracking-widest text-[#8B5CF6]">
                 <div className="flex items-center gap-3 text-white">
-                    <Box size={20} className="text-[#00F0FF]" /> © {new Date().getFullYear()} CAD_COPILOT
+                    <Box size={20} className="text-[#00F0FF]" /> &copy; {new Date().getFullYear()} CAD_COPILOT | ALL RIGHTS RESERVED TO DATAVEX.AI
                 </div>
                 <div className="flex gap-8">
                     <a href="#" className="hover:text-[#00F0FF] transition-colors underline-offset-4">Docs</a>

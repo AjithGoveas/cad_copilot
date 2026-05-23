@@ -1,167 +1,185 @@
 'use client';
 
 import { type FormEvent, useEffect, useRef } from 'react';
-import { SendHorizontal, Upload, X, Loader2, Sparkles, Binary, LogOut } from 'lucide-react';
+import { SendHorizontal, Upload, X, Loader2, Sparkles, Binary, LogOut, ChevronLeft, ChevronRight, Box } from 'lucide-react';
 import { ChatBubble } from './ChatBubble';
 import { signOut } from 'next-auth/react';
-
-type Message = { id: string; role: 'user' | 'assistant' | 'system'; content: string };
+import type { Message } from './HitlWorkspace';
 
 type Props = {
-	messages:       Message[];
-	prompt:         string;
-	setPrompt:      (v: string) => void;
-	selectedModel:  string;
-	setSelectedModel: (v: string) => void;
-	modelOptions:   { value: string; label: string }[];
-	selectedFile:   File | null;
-	onFileChange:   (f: File | null) => void;
-	isGenerating:   boolean;
-	onSubmit:       (e: FormEvent) => void;
-	width:          number;
-	hasScript:      boolean;
-	children?:      React.ReactNode;
+    isOpen: boolean;
+    setIsOpen: (v: boolean) => void;
+    messages: Message[];
+    prompt: string;
+    setPrompt: (v: string) => void;
+    selectedModel: string;
+    setSelectedModel: (v: string) => void;
+    modelOptions: { value: string; label: string }[];
+    selectedFile: File | null;
+    onFileChange: (f: File | null) => void;
+    isGenerating: boolean;
+    onSubmit: (e: FormEvent) => void;
+    width: number;
+    hasScript: boolean;
+    children?: React.ReactNode;
 };
 
 export function ChatPanel({
-	messages, prompt, setPrompt,
-	selectedModel, setSelectedModel, modelOptions,
-	selectedFile, onFileChange,
-	isGenerating, onSubmit, width, hasScript, children,
+    isOpen, setIsOpen,
+    messages, prompt, setPrompt,
+    selectedModel, setSelectedModel, modelOptions,
+    selectedFile, onFileChange,
+    isGenerating, onSubmit, width, hasScript, children,
 }: Props) {
-	const bottomRef = useRef<HTMLDivElement>(null);
+    const bottomRef = useRef<HTMLDivElement>(null);
 
-	useEffect(() => {
-		bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-	}, [messages]);
+    useEffect(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages]);
 
-	const canSubmit = !isGenerating && prompt.trim().length > 0 && (!!selectedFile || hasScript);
+    const canSubmit = !isGenerating && prompt.trim().length > 0 && (!!selectedFile || hasScript);
 
-	return (
-		<section
-			className="flex shrink-0 flex-col border-r border-white/5 bg-[#050505] transition-all duration-500 ease-[cubic-bezier(0.2,1,0.2,1)] dot-grid"
-			style={{ width }}
-		>
-			{/* ── Header ─────────────────────────────────────────────────── */}
-			<header className="flex h-16 shrink-0 items-center justify-between border-b border-white/5 px-5 bg-black/40 backdrop-blur-md">
-				<div className="flex items-center gap-3">
-					<div className="group relative flex size-9 items-center justify-center rounded-xl bg-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.2)] transition-all hover:scale-105 active:scale-95">
-						<div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
-						<Sparkles size={16} className="text-black" fill="currentColor" />
+    return (
+        <aside
+            className={`relative flex shrink-0 flex-col border-r border-[#3C3C3C] bg-[#252526] transition-all duration-300 ${isOpen ? '' : 'w-12'}`}
+            style={isOpen ? { width } : undefined}
+        >
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className={`group absolute -right-5 top-1/2 z-40 flex h-16 w-5 -translate-y-1/2 items-center justify-center rounded-r-md border-y border-r border-[#3C3C3C] text-[#A6A6A6] transition-all duration-200 hover:translate-x-0.5 hover:bg-[#3C3C3C] hover:text-[#D4D4D4] active:scale-y-95 cursor-pointer ${isOpen ? 'bg-[#252526]' : 'bg-[#1E1E1E]'}`}
+            >
+                {isOpen ? (
+                    <ChevronLeft size={12} className="transition-transform duration-200 group-hover:-translate-x-0.5" />
+                ) : (
+                    <ChevronRight size={12} className="transition-transform duration-200 group-hover:translate-x-0.5" />
+                )}
+            </button>
+
+            <div className={`flex flex-1 flex-col overflow-hidden transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
+                <header className="flex h-12 shrink-0 items-center justify-between border-b border-[#3C3C3C] px-4 bg-[#252526] shadow-sm">
+                    <div className="flex items-center gap-2.5">
+                        <div className="flex size-5 items-center justify-center rounded bg-[#007ACC]/10 border border-[#007ACC]/30 text-[#007ACC]">
+						<Box size={12} />
 					</div>
-					<div>
-						<p className="font-sans text-[11px] font-black uppercase tracking-[0.25em] text-zinc-100">
-							CAD Copilot
-						</p>
-						<p className="font-mono text-[8px] uppercase tracking-widest text-amber-500/60">
-							Engine v2.5 · Active
-						</p>
-					</div>
-				</div>
+					<span className="font-mono text-[10px] font-black uppercase tracking-[0.25em] text-[#007ACC]">
+						CAD Copilot
+					</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <select
+                            value={selectedModel}
+                            onChange={(e) => setSelectedModel(e.target.value)}
+                            className="bg-[#1E1E1E] border border-[#3C3C3C] rounded-md px-2 py-1 font-sans text-[11px] text-[#D4D4D4] focus:outline-none focus:ring-1 focus:ring-[#007ACC]/50 focus:border-[#007ACC] cursor-pointer shadow-sm transition-all"
+                        >
+                            {modelOptions.map((o) => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                        </select>
+                        <button
+                            onClick={() => signOut({ callbackUrl: '/app/login' })}
+                            title="Sign Out"
+                            className="flex size-6 items-center justify-center rounded-md text-[#A6A6A6] hover:text-[#D4D4D4] hover:bg-[#3C3C3C] transition-all cursor-pointer"
+                        >
+                            <LogOut size={14} />
+                        </button>
+                    </div>
+                </header>
 
-				{/* Model selector & Sign Out */}
-				<div className="flex items-center gap-2">
-					<div className="group flex items-center gap-2 rounded-xl border border-white/3 bg-zinc-900/40 px-3 py-1.5 hover:border-white/10 transition-all">
-						<div className="relative flex size-2 items-center justify-center">
-							<span className="absolute size-full rounded-full bg-emerald-500/40 animate-ping" />
-							<span className="relative size-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-						</div>
-						<select
-							value={selectedModel}
-							onChange={(e) => setSelectedModel(e.target.value)}
-							className="bg-transparent font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-500 focus:outline-none cursor-pointer group-hover:text-zinc-300 transition-colors"
-						>
-							{modelOptions.map((o) => (
-								<option key={o.value} value={o.value} className="bg-zinc-900">
-									{o.label}
-								</option>
-							))}
-						</select>
-					</div>
+                <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 custom-scrollbar">
+                    {messages.map((m) => (
+                        <ChatBubble key={m.id} {...m} />
+                    ))}
+                    <div ref={bottomRef} />
+                </div>
 
-					<button
-						onClick={() => signOut({ callbackUrl: '/app/login' })}
-						title="Sign Out"
-						className="flex size-8 items-center justify-center rounded-xl border border-white/3 bg-zinc-900/40 text-zinc-500 hover:text-red-400 hover:border-red-500/20 hover:bg-red-500/5 transition-all cursor-pointer"
-					>
-						<LogOut size={13} />
-					</button>
-				</div>
-			</header>
+                <div className="shrink-0 border-t border-[#3C3C3C] p-4 space-y-3 bg-[#252526]">
+                    {children}
 
-			{/* ── Messages ────────────────────────────────────────────────── */}
-			<div className="flex-1 space-y-8 overflow-y-auto px-6 py-8 custom-scrollbar">
-				{messages.map((m) => (
-					<ChatBubble key={m.id} {...m} />
-				))}
-				<div ref={bottomRef} />
-			</div>
+                    {/* JetBrains style attachment pill */}
+                    {selectedFile && (
+                        <div className="flex items-center gap-2.5 rounded-md border border-[#3C3C3C] bg-[#1E1E1E] px-3 py-2 animate-in fade-in duration-200 shadow-sm">
+                            <Binary size={14} className="text-[#007ACC]" />
+                            <div className="flex-1 min-w-0">
+                                <p className="truncate font-mono text-[11px] text-[#D4D4D4]">{selectedFile.name}</p>
+                            </div>
+                            <button onClick={() => onFileChange(null)} className="text-[#A6A6A6] hover:text-[#D4D4D4] p-1 hover:bg-[#3C3C3C] rounded-md transition-colors">
+                                <X size={14} />
+                            </button>
+                        </div>
+                    )}
 
-			{/* ── Bottom: context slot + input ────────────────────────────── */}
-			<div className="shrink-0 border-t border-white/5 p-6 space-y-4 bg-black/20">
-				{children}
+                    {/* Flat IDE Input Area */}
+                    <form
+                        onSubmit={onSubmit}
+                        className="flex flex-col rounded-md border border-[#3C3C3C] bg-[#1E1E1E] transition-all duration-300 focus-within:border-[#007ACC] focus-within:ring-1 focus-within:ring-[#007ACC]/30 shadow-sm"
+                    >
+                        <textarea
+                            value={prompt}
+                            onChange={(e) => setPrompt(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSubmit(e as any); }}
+                            rows={3}
+                            placeholder="Describe geometry modifications... (Cmd/Ctrl + Enter)"
+                            className="w-full resize-none bg-transparent px-3 py-2.5 font-sans text-[13px] text-[#D4D4D4] placeholder:text-[#A6A6A6] focus:outline-none custom-scrollbar"
+                        />
+                        <div className="flex items-center justify-between px-2 py-2 border-t border-[#3C3C3C]/50 bg-[#252526]/50 rounded-b-md">
+                            <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-[#3C3C3C] transition-colors text-[#A6A6A6] hover:text-[#D4D4D4]">
+                                <Upload size={14} />
+                                <span className="font-sans text-[11px] font-medium">Attach Context</span>
+                                <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => onFileChange(e.target.files?.[0] ?? null)} />
+                            </label>
 
-				{/* File badge */}
-				{selectedFile && (
-					<div className="flex items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/3 px-3.5 py-2.5 animate-in slide-in-from-bottom-2 duration-300">
-						<div className="flex size-6 items-center justify-center rounded-lg bg-amber-500/10 border border-amber-500/20">
-							<Binary size={12} className="text-amber-500" />
-						</div>
-						<div className="flex-1 min-w-0">
-							<p className="truncate font-mono text-[10px] font-bold text-amber-400/90 uppercase tracking-tight">
-								{selectedFile.name}
-							</p>
-							<p className="font-mono text-[8px] text-amber-700 uppercase">Context Active</p>
-						</div>
-						<button
-							onClick={() => onFileChange(null)}
-							className="rounded-lg p-1 text-zinc-600 hover:bg-white/5 hover:text-zinc-200 transition-all"
-						>
-							<X size={14} />
-						</button>
-					</div>
-				)}
+                            <button
+                                type="submit"
+                                disabled={!canSubmit}
+                                className="flex items-center gap-1.5 rounded-md bg-[#007ACC] px-4 py-1.5 font-sans text-[11px] font-semibold text-white transition-all hover:bg-[#007ACC]/90 hover:shadow-md disabled:bg-[#3C3C3C] disabled:text-[#A6A6A6] disabled:shadow-none active:scale-[0.98]"
+                            >
+                                {isGenerating ? <Loader2 size={12} className="animate-spin" /> : <SendHorizontal size={12} />}
+                                {isGenerating ? 'Synthesising' : 'Execute'}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
 
-				{/* Compose form */}
-				<form
-					onSubmit={onSubmit}
-					className="group relative rounded-2xl border border-white/5 bg-zinc-900/30 transition-all duration-300 focus-within:border-amber-500/40 focus-within:bg-zinc-900/50"
-				>
-					<textarea
-						value={prompt}
-						onChange={(e) => setPrompt(e.target.value)}
-						onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSubmit(e as any); }}
-						rows={3}
-						placeholder="Describe geometry modifications or generate new parts…"
-						className="w-full resize-none bg-transparent px-4 pt-4 pb-2 font-sans text-sm text-zinc-100 placeholder:text-zinc-700 focus:outline-none"
-					/>
+            {!isOpen && (
+                <div className="absolute inset-0 flex flex-col items-center py-4 bg-[#1E1E1E] text-[#A6A6A6] z-20">
+                    {/* Top Section: Brand Icon */}
+                    <button
+                        onClick={() => setIsOpen(true)}
+                        className="flex size-8 items-center justify-center rounded-md bg-[#007ACC]/10 border border-[#007ACC]/30 text-[#007ACC] hover:bg-[#007ACC]/20 hover:scale-105 active:scale-95 transition-all mb-6 cursor-pointer"
+                        title="Expand CAD Copilot"
+                    >
+                        <Box size={16} />
+                    </button>
 
-					<div className="flex items-center justify-between border-t border-white/3 px-4 py-3">
-						<label className="group/upload relative flex cursor-pointer items-center gap-2 rounded-xl px-2 py-1 transition-all hover:bg-white/5">
-							<Upload size={14} className="text-zinc-600 group-hover/upload:text-amber-400 transition-colors" />
-							<span className="font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-700 group-hover/upload:text-zinc-400">Context</span>
-							<input
-								type="file"
-								accept="image/*,.pdf"
-								className="hidden"
-								onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
-							/>
-						</label>
+                    {/* Middle Section: Chat Icon */}
+                    <div className="flex-1 flex flex-col items-center gap-4">
+                        <button
+                            onClick={() => setIsOpen(true)}
+                            className="group relative flex size-8 items-center justify-center rounded-md hover:bg-[#3C3C3C] hover:text-[#D4D4D4] hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                        >
+                            <Sparkles size={16} />
+                            {/* Modern Tooltip */}
+                            <span className="absolute left-11 scale-0 group-hover:scale-100 transition-all duration-150 origin-left bg-[#1E1E1E] border border-[#3C3C3C] text-[#D4D4D4] text-[10px] rounded px-2 py-1 shadow-xl whitespace-nowrap z-50 pointer-events-none">
+                                Open Chat
+                            </span>
+                        </button>
+                    </div>
 
-						<button
-							type="submit"
-							disabled={!canSubmit}
-							className="group/btn flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2 font-mono text-[10px] font-black uppercase tracking-[0.15em] text-black shadow-lg shadow-amber-500/10 transition-all hover:bg-amber-400 hover:shadow-amber-500/20 disabled:cursor-not-allowed disabled:bg-zinc-900 disabled:text-zinc-700 disabled:shadow-none active:scale-95"
-						>
-							{isGenerating
-								? <Loader2 size={13} className="animate-spin" />
-								: <SendHorizontal size={13} className="transition-transform group-hover/btn:translate-x-0.5" />
-							}
-							{isGenerating ? 'Synthesising…' : 'Execute'}
-						</button>
-					</div>
-				</form>
-			</div>
-		</section>
-	);
+                    {/* Bottom Section: Log Out */}
+                    <div className="flex flex-col items-center gap-4">
+                        <button
+                            onClick={() => signOut({ callbackUrl: '/app/login' })}
+                            className="group relative flex size-8 items-center justify-center rounded-md hover:bg-red-500/20 hover:text-red-400 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                        >
+                            <LogOut size={16} />
+                            <span className="absolute left-11 scale-0 group-hover:scale-100 transition-all duration-150 origin-left bg-[#1E1E1E] border border-[#3C3C3C] text-[#D4D4D4] text-[10px] rounded px-2 py-1 shadow-xl whitespace-nowrap z-50 pointer-events-none">
+                                Sign Out
+                            </span>
+                        </button>
+                    </div>
+                </div>
+            )}
+        </aside>
+    );
 }

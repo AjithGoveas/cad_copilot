@@ -38,19 +38,19 @@ export default function ViewerClient({ prompt, scadCode, parametersJson }: Viewe
 	}, []);
 
 	return (
-		<div className="relative flex h-screen w-full overflow-hidden bg-[#050505] text-zinc-100 selection:bg-amber-500/20">
+		<div className="relative flex h-screen w-full overflow-hidden bg-[#181818] text-[#D4D4D4] selection:bg-[#007ACC]/20">
 			
 			{/* ── Logo & Title Banner (top-left) ────────────────────────────────── */}
 			<div className="absolute top-6 left-6 z-10 flex flex-col gap-1 pointer-events-none">
-				<div className="pointer-events-auto flex items-center gap-2.5 rounded-xl border border-white/5 bg-zinc-950/40 backdrop-blur-md px-4 py-3 shadow-lg">
-					<div className="flex size-5 items-center justify-center rounded bg-amber-500/10 border border-amber-500/30 text-amber-500">
+				<div className="pointer-events-auto flex items-center gap-2.5 rounded-md border border-[#3C3C3C] bg-[#252526]/80 backdrop-blur-md px-4 py-3 shadow-lg">
+					<div className="flex size-5 items-center justify-center rounded bg-[#007ACC]/10 border border-[#007ACC]/30 text-[#007ACC]">
 						<Box size={12} />
 					</div>
-					<span className="font-mono text-[10px] font-black uppercase tracking-[0.25em] text-amber-500">
+					<span className="font-mono text-[10px] font-black uppercase tracking-[0.25em] text-[#007ACC]">
 						CAD Copilot
 					</span>
-					<span className="text-[10px] text-zinc-700">/</span>
-					<span className="font-mono text-[9px] uppercase tracking-widest text-zinc-300 truncate max-w-[200px] md:max-w-[400px]" title={prompt}>
+					<span className="text-[10px] text-[#3C3C3C]">/</span>
+					<span className="font-mono text-[10px] tracking-widest text-[#A6A6A6] truncate max-w-[200px] md:max-w-[400px]" title={prompt}>
 						{prompt}
 					</span>
 				</div>
@@ -78,15 +78,14 @@ export default function ViewerClient({ prompt, scadCode, parametersJson }: Viewe
 			</div>
 
 			{/* ── Floating Parameters Panel (right) ─────────────────────────────── */}
-			<div className="absolute right-6 top-6 bottom-6 w-96 z-10 flex flex-col rounded-2xl border border-zinc-800/80 bg-zinc-950/70 backdrop-blur-xl shadow-2xl p-6 overflow-hidden">
+			<div className="absolute right-6 top-6 bottom-6 w-[380px] z-10 flex flex-col rounded-md border border-[#3C3C3C] bg-[#252526]/90 backdrop-blur-xl shadow-2xl p-6 overflow-hidden">
 				<div className="flex items-center gap-2 mb-4 shrink-0">
-					<Layers size={14} className="text-amber-500" />
-					<h2 className="text-xs font-black uppercase tracking-wider text-zinc-100">
+					<Layers size={14} className="text-[#007ACC]" />
+					<h2 className="text-[11.5px] font-medium tracking-wide text-[#D4D4D4]">
 						Model Viewer
 					</h2>
-					<div className="ml-auto flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 border border-emerald-500/20">
-						<span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-						<span className="font-mono text-[8px] uppercase tracking-wider text-emerald-400 font-bold">
+					<div className="ml-auto flex items-center gap-1.5 rounded-md bg-[#007ACC]/10 px-2 py-0.5 border border-[#007ACC]/20">
+						<span className="font-mono text-[9px] uppercase tracking-wider text-[#007ACC] font-bold">
 							Read Only
 						</span>
 					</div>
@@ -103,9 +102,9 @@ export default function ViewerClient({ prompt, scadCode, parametersJson }: Viewe
 					/>
 				</div>
 
-				<div className="mt-4 pt-4 border-t border-zinc-800/60 flex flex-col gap-2 shrink-0">
-					<p className="font-mono text-[8px] text-zinc-500 uppercase tracking-widest text-center">
-						Shared via CAD Copilot Workbench
+				<div className="mt-4 pt-4 border-t border-[#3C3C3C] flex flex-col gap-2 shrink-0">
+					<p className="font-mono text-[9px] text-[#A6A6A6] uppercase tracking-widest text-center">
+						Shared via CAD Copilot Workbench | ALL RIGHTS RESERVED TO DATAVEX.AI
 					</p>
 				</div>
 			</div>
