@@ -21,6 +21,8 @@ type Props = {
     onSubmit: (e: FormEvent) => void;
     width: number;
     hasScript: boolean;
+    uploadedFiles: File[];
+    onUpdateMessageFile?: (messageId: string, file: File | null) => void;
     children?: React.ReactNode;
 };
 
@@ -29,7 +31,9 @@ export function ChatPanel({
     messages, prompt, setPrompt,
     selectedModel, setSelectedModel, modelOptions,
     selectedFile, onFileChange,
-    isGenerating, onSubmit, width, hasScript, children,
+    isGenerating, onSubmit, width, hasScript,
+    uploadedFiles, onUpdateMessageFile,
+    children,
 }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -87,7 +91,12 @@ export function ChatPanel({
 
                 <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 custom-scrollbar">
                     {messages.map((m) => (
-                        <ChatBubble key={m.id} {...m} />
+                        <ChatBubble 
+                            key={m.id} 
+                            {...m} 
+                            uploadedFiles={uploadedFiles}
+                            onUpdateFile={(file) => onUpdateMessageFile?.(m.id, file)}
+                        />
                     ))}
                     <div ref={bottomRef} />
                 </div>

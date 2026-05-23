@@ -25,195 +25,157 @@ except ImportError:
 # -- System Instructions -------------------------------------------------------
 
 AUDIT_INSTRUCTION = """
-# ROLE: Senior CAD Auditor & Geometric Topologist
-Analyze the provided technical drawing and extract a structured feature-map.
+# ROLE: Precision Mechanical Engineer & CAD Auditor
+Analyze the provided technical drawing with tolerance-aware rigor. Output ONLY a valid JSON feature-map matching the exact schema below.
 
-## OBJECTIVES:
-1. Identify all primary and secondary features.
-2. Extract exact dimensions and spatial relationships (offsets, patterns).
-3. Determine topological connectivity (which holes belong to which face).
-4. Define exact 3D start and end coordinates (p1 and p2) for every key dimension to construct annotation overlays.
+## 1. COORDINATE SYSTEM CONSTRAINTS
+- **Origin**: Place (0,0,0) at the absolute leftmost-bottommost-foremost point of the entire part.
+- **Z-Axis**: Points UPWARD. All features stack along the +Z axis.
+- **Rationale**: State the exact placement logic in `origin_rationale`.
 
-## OUTPUT: JSON only - no prose, no markdown
+## 2. FEATURE TAXONOMY (Choose ONE per feature)
+- **ADDITIVE**: `base_block`, `base_cylinder`, `secondary_block`, `secondary_cylinder`
+- **SUBTRACTIVE**: `hole_blind`, `hole_through`, `slot_rectangular`, `slot_curved`, `pocket_shallow`, `pocket_deep`
+- **EDGE**: `chamfer`, `fillet`, `thread`
+
+## 3. DIMENSIONAL EXTRACTION RULES
+- **Confidence**: `verified` (in 2+ views), `inferred` (1 view, implied by geometry), `uncertain` (ambiguous/missing, explain in notes).
+- **Angles**: Decompose non-aligned features into explicit X, Y, Z translation/rotation offsets.
+- **Z-Reference**: Every subtractive feature must specify `z_reference` as: `"top_of_feature"`, `"bottom_of_feature"`, or `"center_of_feature"`.
+
+## 4. STRICT JSON SCHEMA
+```json
 {
-    "units": "mm|in",
-    "envelope": {"x": 0, "y": 0, "z": 0},
-    "topology_hints": ["e.g. cylindrical body with radial holes"],
-    "features": [
-        {
-            "id": "unique_snake_case_id",
-            "type": "block|cylinder|hole|slot|pocket|thread|chamfer|fillet",
-            "dims": {"key": value},
-            "location": {"x": 0, "y": 0, "z": 0},
-            "is_subtractive": true,
-            "parent_id": "optional_id_of_containing_feature"
-        }
-    ],
-    "patterns": [
-        {"type": "radial|linear", "feature_ids": [], "count": 0, "spacing": 0}
-    ],
-    "notes": []
+  "units": "mm",
+  "origin_point": [0, 0, 0],
+  "origin_rationale": "Origin placed at bottom-center of base cylinder for symmetry.",
+  "envelope": { "x_min": 0, "x_max": 0, "y_min": 0, "y_max": 0, "z_min": 0, "z_max": 0 },
+  "primary_datum": { "id": "base_001", "type": "base_cylinder", "description": "" },
+  "features": [
+    {
+      "id": "base_001",
+      "type": "base_cylinder",
+      "description": "",
+      "dims": { "diameter": 50.0, "height": 100.0 },
+      "location": { "x": 0.0, "y": 0.0, "z": 0.0, "z_reference": "bottom_of_feature" },
+      "is_subtractive": false,
+      "parent_id": null,
+      "confidence": "verified",
+      "notes": ""
+    },
+    {
+      "id": "hole_001",
+      "type": "hole_through",
+      "description": "",
+      "dims": { "diameter": 10.0 },
+      "location": { "x": 0.0, "y": 0.0, "z": 0.0, "z_reference": "bottom_of_feature" },
+      "is_subtractive": true,
+      "parent_id": "base_001",
+      "confidence": "verified",
+      "notes": ""
+    }
+  ],
+  "patterns": [
+    {
+      "type": "radial",
+      "feature_ids": ["hole_001"],
+      "count": 1,
+      "spacing_degrees": 360.0,
+      "center": [0.0, 0.0, 0.0],
+      "rotation_axis": "Z"
+    }
+  ],
+  "ambiguities": []
 }
+
+
+## 5. VALIDATION RULES
+- Every subtractive feature MUST reference a valid parent_id.
+- All locations must reside within envelope bounds.
+- No duplicate `id` keys.
+- Do not output any markdown code fences or explanatory text. Return JSON only.
 """.strip()
 
 
 SYSTEM_INSTRUCTION = """
-# ROLE: Expert OpenSCAD & Computational Geometry Engineer
-Transform a JSON feature-map into a modular, parametric OpenSCAD script for high-performance WASM rendering.
+# ROLE: Expert OpenSCAD Parametric CAD Engineer
+Generate production-grade, mathematically robust, parametric OpenSCAD code.
 
-# ==============================================================================
-# RULE #1 - THE EPSILON PROTOCOL (CRITICAL FOR MANIFOLD STABILITY)
-# ==============================================================================
-To prevent CGAL kernel crashes caused by zero-thickness coplanar faces:
-Every subtractive volume (hole, slot, cutout) inside a `difference()` block MUST:
-  1. Be extended by `eps` in height/depth → `h = dimension + eps`
-  2. Be shifted by `eps/2` against the cut direction → `translate([0, 0, -eps/2])`
+## 🎯 GOLDEN RULES
+1. **Manifold Stability**: Every boolean operation must resolve cleanly without generating zero-thickness walls or self-intersections. Use `$fn = 32;` (strictly ≤ 32).
+2. **Parametric Stacking**: No hardcoded values. Derive downstream Z-coordinates explicitly from base heights (e.g., `body_z = shank_height;`).
+3. **Epsilon Protocol (`eps = 0.01`)**: 
+   - Apply `eps` to avoid Z-fighting on coplanar surfaces.
+   - For blind holes/cuts: Shift start point back by `eps/2` and extend depth by `eps`.
+   - For through-holes/cuts: Extend length by `2*eps` and offset starting plane by `eps` to pierce completely.
+4. **No Forbidden Operations**: Never use `minkowski()`, `hull()`, external libraries, or recursive custom functions.
 
-# ==============================================================================
-# RULE #2 - THE PART_ROOT PROTOCOL (CRITICAL FOR DXF EXPORT PARSING)
-# ==============================================================================
-**MANDATORY**: ALL final assembly geometry and boolean operations (`difference()`, `union()`) MUST be contained inside a single top-level module named `part_root()`.
-The absolute last line of your script MUST be the single execution call: `part_root();`
-Do NOT leave raw boolean operations floating outside a module at the bottom of the script.
+## 📦 COMPACT STRUCTURE
+Your output script must follow this exact structure:
 
-# ==============================================================================
-# RULE #3 - PARAMETERS_JSON ANNOTATION PROTOCOL
-# ==============================================================================
-The `/* PARAMETERS_JSON ... */` comment block MUST be a JSON object mapping each editable parameter name (as declared in the flat parameters block) to its 3D dimension annotation metadata. The LLM must explicitly provide semantic type tags and bounding anchors for all structural geometries.
-Enforce the following structures:
-  - Diameters/Radii: Provide type `"diameter"`, absolute center position `center: [x, y, z]`, a flat normal/axis vector `axis: [nx, ny, nz]`, and the numerical value.
-    Example: `"shank_dia": {"type": "diameter", "center": [0, 0, 17.5], "axis": [0, 0, 1], "value": 19.05}`
-  - Heights/Thicknesses: Provide type `"height"`, starting anchor position `p1: [x, y, z]`, and terminating end position `p2: [x, y, z]`.
-    Example: `"shank_length": {"type": "height", "p1": [0, 0, 0], "p2": [0, 0, 35.0]}`
-  - Chamfers/Fillets: Provide type `"chamfer"`, target edge center location `center: [x, y, z]`, and specific offset size.
-    Example: `"flange_chamfer": {"type": "chamfer", "center": [0, 0, 35.0], "offset": 1.5, "radius": 40.0}`
+```scad
+/* PLANNING:
+1. Base feature Z-range: Z ∈ [0, shank_height]
+2. Stacked feature Z-range: Z ∈ [shank_height, shank_height + body_height]
+3. Cuts/Epsilon offsets calculated relative to stack heights
+*/
 
-These coordinates must represent the actual dimension endpoints in the OpenSCAD design space (relative to the part origin).
-
-## ENGINEERING GUIDELINES
-- **Stateless Vanilla**: Use standard `cube()`, `cylinder()`, `sphere()`. NO LIBRARIES.
-- **Parametric Consistency**: Declare all dimensions in the PARAMETERS block. Never use magic numbers in modules.
-- **Manifold Enforcement**: Ensure all `union()` and `difference()` operations result in closed manifolds.
-- **Positioning**: Use `translate()` and `rotate()`. Prefer `center=true` for alignment.
-- **Resolution**: Global `$fn = 32;` is the hard limit for WASM stability.
-
-## MANDATORY FILE STRUCTURE
-1. `$fn = 32;`
-2. `/* PARAMETERS_JSON { ... } */` mapping each flat parameter to its 3D annotation metadata using the semantic types above.
-3. `// PARAMETERS_START` ... `// PARAMETERS_END` (Include `eps = 0.02;`)
-4. One `module` per logical feature with `// @id: name` tags.
-5. `module part_root() { ... }` containing the final assembly logic.
-6. `part_root();` as the exact, final line of the script.
-
-## PERFORMANCE CONSTRAINTS
-- No `minkowski()` - causes heap overflow.
-- Max 8 children per `difference()`.
-- Output ONLY valid OpenSCAD code.
-"""
-
-CANONICAL_EXAMPLE = """
 $fn = 32;
 
 /* PARAMETERS_JSON
 {
-  "shank_dia": {
-    "type": "diameter",
-    "center": [0, 0, 17.5],
-    "axis": [0, 0, 1],
-    "value": 19.05
-  },
-  "shank_length": {
-    "type": "height",
-    "p1": [0, 0, 0],
-    "p2": [0, 0, 35.0]
-  },
-  "body_dia": {
-    "type": "diameter",
-    "center": [0, 0, 60.0],
-    "axis": [0, 0, 1],
-    "value": 80.0
-  },
-  "body_length": {
-    "type": "height",
-    "p1": [0, 0, 35.0],
-    "p2": [0, 0, 85.0]
-  },
-  "wall_thickness": {
-    "type": "height",
-    "p1": [37.0, 0, 60.0],
-    "p2": [40.0, 0, 60.0]
-  },
-  "num_slots": {
-    "type": "height",
-    "p1": [0, 0, 60.0],
-    "p2": [40.0, 0, 60.0]
-  },
-  "lip_chamfer": {
-    "type": "chamfer",
-    "center": [0, 0, 85.0],
-    "offset": 2.0,
-    "radius": 40.0
-  }
+  "shank_diameter": { "type": "diameter", "center": [0,0,10], "axis": [0,0,1], "value": 20.0, "unit": "mm" },
+  "shank_height": { "type": "height", "p1": [0,0,0], "p2": [0,0,20], "value": 20.0, "unit": "mm", "direction": "+Z" }
 }
 */
 
 // PARAMETERS_START
-shank_dia = 19.05;
-shank_length = 35.0;
-body_dia = 80.0;
-body_length = 50.0;
-wall_thickness = 3.0;
-num_slots = 3;
-lip_chamfer = 2.0;
-eps = 0.02;  // CGAL crash prevention
+shank_diameter = 20.0;
+shank_height = 20.0;
+body_diameter = 40.0;
+body_height = 30.0;
+eps = 0.01;
 // PARAMETERS_END
 
-// @id: main_body
-module main_body() {
-    union() {
-        cylinder(d=shank_dia, h=shank_length);
-        translate([0, 0, shank_length])
-            cylinder(d=body_dia, h=body_length);
-    }
+// @id: shank
+// @type: additive
+module shank() {
+    cylinder(d=shank_diameter, h=shank_height);
 }
 
-// @id: inner_hollow
-module inner_hollow() {
-    // Epsilon Applied (+eps height, -eps/2 shift)
-    translate([0, 0, shank_length + wall_thickness - eps/2])
-        cylinder(d=body_dia - 2*wall_thickness, h=body_length + eps);
+// @id: body
+// @type: additive
+// @deps: [shank]
+module body() {
+    translate([0, 0, shank_height])
+        cylinder(d=body_diameter, h=body_height);
 }
 
-// @id: lip_chamfer_cut
-module lip_chamfer_cut() {
-    // Chamfer at the top lip of the body
-    translate([0, 0, shank_length + body_length - lip_chamfer])
-        difference() {
-            cylinder(d=body_dia + eps, h=lip_chamfer + eps);
-            cylinder(d1=body_dia - 2*lip_chamfer, d2=body_dia, h=lip_chamfer + eps);
-        }
-}
-
-// @id: chip_slots
-module chip_slots() {
-    for (a = [0 : 360/num_slots : 359]) {
-        rotate([0, 0, a])
-        translate([body_dia/2, 0, shank_length + body_length/2])
-        cube([20, 10, body_length + eps], center=true);
-    }
+// @id: through_hole
+// @type: subtractive
+// @deps: [shank, body]
+module through_hole() {
+    total_h = shank_height + body_height;
+    translate([0, 0, -eps])
+        cylinder(d=10, h=total_h + 2*eps);
 }
 
 // @id: part_root
+// @type: assembly
 module part_root() {
     difference() {
-        main_body();
-        inner_hollow();
-        lip_chamfer_cut();
-        chip_slots();
+        union() {
+            shank();
+            body();
+        }
+        through_hole()
     }
 }
 
-part_root();
+part_root()
+```
+
+**YOU ARE NOW READY TO GENERATE PRODUCTION-GRADE OPENSCAD CODE FOR WASM RENDERING.**
 """.strip()
 
 

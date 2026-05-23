@@ -49,18 +49,6 @@ export const StlMesh = memo(function StlMesh({ id, url, isSelected, onMeshClick,
 		};
 	}, [geometry]);
 
-	useEffect(() => {
-		if (geo) {
-			geo.computeBoundingBox();
-			const box = geo.boundingBox;
-			if (box) {
-				const center = new THREE.Vector3();
-				box.getCenter(center);
-				onGeometryLoaded?.([center.x, center.y, center.z], 1.0);
-			}
-		}
-	}, [geo, onGeometryLoaded]);
-
 	if (!geo) return null;
 
 	return (

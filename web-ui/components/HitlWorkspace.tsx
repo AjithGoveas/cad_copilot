@@ -14,7 +14,10 @@ export type Message = {
     id: string;
     role: 'user' | 'assistant';
     content: string;
-    attachment?: { name: string };
+    attachment?: { 
+        name: string;
+        file?: File;
+    };
 };
 
 type Selection = {
@@ -32,6 +35,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
     const [messages, setMessages] = useState<Message[]>([]);
     const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0].id);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
 
     const [cadScript, setCadScript] = useState<string>('');
     const [parameters, setParameters] = useState<Record<string, any>>({});
@@ -106,7 +110,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
             id: Date.now().toString(), 
             role: 'user', 
             content: prompt,
-            attachment: selectedFile ? { name: selectedFile.name } : undefined
+            attachment: selectedFile ? { name: selectedFile.name, file: selectedFile } : undefined
         };
         
         setMessages((prev) => [...prev, userMsg]);
@@ -154,6 +158,76 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
             setIsGenerating(false);
         }
     };
+
+    const handleFileChange = useCallback((file: File | null) => {
+        setSelectedFile(file);
+        if (file) {
+            setUploadedFiles((prev) => {
+                if (prev.some((f) => f.name === file.name && f.size === file.size)) return prev;
+                return [...prev, file];
+            });
+        }
+    }, []);
+
+    const handleUpdateMessageFile = useCallback(async (messageId: string, file: File | null) => {
+        if (file) {
+            setUploadedFiles((prev) => {
+                if (prev.some((f) => f.name === file.name && f.size === file.size)) return prev;
+                return [...prev, file];
+            });
+        }
+
+        const index = messages.findIndex((m) => m.id === messageId);
+        if (index === -1) return;
+
+        const targetMessage = messages[index];
+        const updatedMessages = messages.slice(0, index);
+        const updatedTargetMsg: Message = {
+            ...targetMessage,
+            attachment: file ? { name: file.name, file } : undefined,
+        };
+
+        setMessages([...updatedMessages, updatedTargetMsg]);
+        setIsGenerating(true);
+
+        try {
+            const formData = new FormData();
+            formData.append('prompt', targetMessage.content);
+            formData.append('model', selectedModel);
+            if (file) formData.append('image', file);
+            if (isDemoMode) formData.append('demoMode', 'true');
+
+            const res = await fetch('/api/v1/generate', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!res.ok) throw new Error('Generation failed');
+
+            const data = await res.json();
+            setCadScript(data.code);
+            
+            if (data.shareToken && data.shareToken !== 'demo-token') {
+                setShareToken(data.shareToken);
+            }
+            
+            const parsedParams = extractOpenScadParameters(data.code);
+            setParameters(parsedParams);
+
+            const assistantMsg: Message = {
+                id: (Date.now() + 1).toString(),
+                role: 'assistant',
+                content: `I've updated the model using the selected file context.`,
+            };
+            setMessages((prev) => [...prev, assistantMsg]);
+            setActiveTab('parameters');
+        } catch (err) {
+            toast.error('Failed to regenerate model');
+            console.error(err);
+        } finally {
+            setIsGenerating(false);
+        }
+    }, [messages, selectedModel, isDemoMode]);
 
     const handleParamChange = useCallback((key: string, value: unknown) => {
         setParameters((prev) => {
@@ -267,11 +341,13 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
                 setSelectedModel={setSelectedModel}
                 modelOptions={modelValueOptions}
                 selectedFile={selectedFile}
-                onFileChange={setSelectedFile}
+                onFileChange={handleFileChange}
                 isGenerating={isGenerating}
                 onSubmit={handleGenerate}
                 width={chatWidth}
                 hasScript={!!cadScript}
+                uploadedFiles={uploadedFiles}
+                onUpdateMessageFile={handleUpdateMessageFile}
             >
                 {selection && (
                     <div className="flex items-center justify-between rounded-md border border-[#007ACC]/50 bg-[#252526] px-3 py-2 animate-in fade-in duration-300 shadow-[0_4px_12px_rgba(0,122,204,0.1)]">
