@@ -3,7 +3,7 @@
 import { Suspense, useState, useRef, useEffect, useMemo, memo } from 'react';
 import { Canvas, events } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Stage, ContactShadows, Center } from '@react-three/drei';
-import { Loader2, Download, MousePointer2, ChevronDown, Layers, Box, ChevronRight } from 'lucide-react';
+import { Loader2, Download, MousePointer2, ChevronDown, Layers, Box, ChevronRight, Share2 } from 'lucide-react';
 import { StlMesh } from './StlMesh';
 import { DimensionOverlay } from './DimensionOverlay';
 import { CameraRig } from './CameraRig';
@@ -34,6 +34,7 @@ type Props = {
 	onDownloadStl?: () => void;
 	onDownloadDxf?: (mode: 'silhouette' | 'section' | 'blueprint') => void;
 	onDownloadScad?: () => void;
+	onShare?:      () => void;
 	annotations?:  Record<string, any>;
 	activeFeatureId?: string | null;
 	onSelectParameter?: (key: string | null) => void;
@@ -49,6 +50,7 @@ export const Viewport = memo(function Viewport({
 	onDownloadStl, 
 	onDownloadDxf, 
 	onDownloadScad,
+	onShare,
 	annotations = {},
 	activeFeatureId = null,
 	onSelectParameter,
@@ -250,6 +252,19 @@ export const Viewport = memo(function Viewport({
 										</DropdownMenuSubContent>
 									</DropdownMenuPortal>
 								</DropdownMenuSub>
+
+								{onShare && (
+									<>
+										<DropdownMenuSeparator className="bg-zinc-800/50" />
+										<DropdownMenuItem 
+											onClick={onShare}
+											className="flex items-center gap-3 rounded-lg px-3 py-2 text-[10px] font-medium uppercase tracking-widest text-zinc-400 focus:bg-white/5 focus:text-white"
+										>
+											<Share2 size={14} className="text-indigo-500/60" />
+											Share Link
+										</DropdownMenuItem>
+									</>
+								)}
 							</DropdownMenuContent>
 						</DropdownMenu>
 					)}

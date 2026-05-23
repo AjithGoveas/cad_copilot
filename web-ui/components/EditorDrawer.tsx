@@ -1,7 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { ChevronLeft, ChevronRight, Code2, Loader2, Sliders, Target, X, Play, Copy, Check, Download, History, AlertTriangle, Clock, ArrowRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Code2, Loader2, Sliders, Target, X, Play, Copy, Check, Download, History, AlertTriangle, Clock, ArrowRight, Share2 } from 'lucide-react';
 import { type ReactNode, useState, memo } from 'react';
 import useSWR from 'swr';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSeparator, DropdownMenuPortal, DropdownMenuSubTrigger } from './ui/dropdown-menu';
@@ -25,6 +25,7 @@ type Project = {
     prompt: string;
     scadCode: string;
     parametersJson: any;
+    shareToken?: string;
     createdAt: string;
 };
 
@@ -41,9 +42,10 @@ type Props = {
     hasScript: boolean;
     selection?: { id: string; point: [number, number, number] } | null;
     onClearSelection?: () => void;
-    onLoadSession?: (script: string, params: any) => void;
+    onLoadSession?: (script: string, params: any, shareToken?: string) => void;
     onExport?: (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => void;
     onDownloadScad?: () => void;
+    onShare?: () => void;
     children?: ReactNode;
     isDemoMode?: boolean;
 };
@@ -54,7 +56,7 @@ export const EditorDrawer = memo(function EditorDrawer({
     cadScript, onScriptChange,
     onRebuild, isCompiling, isExporting, hasScript,
     selection, onClearSelection,
-    onLoadSession, onExport, onDownloadScad,
+    onLoadSession, onExport, onDownloadScad, onShare,
     children, isDemoMode,
 }: Props) {
     const [isCopied, setIsCopied] = useState(false);
@@ -213,6 +215,19 @@ export const EditorDrawer = memo(function EditorDrawer({
                                                         </DropdownMenuSubContent>
                                                     </DropdownMenuPortal>
                                                 </DropdownMenuSub>
+
+                                                {onShare && (
+                                                    <>
+                                                        <DropdownMenuSeparator className="bg-zinc-700" />
+                                                        <DropdownMenuItem 
+                                                            onClick={onShare}
+                                                            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-300 focus:bg-zinc-700 focus:text-white"
+                                                        >
+                                                            <Share2 size={14} className="text-indigo-400" />
+                                                            Share Link
+                                                        </DropdownMenuItem>
+                                                    </>
+                                                )}
                                             </DropdownMenuContent>
                                         </DropdownMenu>
                                     </div>
@@ -254,7 +269,7 @@ export const EditorDrawer = memo(function EditorDrawer({
                                     {historySessions.map((session) => (
                                         <button
                                             key={session.id}
-                                            onClick={() => onLoadSession?.(session.scadCode || '', session.parametersJson)}
+                                            onClick={() => onLoadSession?.(session.scadCode || '', session.parametersJson, session.shareToken)}
                                             className="flex flex-col items-start gap-2 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 transition-all hover:bg-zinc-800 hover:ring-1 hover:ring-amber-500/20 text-left group"
                                         >
                                             <div className="flex w-full items-center justify-between">

@@ -7,7 +7,7 @@ import { CADViewer, type CADViewerRef } from './CADViewer';
 import { ParameterDrawer } from './ParameterDrawer';
 import { DemoLimitModal } from './DemoLimitModal';
 import { toast } from 'sonner';
-import { Target, AlertCircle } from 'lucide-react';
+import { Target, AlertCircle, Share2 } from 'lucide-react';
 import { extractOpenScadParameters, injectOpenScadParameters } from '@/lib/openscadParameters';
 
 type Message = {
@@ -37,6 +37,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
 	const [isGenerating, setIsGenerating] = useState(false);
 
 	const [activeFeatureId, setActiveFeatureId] = useState<string | null>(null);
+	const [shareToken, setShareToken] = useState<string | null>(null);
 
 	const modelValueOptions = useMemo(() => 
 		MODEL_OPTIONS.map(m => ({ value: m.id, label: m.name })), 
@@ -128,6 +129,10 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
 
 			const data = await res.json();
 			setCadScript(data.code);
+			
+			if (data.shareToken && data.shareToken !== 'demo-token') {
+				setShareToken(data.shareToken);
+			}
 			
 			// Parse parameters from code
 			const parsedParams = extractOpenScadParameters(data.code);
@@ -224,14 +229,31 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
 		toast.success('SCAD File Downloaded');
 	}, [cadScript]);
 
-	const handleLoadSession = useCallback((script: string, params: any) => {
+	const handleLoadSession = useCallback((script: string, params: any, token?: string) => {
 		setCadScript(script);
 		setParameters(params);
+		if (token) {
+			setShareToken(token);
+		} else {
+			setShareToken(null);
+		}
 		setActiveTab('parameters');
 		toast.success('Session loaded from history');
 	}, []);
 
 
+
+	const handleShare = async () => {
+		if (!shareToken) return;
+		try {
+			const origin = typeof window !== 'undefined' ? window.location.origin : '';
+			const shareUrl = `${origin}/app/view/${shareToken}`;
+			await navigator.clipboard.writeText(shareUrl);
+			toast.success('Link copied to clipboard!');
+		} catch (err) {
+			toast.error('Failed to copy link');
+		}
+	};
 
 	// ── Render ────────────────────────────────────────────────────────────────
 
@@ -252,6 +274,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
 					Demo Session: {formatTime(timeLeft)}
 				</div>
 			)}
+
 
 			{/* ── Left: Chat Panel ─────────────────────────────────────────── */}
 			<ChatPanel
@@ -331,6 +354,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
 					isGenerating={isGenerating}
 					showExport={true}
 					onStatusChange={(status) => setEngineStatus(status)}
+					onShare={shareToken ? handleShare : undefined}
 				/>
 			</main>
 
@@ -352,6 +376,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
 				onLoadSession={handleLoadSession}
 				onExport={handleExport}
 				onDownloadScad={handleDownloadScad}
+				onShare={shareToken ? handleShare : undefined}
 			>
 				<ParameterDrawer
 					parameters={parameters}

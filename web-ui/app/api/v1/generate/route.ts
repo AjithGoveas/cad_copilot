@@ -85,6 +85,7 @@ export async function POST(req: NextRequest) {
 
         // 3. Persist project to Database (skip if demo mode)
         let projectId = 'demo-project';
+        let shareToken = 'demo-token';
         let createdAt = new Date().toISOString();
 
         if (!isDemoMode && authSession?.user?.id) {
@@ -97,12 +98,14 @@ export async function POST(req: NextRequest) {
                 },
             });
             projectId = project.id;
+            shareToken = project.shareToken;
             createdAt = project.createdAt.toISOString();
         }
 
         // 4. Return result
         return NextResponse.json({
             id: projectId,
+            shareToken: shareToken,
             code: cadCode,
             parameters: parameters,
             createdAt: createdAt,

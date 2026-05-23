@@ -18,6 +18,7 @@ model User {
 
 model Project {
   id             String   @id @default(cuid())
+  shareToken     String   @unique @default(cuid())
   userId         String
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   prompt         String
@@ -27,4 +28,6 @@ model Project {
   stepUrl        String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+
+  @@index([shareToken])
 }

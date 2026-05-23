@@ -23,6 +23,7 @@ type CADViewerProps = {
 	isGenerating?: boolean;
 	showExport?: boolean;
 	onStatusChange?: (status: { isCompiling: boolean; isExporting: boolean }) => void;
+	onShare?: () => void;
 };
 
 export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADViewer(
@@ -36,6 +37,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
 		isGenerating = false,
 		showExport = true,
 		onStatusChange,
+		onShare,
 	},
 	ref
 ) {
@@ -138,6 +140,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
 				onDownloadStl={showExport ? () => handleExport('stl') : undefined}
 				onDownloadDxf={showExport ? (mode) => handleExport('dxf', mode) : undefined}
 				onDownloadScad={showExport ? handleDownloadScad : undefined}
+				onShare={showExport ? onShare : undefined}
 				annotations={annotations}
 				activeFeatureId={activeFeatureId || selection?.id}
 				onSelectParameter={onSelectParameter}

@@ -4,16 +4,16 @@ import ViewerClient from './ViewerClient';
 
 type Props = {
 	params: Promise<{
-		sessionId: string;
+		shareToken: string;
 	}>;
 };
 
 export default async function Page({ params }: Props) {
-	const { sessionId } = await params;
+	const { shareToken } = await params;
 
 	const project = await prisma.project.findUnique({
 		where: {
-			id: sessionId,
+			shareToken: shareToken,
 		},
 	});
 
