@@ -45,6 +45,7 @@ type Props = {
     onExport?: (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => void;
     onDownloadScad?: () => void;
     children?: ReactNode;
+    isDemoMode?: boolean;
 };
 
 export const EditorDrawer = memo(function EditorDrawer({
@@ -54,7 +55,7 @@ export const EditorDrawer = memo(function EditorDrawer({
     onRebuild, isCompiling, isExporting, hasScript,
     selection, onClearSelection,
     onLoadSession, onExport, onDownloadScad,
-    children,
+    children, isDemoMode,
 }: Props) {
     const [isCopied, setIsCopied] = useState(false);
     const [] = useState(false);
@@ -101,28 +102,32 @@ export const EditorDrawer = memo(function EditorDrawer({
                             <Sliders size={14} />
                             Params
                         </button>
-                        <button
-                            onClick={() => setActiveTab('code')}
-                            className={`flex flex-1 items-center justify-center gap-2 rounded-md py-1.5 text-xs font-medium transition-all ${
-                                activeTab === 'code' 
-                                    ? 'bg-zinc-800/80 text-amber-400 shadow-sm ring-1 ring-zinc-700/50' 
-                                    : 'text-zinc-500 hover:text-zinc-300'
-                            }`}
-                        >
-                            <Code2 size={14} />
-                            Code
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('history')}
-                            className={`flex flex-1 items-center justify-center gap-2 rounded-md py-1.5 text-xs font-medium transition-all ${
-                                activeTab === 'history' 
-                                    ? 'bg-zinc-800/80 text-amber-400 shadow-sm ring-1 ring-zinc-700/50' 
-                                    : 'text-zinc-500 hover:text-zinc-300'
-                            }`}
-                        >
-                            <History size={14} />
-                            History
-                        </button>
+                        {!isDemoMode && (
+                            <>
+                                <button
+                                    onClick={() => setActiveTab('code')}
+                                    className={`flex flex-1 items-center justify-center gap-2 rounded-md py-1.5 text-xs font-medium transition-all ${
+                                        activeTab === 'code' 
+                                            ? 'bg-zinc-800/80 text-amber-400 shadow-sm ring-1 ring-zinc-700/50' 
+                                            : 'text-zinc-500 hover:text-zinc-300'
+                                    }`}
+                                >
+                                    <Code2 size={14} />
+                                    Code
+                                </button>
+                                <button
+                                    onClick={() => setActiveTab('history')}
+                                    className={`flex flex-1 items-center justify-center gap-2 rounded-md py-1.5 text-xs font-medium transition-all ${
+                                        activeTab === 'history' 
+                                            ? 'bg-zinc-800/80 text-amber-400 shadow-sm ring-1 ring-zinc-700/50' 
+                                            : 'text-zinc-500 hover:text-zinc-300'
+                                    }`}
+                                >
+                                    <History size={14} />
+                                    History
+                                </button>
+                            </>
+                        )}
                     </div>
                 </header>
 

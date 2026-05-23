@@ -40,11 +40,17 @@ function extractParameters(code: string): Record<string, any> {
 
 export async function POST(req: NextRequest) {
     try {
-        const authSession = await getServerSession(authOptions);
-        if (!authSession || !authSession.user || !authSession.user.id) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
         const formData = await req.formData();
+        const isDemoMode = formData.get('demoMode') === 'true';
+
+        let authSession = null;
+        if (!isDemoMode) {
+            authSession = await getServerSession(authOptions);
+            if (!authSession || !authSession.user || !authSession.user.id) {
+                return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            }
+        }
+
         const prompt = formData.get('prompt') as string;
         const model = formData.get('model') as string;
         const image = formData.get('image') as File | null;
@@ -77,22 +83,29 @@ export async function POST(req: NextRequest) {
         // 2. Extract parameters for persistence
         const parameters = extractParameters(cadCode);
 
-        // 3. Persist project to Database
-        const project = await prisma.project.create({
-            data: {
-                userId: authSession.user.id,
-                prompt,
-                scadCode: cadCode,
-                parametersJson: parameters,
-            },
-        });
+        // 3. Persist project to Database (skip if demo mode)
+        let projectId = 'demo-project';
+        let createdAt = new Date().toISOString();
 
-        // 4. Return result with DB ID
+        if (!isDemoMode && authSession?.user?.id) {
+            const project = await prisma.project.create({
+                data: {
+                    userId: authSession.user.id,
+                    prompt,
+                    scadCode: cadCode,
+                    parametersJson: parameters,
+                },
+            });
+            projectId = project.id;
+            createdAt = project.createdAt.toISOString();
+        }
+
+        // 4. Return result
         return NextResponse.json({
-            id: project.id,
+            id: projectId,
             code: cadCode,
             parameters: parameters,
-            createdAt: project.createdAt,
+            createdAt: createdAt,
         });
 
     } catch (err: any) {

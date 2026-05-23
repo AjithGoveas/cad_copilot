@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ChatPanel } from './ChatPanel';
 import { EditorDrawer } from './EditorDrawer';
 import { CADViewer, type CADViewerRef } from './CADViewer';
 import { ParameterDrawer } from './ParameterDrawer';
+import { DemoLimitModal } from './DemoLimitModal';
 import { toast } from 'sonner';
 import { Target, AlertCircle } from 'lucide-react';
 import { extractOpenScadParameters, injectOpenScadParameters } from '@/lib/openscadParameters';
@@ -21,11 +22,10 @@ type Selection = {
 };
 
 const MODEL_OPTIONS = [
-	{ id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite Preview',   icon: 'sparkles' },
-	{ id: 'gemini-2.5-flash',   name: 'Gemini 2.5 Flash', icon: 'zap' },
+	{ id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite Preview',   icon: 'sparkles' }
 ];
 
-export default function HitlWorkspace() {
+export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boolean }) {
 	// ── State ────────────────────────────────────────────────────────────────
 	const [prompt,        setPrompt]        = useState('');
 	const [messages,      setMessages]      = useState<Message[]>([]);
@@ -42,6 +42,41 @@ export default function HitlWorkspace() {
 		MODEL_OPTIONS.map(m => ({ value: m.id, label: m.name })), 
 	[]);
 
+	// ── Demo Limits State ─────────────────────────────────────────────────────
+	const [promptCount, setPromptCount] = useState(0);
+	const [demoLimitReason, setDemoLimitReason] = useState<'time' | 'prompt' | 'export' | null>(null);
+	const [timeLeft, setTimeLeft] = useState<number | null>(null);
+
+	// Demo Timer Effect
+	useEffect(() => {
+		if (!isDemoMode) return;
+		
+		const storedStartTime = sessionStorage.getItem('demoStartTime');
+		let startTime = storedStartTime ? parseInt(storedStartTime, 10) : Date.now();
+		
+		if (!storedStartTime) {
+			sessionStorage.setItem('demoStartTime', startTime.toString());
+		}
+
+		const totalTime = 5 * 60 * 1000; // 5 minutes
+		
+		const interval = setInterval(() => {
+			if (demoLimitReason) return; // Stop timer if modal is up
+
+			const elapsed = Date.now() - startTime;
+			const remaining = Math.max(0, totalTime - elapsed);
+			
+			setTimeLeft(remaining);
+			
+			if (remaining <= 0) {
+				setDemoLimitReason('time');
+				clearInterval(interval);
+			}
+		}, 1000);
+
+		return () => clearInterval(interval);
+	}, [isDemoMode, demoLimitReason]);
+
 	const [isDrawerOpen, setIsDrawerOpen] = useState(true);
 	const [activeTab,    setActiveTab]    = useState<'parameters' | 'code' | 'history'>('parameters');
 	const [chatWidth,    setChatWidth]    = useState(450);
@@ -56,6 +91,12 @@ export default function HitlWorkspace() {
 		if (e) e.preventDefault();
 		if (!prompt.trim()) return;
 
+		// Demo Limit Check
+		if (isDemoMode && promptCount >= 1) {
+			setDemoLimitReason('prompt');
+			return;
+		}
+
 		const userMsg: Message = { id: Date.now().toString(), role: 'user', content: prompt };
 		setMessages((prev) => [...prev, userMsg]);
 		setPrompt('');
@@ -66,6 +107,7 @@ export default function HitlWorkspace() {
 			formData.append('prompt', prompt);
 			formData.append('model',  selectedModel);
 			if (selectedFile) formData.append('image', selectedFile);
+			if (isDemoMode) formData.append('demoMode', 'true');
 
 			const res = await fetch('/api/v1/generate', {
 				method: 'POST',
@@ -88,6 +130,10 @@ export default function HitlWorkspace() {
 			};
 			setMessages((prev) => [...prev, assistantMsg]);
 			setActiveTab('parameters');
+			
+			if (isDemoMode) {
+				setPromptCount(prev => prev + 1);
+			}
 		} catch (err) {
 			toast.error('Failed to generate CAD model');
 			console.error(err);
@@ -116,6 +162,11 @@ export default function HitlWorkspace() {
 	}, []);
 
 	const handleExport = useCallback(async (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => {
+		if (isDemoMode) {
+			setDemoLimitReason('export');
+			return;
+		}
+
 		if (!cadScript) return;
 		const label = format.toUpperCase();
 		const modeLabel = dxfMode ? ` (${dxfMode})` : '';
@@ -146,6 +197,10 @@ export default function HitlWorkspace() {
 	}, [cadScript]);
 
 	const handleDownloadScad = useCallback(() => {
+		if (isDemoMode) {
+			setDemoLimitReason('export');
+			return;
+		}
 		if (!cadScript) return;
 		const blob = new Blob([cadScript], { type: 'text/plain' });
 		const url = URL.createObjectURL(blob);
@@ -170,8 +225,23 @@ export default function HitlWorkspace() {
 
 	// ── Render ────────────────────────────────────────────────────────────────
 
+	const formatTime = (ms: number) => {
+		const totalSeconds = Math.floor(ms / 1000);
+		const m = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+		const s = (totalSeconds % 60).toString().padStart(2, '0');
+		return `${m}:${s}`;
+	};
+
 	return (
 		<div className="flex h-screen w-full overflow-hidden bg-[#050505] text-zinc-100 selection:bg-amber-500/20">
+
+			{/* Demo Timer Overlay */}
+			{isDemoMode && timeLeft !== null && (
+				<div className="fixed top-6 right-6 z-40 bg-black/50 backdrop-blur-md border border-amber-500/30 text-amber-500 px-4 py-2 rounded-full font-mono text-xs flex items-center gap-2 shadow-[0_0_15px_rgba(245,158,11,0.1)]">
+					<div className="size-2 bg-amber-500 rounded-full animate-pulse" />
+					Demo Session: {formatTime(timeLeft)}
+				</div>
+			)}
 
 			{/* ── Left: Chat Panel ─────────────────────────────────────────── */}
 			<ChatPanel
@@ -260,6 +330,7 @@ export default function HitlWorkspace() {
 				setIsOpen={setIsDrawerOpen}
 				activeTab={activeTab}
 				setActiveTab={setActiveTab}
+				isDemoMode={isDemoMode}
 				cadScript={cadScript}
 				onScriptChange={setCadScript}
 				onRebuild={() => viewerRef.current?.rebuild()}
@@ -281,6 +352,9 @@ export default function HitlWorkspace() {
 					onHoverParameter={setActiveFeatureId}
 				/>
 			</EditorDrawer>
+
+			{/* ── Demo Modal ──────────────────────────────────────────────── */}
+			{demoLimitReason && <DemoLimitModal reason={demoLimitReason} />}
 
 		</div>
 	);

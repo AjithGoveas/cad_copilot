@@ -40,6 +40,7 @@ export default withAuth({
       if (
         pathname === "/app/login" ||
         pathname === "/app/signup" ||
+        pathname === "/app/demo" ||
         pathname.startsWith("/app/view/")
       ) {
         return true;
