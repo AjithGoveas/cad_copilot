@@ -23,16 +23,21 @@ export const Viewport = memo(function Viewport({
 }: Props) {
     const [geometryCenter, setGeometryCenter] = useState<[number, number, number]>([0, 0, 0]);
     const [geometryScale, setGeometryScale] = useState<number>(1.0);
+    const [geometrySize, setGeometrySize] = useState<[number, number, number]>([10, 10, 10]);
 
-    const handleGeometryLoaded = useCallback((center: [number, number, number], scale: number) => {
+    const handleGeometryLoaded = useCallback((center: [number, number, number], size: [number, number, number], scale: number) => {
         setGeometryCenter(prev => {
             if (prev[0] === center[0] && prev[1] === center[1] && prev[2] === center[2]) return prev;
             return center;
         });
+        setGeometrySize(prev => {
+            if (prev[0] === size[0] && prev[1] === size[1] && prev[2] === size[2]) return prev;
+            return size;
+        });
         setGeometryScale(scale);
     }, []);
 
-    const geometryInfo = useMemo(() => ({ center: geometryCenter, scale: geometryScale }), [geometryCenter, geometryScale]);
+    const geometryInfo = useMemo(() => ({ center: geometryCenter, scale: geometryScale, size: geometrySize }), [geometryCenter, geometryScale, geometrySize]);
     const hasGeometry = stlUrls.size > 0;
 
     return (
@@ -49,7 +54,11 @@ export const Viewport = memo(function Viewport({
                 <Suspense fallback={null}>
                     <Stage intensity={0.8} environment="city" adjustCamera={false} shadows="contact" preset="rembrandt">
                         <Center
-                            onCentered={({ center }) => handleGeometryLoaded([center.x, center.y, center.z], 1.0)}
+                            onCentered={({ center, width, height, depth }) => handleGeometryLoaded(
+                                [center.x, center.y, center.z],
+                                [width, height, depth],
+                                1.0
+                            )}
                         >
                             {Array.from(stlUrls.entries()).map(([id, url]) => (
                                 <StlMesh

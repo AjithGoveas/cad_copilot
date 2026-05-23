@@ -10,12 +10,15 @@ interface CameraRigProps {
   geometryInfo: {
     center: [number, number, number];
     scale: number;
+    size?: [number, number, number];
   } | null;
 }
 
 export function CameraRig({ activeParameter, annotations, geometryInfo }: CameraRigProps) {
-  const camera = useThree((state) => state.camera);
+  const camera = useThree((state) => state.camera) as THREE.PerspectiveCamera;
   const controls = useThree((state) => state.controls) as any;
+  const viewportSize = useThree((state) => state.size);
+  const aspect = viewportSize.width / viewportSize.height;
   
   // Track target vectors locally across frames
   const targetLookAt = useRef(new THREE.Vector3(0, 0, 0));
@@ -74,7 +77,12 @@ export function CameraRig({ activeParameter, annotations, geometryInfo }: Camera
       lookAtDest.copy(featureCenter);
 
       const distance = p1.distanceTo(p2);
-      const zoomOffset = Math.max(distance * 2.5, 3); // Dynamic scaling window padding
+      let zoomOffset = Math.max(distance * 2.5, 3); // Dynamic scaling window padding
+
+      // Handle narrow viewports/aspect ratios when parameter is highlighted
+      if (aspect < 1) {
+        zoomOffset = zoomOffset / aspect;
+      }
 
       camPosDest.set(
         featureCenter.x + zoomOffset * 0.7,
@@ -84,7 +92,32 @@ export function CameraRig({ activeParameter, annotations, geometryInfo }: Camera
     } else {
       // Fallback: Reset to centering the whole model geometry if no parameter is selected
       lookAtDest.set(0, 0, 0);
-      camPosDest.set(5, 5, 5);
+      
+      if (geometryInfo && geometryInfo.size) {
+        const size = geometryInfo.size;
+        const maxDim = Math.max(size[0], size[1], size[2]);
+        
+        // Fit distance calculation
+        const radius = maxDim / 2;
+        const fovRad = (camera.fov * Math.PI) / 180;
+        let dist = radius / Math.sin(fovRad / 2);
+        
+        // Adjust for narrow aspect ratio (e.g. portrait screen or side panels open)
+        if (aspect < 1) {
+          dist = dist / aspect;
+        }
+        
+        // Dynamic camera distance with safety padding multiplier
+        const fitDistance = Math.max(dist * 1.35, 10);
+        
+        camPosDest.set(
+          fitDistance * 0.7,
+          fitDistance * 0.7,
+          fitDistance * 1.0
+        );
+      } else {
+        camPosDest.set(5, 5, 5);
+      }
     }
 
     targetLookAt.current.copy(lookAtDest);
@@ -95,7 +128,7 @@ export function CameraRig({ activeParameter, annotations, geometryInfo }: Camera
     startCamPos.current.copy(camera.position);
     startTime.current = performance.now();
     isTransitioning.current = true;
-  }, [activeParameter, annotations, geometryInfo, controls, camera]);
+  }, [activeParameter, annotations, geometryInfo, controls, camera, aspect]);
 
   useFrame(() => {
     if (!isTransitioning.current) return;
