@@ -4,10 +4,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import re
+import subprocess
+import tempfile
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Request, Response
 from app.models.schemas import GenerateResponse
 from app.services.llm_codegen import LLMCodegenService
 
@@ -173,3 +176,44 @@ async def generate(
         openscad_script=script,
         parameters=_extract_parameters(script),
     )
+
+
+@router.post("/export/step")
+async def convert_csg_to_step(request: Request):
+    """Takes raw CSG text from the frontend and returns a STEP file using FreeCAD."""
+    csg_content = await request.body()
+    if not csg_content:
+        raise HTTPException(status_code=400, detail="Empty CSG payload")
+
+    # Create secure temporary files for the conversion
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".csg") as csg_file:
+        csg_file.write(csg_content)
+        csg_path = csg_file.name
+
+    step_path = csg_path.replace(".csg", ".step")
+
+    try:
+        # Path to the translation script
+        script_path = os.path.abspath("scripts/csg_to_step.py")
+        
+        # FIX: Run pure Python instead of FreeCADCmd
+        cmd = [sys.executable, script_path, csg_path, step_path]
+        process = subprocess.run(cmd, capture_output=True, text=True)
+
+        if process.returncode != 0 or not os.path.exists(step_path):
+            print(f"FreeCAD Kernel Error: {process.stderr}\n{process.stdout}")
+            raise HTTPException(status_code=500, detail="Geometry conversion failed")
+
+        # Read the perfect STEP file into memory
+        with open(step_path, "rb") as f:
+            step_data = f.read()
+
+        # Stream it straight back to the browser
+        return Response(content=step_data, media_type="application/octet-stream")
+
+    finally:
+        # Nuke the temporary files so we don't leak server memory
+        if os.path.exists(csg_path):
+            os.remove(csg_path)
+        if os.path.exists(step_path):
+            os.remove(step_path)

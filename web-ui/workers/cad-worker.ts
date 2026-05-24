@@ -8,7 +8,7 @@ type ExportRequest      = {
     type: 'export'; 
     id: number; 
     script: string; 
-    format: 'stl' | 'dxf';
+    format: 'stl' | 'dxf' | 'csg';
     dxfMode?: 'silhouette' | 'section' | 'blueprint';
 };
 type WorkerRequest      = WarmupRequest | CompileRequest | ExportRequest;
@@ -28,7 +28,7 @@ type CompiledMessage = {
     durationMs: number 
 };
 
-type ExportedMessage        = { type: 'exported'; id: number; data: ArrayBuffer; format: 'stl' | 'dxf'; durationMs: number };
+type ExportedMessage        = { type: 'exported'; id: number; data: ArrayBuffer; format: 'stl' | 'dxf' | 'csg'; durationMs: number };
 
 type ErrorMessage = {
     type: 'error';
@@ -205,7 +205,7 @@ const INPUT_PATH  = '/input.scad';
 
 async function exportToFile(
     script: string,
-    format: 'stl' | 'dxf',
+    format: 'stl' | 'dxf' | 'csg',
     dxfMode: 'silhouette' | 'section' | 'blueprint' = 'silhouette'
 ): Promise<{ buffer: ArrayBuffer; durationMs: number }> {
     const hash = await computeHash(script);
@@ -224,8 +224,6 @@ async function exportToFile(
     const outputPath = `/output.${format}`;
 
     try {
-        // THE FIX: Pass `true` here to force a fresh WebAssembly instance every single time.
-        // This completely wipes the corrupted C++ global state from previous runs.
         const engine   = await ensureEngine(true); 
         
         const instance = engine.getInstance();
@@ -241,51 +239,41 @@ async function exportToFile(
         if (format === 'dxf') {
             console.log(`[CAD-Worker] Formatting DXF export (Mode: ${dxfMode})...`);
 
-            // THE FIX: We don't use regex to find a single call anymore. 
-            // We append the projection commands to the absolute end of the file 
-            // and wrap the ENTIRE script execution in a render() block.
+            const moduleWrapper = `
+module __dxf_wrapper_root() {
+    ${script}
+}
+`;
 
             if (dxfMode === 'blueprint') {
-                const spacingX = 150; // Or keep your dynamic extraction logic
+                const spacingX = 150; 
                 const spacingY = 150;
-
-                // We wrap the entire original script in a module, then project that module
                 finalScript = `
-${script}
-
-// --- DXF Projection Wrapper ---
-module __dxf_wrapper_root() {
-    // Because the script above might execute raw geometry, we wrap its evaluation
-    children();
-}
-
+${moduleWrapper}
 module generate_dxf_sheet_fixed() {
-    translate([0, 0]) projection(cut = false) __dxf_wrapper_root() { ${script} }
-    translate([0, -${spacingY}]) projection(cut = true) rotate([90, 0, 0]) translate([0, 0, 0.005]) __dxf_wrapper_root() { ${script} }
-    translate([${spacingX}, 0]) projection(cut = false) rotate([0, 90, 0]) __dxf_wrapper_root() { ${script} }
+    translate([0, 0]) projection(cut = false) __dxf_wrapper_root();
+    translate([0, -${spacingY}]) projection(cut = true) rotate([90, 0, 0]) translate([0, 0, -0.1]) __dxf_wrapper_root();
+    translate([${spacingX}, 0]) projection(cut = false) rotate([0, 90, 0]) __dxf_wrapper_root();
 }
 generate_dxf_sheet_fixed();
 `;
-
             } else {
                 const isCut = dxfMode === 'section';
                 if (isCut) {
                     finalScript = `
-${script}
-// --- DXF Projection Wrapper ---
-translate([0, 0]) projection(cut=true) translate([0, 0, 0.005]) children() { ${script} }
+${moduleWrapper}
+projection(cut=true) rotate([90, 0, 0]) __dxf_wrapper_root();
 `;
                 } else {
                     finalScript = `
-${script}
-// --- DXF Projection Wrapper ---
-translate([0, 0]) projection(cut=false) children() { ${script} }
+${moduleWrapper}
+projection(cut=false) __dxf_wrapper_root();
 `;
                 }
             }
             console.log('[CAD-Worker] Final DXF Script Payload:\n', finalScript);
         }
-
+        
         fs.writeFile(INPUT_PATH, finalScript);
 
         const exitCode = instance.callMain(['-o', outputPath, INPUT_PATH]);
@@ -302,7 +290,6 @@ translate([0, 0]) projection(cut=false) children() { ${script} }
         const buffer     = outputData.buffer.slice(outputData.byteOffset, outputData.byteOffset + outputData.byteLength) as ArrayBuffer;
         const durationMs = Math.round(performance.now() - started);
 
-        // Store a clone of the buffer in the cache
         geometryCache.set(cacheKey, { buffer: buffer.slice(0) });
 
         console.log(`[CAD-Worker] Exported ${format.toUpperCase()} in ${durationMs}ms - ${Math.round(buffer.byteLength / 1024)} KB`);
@@ -320,7 +307,8 @@ translate([0, 0]) projection(cut=false) children() { ${script} }
                 '/output.dxf',
                 '/output.amf',
                 '/output.dxf.tmp',
-                '/output.stl.tmp'
+                '/output.stl.tmp',
+                '/output.csg'
             ];
             for (const file of filesToCleanup) {
                 try {
