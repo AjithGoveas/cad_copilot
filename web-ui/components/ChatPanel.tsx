@@ -1,7 +1,7 @@
 'use client';
 
 import { type FormEvent, useEffect, useRef } from 'react';
-import { SendHorizontal, Upload, X, Loader2, Sparkles, Binary, LogOut, ChevronLeft, ChevronRight, Box } from 'lucide-react';
+import { Upload, X, Loader2, Sparkles, Binary, LogOut, ChevronLeft, ChevronRight, Box, ArrowUp, Paperclip } from 'lucide-react';
 import { ChatBubble } from './ChatBubble';
 import { signOut } from 'next-auth/react';
 import type { Message } from './HitlWorkspace';
@@ -45,146 +45,145 @@ export function ChatPanel({
 
     return (
         <aside
-            className={`relative flex shrink-0 flex-col border-r border-[#3C3C3C] bg-[#252526] transition-all duration-300 ${isOpen ? '' : 'w-12'}`}
+            className={`relative flex shrink-0 flex-col border-r border-zinc-800 bg-[#09090b] transition-all duration-300 ${isOpen ? '' : 'w-14'}`}
             style={isOpen ? { width } : undefined}
         >
+            {/* Expand/Collapse Toggle */}
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className={`group absolute -right-5 top-1/2 z-40 flex h-16 w-5 -translate-y-1/2 items-center justify-center rounded-r-md border-y border-r border-[#3C3C3C] text-[#A6A6A6] transition-all duration-200 hover:translate-x-0.5 hover:bg-[#3C3C3C] hover:text-[#D4D4D4] active:scale-y-95 cursor-pointer ${isOpen ? 'bg-[#252526]' : 'bg-[#1E1E1E]'}`}
+                className={`group absolute -right-4 top-1/2 z-40 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-r-md border-y border-r border-zinc-800 text-zinc-500 transition-all duration-200 hover:w-5 hover:bg-zinc-800 hover:text-zinc-300 cursor-pointer ${isOpen ? 'bg-[#09090b]' : 'bg-zinc-900'}`}
             >
-                {isOpen ? (
-                    <ChevronLeft size={12} className="transition-transform duration-200 group-hover:-translate-x-0.5" />
-                ) : (
-                    <ChevronRight size={12} className="transition-transform duration-200 group-hover:translate-x-0.5" />
-                )}
+                {isOpen ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
             </button>
 
             <div className={`flex flex-1 flex-col overflow-hidden transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
-                <header className="flex h-12 shrink-0 items-center justify-between border-b border-[#3C3C3C] px-4 bg-[#252526] shadow-sm">
-                    <div className="flex items-center gap-2.5">
-                        <div className="flex size-5 items-center justify-center rounded bg-[#007ACC]/10 border border-[#007ACC]/30 text-[#007ACC]">
-						<Box size={12} />
-					</div>
-					<span className="font-mono text-[10px] font-black uppercase tracking-[0.25em] text-[#007ACC]">
-						CAD Copilot
-					</span>
+                
+                {/* Header */}
+                <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800/60 bg-[#09090b]/80 backdrop-blur-md px-5 z-10">
+                    <div className="flex items-center gap-3">
+                        <div className="flex size-7 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
+                            <Box size={16} />
+                        </div>
+                        <span className="font-sans text-[14px] font-semibold tracking-wide text-zinc-100">
+                            CAD Copilot
+                        </span>
                     </div>
                     <div className="flex items-center gap-3">
                         <select
                             value={selectedModel}
                             onChange={(e) => setSelectedModel(e.target.value)}
-                            className="bg-[#1E1E1E] border border-[#3C3C3C] rounded-md px-2 py-1 font-sans text-[11px] text-[#D4D4D4] focus:outline-none focus:ring-1 focus:ring-[#007ACC]/50 focus:border-[#007ACC] cursor-pointer shadow-sm transition-all"
+                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 font-sans text-[12px] text-zinc-300 focus:outline-none focus:ring-1 focus:ring-blue-500/50 cursor-pointer shadow-sm hover:bg-zinc-800 transition-colors"
                         >
                             {modelOptions.map((o) => (
                                 <option key={o.value} value={o.value}>{o.label}</option>
                             ))}
                         </select>
-                        <button
-                            onClick={() => signOut({ callbackUrl: '/app/login' })}
-                            title="Sign Out"
-                            className="flex size-6 items-center justify-center rounded-md text-[#A6A6A6] hover:text-[#D4D4D4] hover:bg-[#3C3C3C] transition-all cursor-pointer"
-                        >
-                            <LogOut size={14} />
-                        </button>
                     </div>
                 </header>
 
-                <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 custom-scrollbar">
-                    {messages.map((m) => (
-                        <ChatBubble 
-                            key={m.id} 
-                            {...m} 
-                            uploadedFiles={uploadedFiles}
-                            onUpdateFile={(file) => onUpdateMessageFile?.(m.id, file)}
-                        />
-                    ))}
-                    <div ref={bottomRef} />
+                {/* Chat History */}
+                <div className="flex-1 overflow-y-auto px-4 py-6 custom-scrollbar scroll-smooth">
+                    <div className="max-w-3xl mx-auto space-y-4">
+                        {messages.map((m) => (
+                            <ChatBubble 
+                                key={m.id} 
+                                {...m} 
+                                uploadedFiles={uploadedFiles}
+                                onUpdateFile={(file) => onUpdateMessageFile?.(m.id, file)}
+                            />
+                        ))}
+                        <div ref={bottomRef} className="h-4" />
+                    </div>
                 </div>
 
-                <div className="shrink-0 border-t border-[#3C3C3C] p-4 space-y-3 bg-[#252526]">
-                    {children}
+                {/* The "Proper" Composer Area */}
+                <div className="shrink-0 px-4 pb-6 pt-2 bg-gradient-to-t from-[#09090b] via-[#09090b] to-transparent">
+                    <div className="max-w-3xl mx-auto flex flex-col gap-3">
+                        
+                        {children}
 
-                    {/* JetBrains style attachment pill */}
-                    {selectedFile && (
-                        <div className="flex items-center gap-2.5 rounded-md border border-[#3C3C3C] bg-[#1E1E1E] px-3 py-2 animate-in fade-in duration-200 shadow-sm">
-                            <Binary size={14} className="text-[#007ACC]" />
-                            <div className="flex-1 min-w-0">
-                                <p className="truncate font-mono text-[11px] text-[#D4D4D4]">{selectedFile.name}</p>
+                        <form
+                            onSubmit={onSubmit}
+                            className="flex flex-col rounded-2xl border border-zinc-700/60 bg-zinc-900/50 shadow-sm focus-within:bg-zinc-800/60 focus-within:border-zinc-600 focus-within:ring-1 focus-within:ring-zinc-600 transition-all duration-200 overflow-hidden"
+                        >
+                            {/* File Attachment Pill inside Composer */}
+                            {selectedFile && (
+                                <div className="px-3 pt-3 pb-1">
+                                    <div className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-1.5 shadow-sm">
+                                        <Binary size={12} className="text-blue-400" />
+                                        <span className="max-w-[200px] truncate font-sans text-[12px] font-medium text-zinc-200">
+                                            {selectedFile.name}
+                                        </span>
+                                        <button 
+                                            type="button"
+                                            onClick={() => onFileChange(null)} 
+                                            className="ml-1 rounded-full p-0.5 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-100 transition-colors"
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Text Input */}
+                            <textarea
+                                value={prompt}
+                                onChange={(e) => setPrompt(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSubmit(e as any); }}
+                                rows={Math.min(Math.max(prompt.split('\n').length, 1), 8)}
+                                placeholder="Message CAD Copilot..."
+                                className="w-full resize-none bg-transparent px-4 py-3 font-sans text-[14px] leading-relaxed text-zinc-100 placeholder:text-zinc-500 focus:outline-none custom-scrollbar"
+                                style={{ minHeight: '52px', maxHeight: '200px' }}
+                            />
+                            
+                            {/* Toolbar row under text */}
+                            <div className="flex items-center justify-between px-2 pb-2 pt-1">
+                                <label className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-700/50 hover:text-zinc-200 transition-colors" title="Attach file">
+                                    <Paperclip size={16} />
+                                    <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => onFileChange(e.target.files?.[0] ?? null)} />
+                                </label>
+
+                                <button
+                                    type="submit"
+                                    disabled={!canSubmit}
+                                    className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 ${
+                                        canSubmit 
+                                            ? 'bg-zinc-100 text-black hover:bg-white active:scale-95 shadow-md' 
+                                            : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+                                    }`}
+                                >
+                                    {isGenerating ? (
+                                        <Loader2 size={16} className="animate-spin text-zinc-400" />
+                                    ) : (
+                                        <ArrowUp size={16} strokeWidth={2.5} />
+                                    )}
+                                </button>
                             </div>
-                            <button onClick={() => onFileChange(null)} className="text-[#A6A6A6] hover:text-[#D4D4D4] p-1 hover:bg-[#3C3C3C] rounded-md transition-colors">
-                                <X size={14} />
-                            </button>
+                        </form>
+                        
+                        <div className="text-center px-4">
+                            <span className="text-[11px] text-zinc-500 font-sans tracking-wide">
+                                CAD Copilot can make mistakes. Verify critical dimensions.
+                            </span>
                         </div>
-                    )}
-
-                    {/* Flat IDE Input Area */}
-                    <form
-                        onSubmit={onSubmit}
-                        className="flex flex-col rounded-md border border-[#3C3C3C] bg-[#1E1E1E] transition-all duration-300 focus-within:border-[#007ACC] focus-within:ring-1 focus-within:ring-[#007ACC]/30 shadow-sm"
-                    >
-                        <textarea
-                            value={prompt}
-                            onChange={(e) => setPrompt(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSubmit(e as any); }}
-                            rows={3}
-                            placeholder="Describe geometry modifications... (Cmd/Ctrl + Enter)"
-                            className="w-full resize-none bg-transparent px-3 py-2.5 font-sans text-[13px] text-[#D4D4D4] placeholder:text-[#A6A6A6] focus:outline-none custom-scrollbar"
-                        />
-                        <div className="flex items-center justify-between px-2 py-2 border-t border-[#3C3C3C]/50 bg-[#252526]/50 rounded-b-md">
-                            <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-[#3C3C3C] transition-colors text-[#A6A6A6] hover:text-[#D4D4D4]">
-                                <Upload size={14} />
-                                <span className="font-sans text-[11px] font-medium">Attach Context</span>
-                                <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => onFileChange(e.target.files?.[0] ?? null)} />
-                            </label>
-
-                            <button
-                                type="submit"
-                                disabled={!canSubmit}
-                                className="flex items-center gap-1.5 rounded-md bg-[#007ACC] px-4 py-1.5 font-sans text-[11px] font-semibold text-white transition-all hover:bg-[#007ACC]/90 hover:shadow-md disabled:bg-[#3C3C3C] disabled:text-[#A6A6A6] disabled:shadow-none active:scale-[0.98]"
-                            >
-                                {isGenerating ? <Loader2 size={12} className="animate-spin" /> : <SendHorizontal size={12} />}
-                                {isGenerating ? 'Synthesising' : 'Execute'}
-                            </button>
-                        </div>
-                    </form>
+                    </div>
                 </div>
             </div>
 
+            {/* Collapsed State Sidebar */}
             {!isOpen && (
-                <div className="absolute inset-0 flex flex-col items-center py-4 bg-[#1E1E1E] text-[#A6A6A6] z-20">
-                    {/* Top Section: Brand Icon */}
-                    <button
-                        onClick={() => setIsOpen(true)}
-                        className="flex size-8 items-center justify-center rounded-md bg-[#007ACC]/10 border border-[#007ACC]/30 text-[#007ACC] hover:bg-[#007ACC]/20 hover:scale-105 active:scale-95 transition-all mb-6 cursor-pointer"
-                        title="Expand CAD Copilot"
-                    >
-                        <Box size={16} />
+                <div className="absolute inset-0 flex flex-col items-center py-4 bg-[#09090b] border-r border-zinc-800 z-20">
+                    <button onClick={() => setIsOpen(true)} className="flex size-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-all mb-6 shadow-sm">
+                        <Box size={20} />
                     </button>
-
-                    {/* Middle Section: Chat Icon */}
                     <div className="flex-1 flex flex-col items-center gap-4">
-                        <button
-                            onClick={() => setIsOpen(true)}
-                            className="group relative flex size-8 items-center justify-center rounded-md hover:bg-[#3C3C3C] hover:text-[#D4D4D4] hover:scale-105 active:scale-95 transition-all cursor-pointer"
-                        >
-                            <Sparkles size={16} />
-                            {/* Modern Tooltip */}
-                            <span className="absolute left-11 scale-0 group-hover:scale-100 transition-all duration-150 origin-left bg-[#1E1E1E] border border-[#3C3C3C] text-[#D4D4D4] text-[10px] rounded px-2 py-1 shadow-xl whitespace-nowrap z-50 pointer-events-none">
-                                Open Chat
-                            </span>
+                        <button onClick={() => setIsOpen(true)} className="flex size-10 items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 transition-all">
+                            <Sparkles size={20} />
                         </button>
                     </div>
-
-                    {/* Bottom Section: Log Out */}
                     <div className="flex flex-col items-center gap-4">
-                        <button
-                            onClick={() => signOut({ callbackUrl: '/app/login' })}
-                            className="group relative flex size-8 items-center justify-center rounded-md hover:bg-red-500/20 hover:text-red-400 hover:scale-105 active:scale-95 transition-all cursor-pointer"
-                        >
-                            <LogOut size={16} />
-                            <span className="absolute left-11 scale-0 group-hover:scale-100 transition-all duration-150 origin-left bg-[#1E1E1E] border border-[#3C3C3C] text-[#D4D4D4] text-[10px] rounded px-2 py-1 shadow-xl whitespace-nowrap z-50 pointer-events-none">
-                                Sign Out
-                            </span>
+                        <button onClick={() => signOut({ callbackUrl: '/app/login' })} className="flex size-10 items-center justify-center rounded-xl text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition-all">
+                            <LogOut size={18} />
                         </button>
                     </div>
                 </div>

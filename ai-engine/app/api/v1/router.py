@@ -103,11 +103,10 @@ def _sanitize_script(script: str) -> str:
 
     return script
 
-
 @router.post("/generate", response_model=GenerateResponse)
 async def generate(
     prompt: str = Form(...),
-    model_name: str = Form(_DEFAULT_MODEL),
+    model_name: str = Form(_DEFAULT_MODEL, alias="model"),
     image: UploadFile = File(None),
     base_code: str | None = Form(None),
     selection_context: str | None = Form(None),

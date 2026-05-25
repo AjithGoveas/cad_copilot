@@ -186,7 +186,6 @@ async function computeHash(text: string): Promise<string> {
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     } catch (e) {
-        // Fallback polynomial hash (cyrb53)
         let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
         for (let i = 0, ch; i < text.length; i++) {
             ch = text.charCodeAt(i);
@@ -224,8 +223,7 @@ async function exportToFile(
     const outputPath = `/output.${format}`;
 
     try {
-        // THE FIX: Pass `true` here to force a fresh WebAssembly instance every single time.
-        // This completely wipes the corrupted C++ global state from previous runs.
+        // Pass `true` here to force a fresh WebAssembly instance every single time.
         const engine   = await ensureEngine(true); 
         
         const instance = engine.getInstance();
@@ -236,57 +234,10 @@ async function exportToFile(
         try { if (fs.analyzePath(INPUT_PATH).exists) fs.unlink(INPUT_PATH); } catch (e) {}
         try { if (fs.analyzePath(outputPath).exists) fs.unlink(outputPath); } catch (e) {}
 
-        let finalScript = script;
-
-        if (format === 'dxf') {
-            console.log(`[CAD-Worker] Formatting DXF export (Mode: ${dxfMode})...`);
-
-            // THE FIX: We don't use regex to find a single call anymore. 
-            // We append the projection commands to the absolute end of the file 
-            // and wrap the ENTIRE script execution in a render() block.
-
-            if (dxfMode === 'blueprint') {
-                const spacingX = 150; // Or keep your dynamic extraction logic
-                const spacingY = 150;
-
-                // We wrap the entire original script in a module, then project that module
-                finalScript = `
-${script}
-
-// --- DXF Projection Wrapper ---
-module __dxf_wrapper_root() {
-    // Because the script above might execute raw geometry, we wrap its evaluation
-    children();
-}
-
-module generate_dxf_sheet_fixed() {
-    translate([0, 0]) projection(cut = false) __dxf_wrapper_root() { ${script} }
-    translate([0, -${spacingY}]) projection(cut = true) rotate([90, 0, 0]) translate([0, 0, 0.005]) __dxf_wrapper_root() { ${script} }
-    translate([${spacingX}, 0]) projection(cut = false) rotate([0, 90, 0]) __dxf_wrapper_root() { ${script} }
-}
-generate_dxf_sheet_fixed();
-`;
-
-            } else {
-                const isCut = dxfMode === 'section';
-                if (isCut) {
-                    finalScript = `
-${script}
-// --- DXF Projection Wrapper ---
-translate([0, 0]) projection(cut=true) translate([0, 0, 0.005]) children() { ${script} }
-`;
-                } else {
-                    finalScript = `
-${script}
-// --- DXF Projection Wrapper ---
-translate([0, 0]) projection(cut=false) children() { ${script} }
-`;
-                }
-            }
-            console.log('[CAD-Worker] Final DXF Script Payload:\n', finalScript);
-        }
-
-        fs.writeFile(INPUT_PATH, finalScript);
+        console.log(`[CAD-Worker] Running Export (${format.toUpperCase()})...`);
+        
+        // Write the script (already correctly wrapped by CADViewer.tsx) to the virtual FS
+        fs.writeFile(INPUT_PATH, script);
 
         const exitCode = instance.callMain(['-o', outputPath, INPUT_PATH]);
 
