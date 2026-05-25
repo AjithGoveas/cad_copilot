@@ -78,6 +78,9 @@ export function ChatPanel({
                                 <option key={o.value} value={o.value}>{o.label}</option>
                             ))}
                         </select>
+                        <button onClick={() => signOut({ callbackUrl: '/app/login' })} className="flex size-10 items-center justify-center rounded-xl text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition-all">
+                            <LogOut size={18} />
+                        </button>
                     </div>
                 </header>
 
