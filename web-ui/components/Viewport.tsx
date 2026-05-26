@@ -7,6 +7,8 @@ import { Loader2, MousePointer2, Cuboid } from 'lucide-react';
 import { StlMesh } from './StlMesh';
 import { DimensionOverlay } from './DimensionOverlay';
 import { CameraRig } from './CameraRig';
+import { findNearestParameter } from '@/lib/openscadParameters';
+import { QuickEditOverlay } from './QuickEditOverlay';
 
 type Selection = { id: string; point: [number, number, number] };
 
@@ -15,15 +17,19 @@ type Props = {
     selection?: Selection | null; onMeshClick?: (id: string | null, point: [number, number, number] | null) => void;
     annotations?: Record<string, any>; activeFeatureId?: string | null;
     onSelectParameter?: (key: string | null) => void; onHoverParameter?: (key: string | null) => void;
+    onParameterUpdate?: (key: string, value: number) => void;
+    targetPoint?: [number, number, number] | null;
 };
 
 export const Viewport = memo(function Viewport({ 
     stlUrls, statusText, isCompiling, selection, onMeshClick,
-    annotations = {}, activeFeatureId = null, onSelectParameter, onHoverParameter,
+    annotations = {}, activeFeatureId = null, onSelectParameter, onHoverParameter, onParameterUpdate,
+    targetPoint = null,
 }: Props) {
     const [geometryCenter, setGeometryCenter] = useState<[number, number, number]>([0, 0, 0]);
     const [geometryScale, setGeometryScale] = useState<number>(1.0);
     const [geometrySize, setGeometrySize] = useState<[number, number, number]>([10, 10, 10]);
+    const [quickEdit, setQuickEdit] = useState<{ key: string; point: [number, number, number] } | null>(null);
 
     const handleGeometryLoaded = useCallback((center: [number, number, number], size: [number, number, number], scale: number) => {
         setGeometryCenter(prev => prev[0] === center[0] && prev[1] === center[1] && prev[2] === center[2] ? prev : center);
@@ -33,6 +39,23 @@ export const Viewport = memo(function Viewport({
 
     const geometryInfo = useMemo(() => ({ center: geometryCenter, scale: geometryScale, size: geometrySize }), [geometryCenter, geometryScale, geometrySize]);
     const hasGeometry = stlUrls.size > 0;
+
+    const handleMeshClick = useCallback((id: string | null, point: [number, number, number] | null) => {
+        if (!point) {
+            onMeshClick?.(id, null);
+            setQuickEdit(null);
+            return;
+        }
+
+        const nearestKey = findNearestParameter(point, annotations, geometryCenter, geometryScale, 5.0);
+        if (nearestKey) {
+            setQuickEdit({ key: nearestKey, point });
+            onSelectParameter?.(nearestKey);
+        } else {
+            setQuickEdit(null);
+            onMeshClick?.(id, point);
+        }
+    }, [annotations, geometryCenter, geometryScale, onMeshClick, onSelectParameter]);
 
     return (
         <section className="relative flex-1 overflow-hidden bg-[#09090b] shadow-[inset_0_0_80px_rgba(0,0,0,0.8)]">
@@ -58,7 +81,7 @@ export const Viewport = memo(function Viewport({
                                 <StlMesh
                                     key={id} id={id} url={url}
                                     isSelected={selection?.id === id}
-                                    onMeshClick={(pt) => onMeshClick?.(id, pt)}
+                                    onMeshClick={(pt) => handleMeshClick(id, pt)}
                                 />
                             ))}
                         </Center>
@@ -76,6 +99,33 @@ export const Viewport = memo(function Viewport({
                         onSelectParameter={onSelectParameter} onHoverParameter={onHoverParameter}
                     />
                 )}
+                
+                {quickEdit && annotations[quickEdit.key] && (
+                    <QuickEditOverlay
+                        position={quickEdit.point}
+                        parameterKey={quickEdit.key}
+                        annotation={annotations[quickEdit.key]}
+                        onUpdate={(key, val) => {
+                            onParameterUpdate?.(key, val);
+                            setQuickEdit(null);
+                        }}
+                        onCancel={() => setQuickEdit(null)}
+                    />
+                )}
+
+                {targetPoint && (
+                    <group position={targetPoint}>
+                        <mesh renderOrder={9999}>
+                            <sphereGeometry args={[0.1, 16, 16]} />
+                            <meshBasicMaterial color="#3b82f6" depthTest={false} transparent opacity={0.9} />
+                        </mesh>
+                        <mesh renderOrder={9999}>
+                            <sphereGeometry args={[0.25, 16, 16]} />
+                            <meshBasicMaterial color="#3b82f6" depthTest={false} transparent opacity={0.3} />
+                        </mesh>
+                    </group>
+                )}
+                
                 <OrbitControls makeDefault enableDamping dampingFactor={0.05} minPolarAngle={0} maxPolarAngle={Math.PI / 1.75} />
             </Canvas>
 

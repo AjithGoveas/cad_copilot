@@ -12,3 +12,12 @@ class GenerateResponse(StrictModel):
     """Payload returned after a successful two-stage generation run."""
     openscad_script: str
     parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class EditRequest(StrictModel):
+    """Payload sent to request surgical editing of existing code."""
+    prompt: str
+    current_code: str
+    target_point: list[float] | None = None
+    model: str = "gemini-3.1-flash-lite"
+

@@ -35,6 +35,8 @@ type CADViewerProps = {
     showExport?: boolean;
     onStatusChange?: (status: { isCompiling: boolean; isExporting: boolean }) => void;
     onShare?: () => void;
+    onParameterUpdate?: (key: string, value: number) => void;
+    targetPoint?: [number, number, number] | null;
 };
 
 // --- DXF Safety Wrapper Logic ---
@@ -121,6 +123,8 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         showExport = true,
         onStatusChange,
         onShare,
+        onParameterUpdate,
+        targetPoint = null,
     },
     ref
 ) {
@@ -231,6 +235,8 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                 activeFeatureId={activeFeatureId || selection?.id}
                 onSelectParameter={onSelectParameter}
                 onHoverParameter={onHoverParameter}
+                onParameterUpdate={onParameterUpdate}
+                targetPoint={targetPoint}
             />
 
             {/* ── Top Bar (Share & Export) ── */}

@@ -8,14 +8,14 @@ import re
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from app.models.schemas import GenerateResponse
+from app.models.schemas import GenerateResponse, EditRequest
 from app.services.llm_codegen import LLMCodegenService
 
 router = APIRouter(tags=["cad"])
 
 _ALLOWED_MIME_PREFIXES = ("image/",)
 _ALLOWED_MIME_EXACT   = {"application/pdf"}
-_DEFAULT_MODEL = os.getenv("GENAI_MODEL", "gemini-3.1-flash-lite-preview")
+_DEFAULT_MODEL = os.getenv("GENAI_MODEL", "gemini-3.1-flash-lite")
 
 
 def _extract_parameters(script: str) -> dict[str, Any]:
@@ -172,3 +172,35 @@ async def generate(
         openscad_script=script,
         parameters=_extract_parameters(script),
     )
+
+
+@router.post("/edit", response_model=GenerateResponse)
+async def edit(request: EditRequest) -> GenerateResponse:
+    """
+    Surgically edit an existing OpenSCAD script.
+    """
+    try:
+        svc = LLMCodegenService(model=request.model)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail={"error": {"message": str(exc)}})
+
+    try:
+        script = await asyncio.to_thread(
+            svc.edit_script,
+            prompt=request.prompt,
+            current_code=request.current_code,
+            target_point=request.target_point,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"message": str(exc), "hint": "Check API key and quota."}},
+        )
+
+    # Server-side safety net
+    script = _sanitize_script(script)
+
+    return GenerateResponse(
+        openscad_script=script,
+        parameters=_extract_parameters(script),
+    )

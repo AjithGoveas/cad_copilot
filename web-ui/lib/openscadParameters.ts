@@ -44,6 +44,9 @@ export function extractStructuredAnnotations(script: string): OpenScadAnnotation
 				...merged[key],
 				...entry,
 			};
+			if (params[key] !== undefined && typeof params[key] === 'number') {
+				merged[key].value = params[key] as number;
+			}
 		}
 		return merged;
 	} catch (e) {
@@ -352,3 +355,70 @@ function escapeRE(s: string) {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+import { Vector3, Line3 } from 'three';
+
+export function findNearestParameter(
+    clickPoint: [number, number, number], 
+    annotations: Record<string, AnnotationEntry>,
+    geometryCenter: [number, number, number],
+    geometryScale: number,
+    threshold: number = 5.0
+): string | null {
+    const clickVec = new Vector3(...clickPoint);
+    let nearestKey: string | null = null;
+    let minDistance = Infinity;
+
+    // Helper to transform raw OpenSCAD coords into our R3F World Space
+    const transformPt = (pt: [number, number, number]) => {
+        return new Vector3(
+            (pt[0] - geometryCenter[0]) * geometryScale,
+            (pt[1] - geometryCenter[1]) * geometryScale,
+            (pt[2] - geometryCenter[2]) * geometryScale
+        );
+    };
+
+    for (const [key, annotation] of Object.entries(annotations)) {
+        let distance = Infinity;
+        const type = annotation.type || (annotation.p1 && annotation.p2 ? 'height' : (annotation.center ? 'diameter' : 'height'));
+
+        if ((type === 'diameter' || type === 'chamfer') && annotation.center && annotation.axis) {
+            const centerVec = transformPt(annotation.center);
+            const axisVec = new Vector3(...annotation.axis).normalize();
+            
+            // 1. Find shortest distance from click to the infinite central AXIS of the cylinder
+            const pointToCenter = new Vector3().subVectors(clickVec, centerVec);
+            const projectionLength = pointToCenter.dot(axisVec);
+            const closestPointOnAxis = new Vector3().copy(centerVec).addScaledVector(axisVec, projectionLength);
+            
+            const distToAxis = clickVec.distanceTo(closestPointOnAxis);
+            
+            // 2. Subtract radius to get distance to the surface wall
+            const rawRadius = annotation.radius || (annotation.value ? annotation.value / 2 : 10.0);
+            const scaledRadius = rawRadius * geometryScale;
+            
+            distance = Math.abs(distToAxis - scaledRadius);
+            
+        } else if (type === 'height' && annotation.p1 && annotation.p2) {
+            const p1Vec = transformPt(annotation.p1);
+            const p2Vec = transformPt(annotation.p2);
+            
+            // Height features are defined by distance between two planes.
+            // Users will click the top or bottom flat faces to edit height.
+            const axisDir = new Vector3().subVectors(p2Vec, p1Vec).normalize();
+            
+            // Calculate point-to-plane distance for both the top and bottom faces
+            const plane1Dist = Math.abs(new Vector3().subVectors(clickVec, p1Vec).dot(axisDir));
+            const plane2Dist = Math.abs(new Vector3().subVectors(clickVec, p2Vec).dot(axisDir));
+            
+            // The distance is whichever plane they clicked closest to
+            distance = Math.min(plane1Dist, plane2Dist);
+        }
+
+        if (distance < minDistance && distance <= threshold) {
+            minDistance = distance;
+            nearestKey = key;
+        }
+    }
+
+    return nearestKey;
+}

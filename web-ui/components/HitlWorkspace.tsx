@@ -26,7 +26,7 @@ type Selection = {
 };
 
 const MODEL_OPTIONS = [
-    { id: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite Preview', icon: 'sparkles' },
+    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', icon: 'sparkles' },
     { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', icon: 'box' },
     { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', icon: 'zap' }
 ];
@@ -45,6 +45,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
 
     const [activeFeatureId, setActiveFeatureId] = useState<string | null>(null);
     const [shareToken, setShareToken] = useState<string | null>(null);
+    const [targetPoint, setTargetPoint] = useState<[number, number, number] | null>(null);
 
     const modelValueOptions = useMemo(() => 
         MODEL_OPTIONS.map(m => ({ value: m.id, label: m.name })), 
@@ -120,19 +121,39 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
         setSelectedFile(null); // Clear file after send
         setIsGenerating(true);
 
+        const isEditing = cadScript.trim().length > 0;
+
         try {
-            const formData = new FormData();
-            formData.append('prompt', prompt);
-            formData.append('model', selectedModel);
-            if (selectedFile) formData.append('image', selectedFile);
-            if (isDemoMode) formData.append('demoMode', 'true');
+            let res;
+            if (isEditing) {
+                const body = {
+                    prompt,
+                    currentCode: cadScript,
+                    targetPoint: targetPoint || null,
+                    model: selectedModel,
+                    demoMode: isDemoMode,
+                };
+                res = await fetch('/api/v1/edit', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(body),
+                });
+            } else {
+                const formData = new FormData();
+                formData.append('prompt', prompt);
+                formData.append('model', selectedModel);
+                if (selectedFile) formData.append('image', selectedFile);
+                if (isDemoMode) formData.append('demoMode', 'true');
 
-            const res = await fetch('/api/v1/generate', {
-                method: 'POST',
-                body: formData,
-            });
+                res = await fetch('/api/v1/generate', {
+                    method: 'POST',
+                    body: formData,
+                });
+            }
 
-            if (!res.ok) throw new Error('Generation failed');
+            if (!res.ok) throw new Error(isEditing ? 'Modification failed' : 'Generation failed');
 
             const data = await res.json();
             setCadScript(data.code);
@@ -147,14 +168,17 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
             const assistantMsg: Message = {
                 id: (Date.now() + 1).toString(),
                 role: 'assistant',
-                content: `I've generated the OpenSCAD code for your request. You can now tweak the parameters in the drawer or edit the code directly.`,
+                content: isEditing
+                    ? `I've updated the model with your requested changes. Let me know if you need further adjustments.`
+                    : `I've generated the OpenSCAD code for your request. You can now tweak the parameters in the drawer or edit the code directly.`,
             };
             setMessages((prev) => [...prev, assistantMsg]);
             setActiveTab('parameters');
             
             if (isDemoMode) setPromptCount(prev => prev + 1);
+            setTargetPoint(null);
         } catch (err) {
-            toast.error('Failed to generate CAD model');
+            toast.error(isEditing ? 'Failed to modify CAD model' : 'Failed to generate CAD model');
             console.error(err);
         } finally {
             setIsGenerating(false);
@@ -243,8 +267,10 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
         if (point && id) {
             setSelection({ id, point });
             setActiveTab('parameters');
+            setTargetPoint(point);
         } else {
             setSelection(null);
+            setTargetPoint(null);
         }
     }, []);
 
@@ -350,6 +376,8 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
                 hasScript={!!cadScript}
                 uploadedFiles={uploadedFiles}
                 onUpdateMessageFile={handleUpdateMessageFile}
+                targetPoint={targetPoint}
+                onClearTargetPoint={() => setTargetPoint(null)}
             >
                 {selection && (
                     <div className="flex items-center justify-between rounded-md border border-[#007ACC]/50 bg-[#252526] px-3 py-2 animate-in fade-in duration-300 shadow-[0_4px_12px_rgba(0,122,204,0.1)]">
@@ -401,6 +429,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
                         if (key) {
                             setSelection({ id: key, point: [0, 0, 0] });
                             setActiveTab('parameters');
+                            setTargetPoint(null);
                         } else {
                             setSelection(null);
                         }
@@ -410,6 +439,8 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
                     showExport={true}
                     onStatusChange={(status) => setEngineStatus(status)}
                     onShare={shareToken ? handleShare : undefined}
+                    onParameterUpdate={handleParamChange}
+                    targetPoint={targetPoint}
                 />
             </main>
 

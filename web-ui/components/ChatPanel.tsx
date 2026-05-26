@@ -1,7 +1,7 @@
 'use client';
 
 import { type FormEvent, useEffect, useRef } from 'react';
-import { Upload, X, Loader2, Sparkles, Binary, LogOut, ChevronLeft, ChevronRight, Box, ArrowUp, Paperclip } from 'lucide-react';
+import { Upload, X, Loader2, Sparkles, Binary, LogOut, ChevronLeft, ChevronRight, Box, ArrowUp, Paperclip, Target } from 'lucide-react';
 import { ChatBubble } from './ChatBubble';
 import { signOut } from 'next-auth/react';
 import type { Message } from './HitlWorkspace';
@@ -23,6 +23,8 @@ type Props = {
     hasScript: boolean;
     uploadedFiles: File[];
     onUpdateMessageFile?: (messageId: string, file: File | null) => void;
+    targetPoint?: [number, number, number] | null;
+    onClearTargetPoint?: () => void;
     children?: React.ReactNode;
 };
 
@@ -33,6 +35,7 @@ export function ChatPanel({
     selectedFile, onFileChange,
     isGenerating, onSubmit, width, hasScript,
     uploadedFiles, onUpdateMessageFile,
+    targetPoint, onClearTargetPoint,
     children,
 }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
@@ -109,22 +112,39 @@ export function ChatPanel({
                             onSubmit={onSubmit}
                             className="flex flex-col rounded-2xl border border-zinc-700/60 bg-zinc-900/50 shadow-sm focus-within:bg-zinc-800/60 focus-within:border-zinc-600 focus-within:ring-1 focus-within:ring-zinc-600 transition-all duration-200 overflow-hidden"
                         >
-                            {/* File Attachment Pill inside Composer */}
-                            {selectedFile && (
-                                <div className="px-3 pt-3 pb-1">
-                                    <div className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-1.5 shadow-sm">
-                                        <Binary size={12} className="text-blue-400" />
-                                        <span className="max-w-[200px] truncate font-sans text-[12px] font-medium text-zinc-200">
-                                            {selectedFile.name}
-                                        </span>
-                                        <button 
-                                            type="button"
-                                            onClick={() => onFileChange(null)} 
-                                            className="ml-1 rounded-full p-0.5 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-100 transition-colors"
-                                        >
-                                            <X size={14} />
-                                        </button>
-                                    </div>
+                            {/* File and Target Attachment Pills inside Composer */}
+                            {(selectedFile || targetPoint) && (
+                                <div className="flex flex-wrap gap-2 px-3 pt-3 pb-1">
+                                    {selectedFile && (
+                                        <div className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-1.5 shadow-sm">
+                                            <Binary size={12} className="text-blue-400" />
+                                            <span className="max-w-[200px] truncate font-sans text-[12px] font-medium text-zinc-200">
+                                                {selectedFile.name}
+                                            </span>
+                                            <button 
+                                                type="button"
+                                                onClick={() => onFileChange(null)} 
+                                                className="ml-1 rounded-full p-0.5 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-100 transition-colors"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                    )}
+                                    {targetPoint && (
+                                        <div className="inline-flex items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-950/30 px-3 py-1.5 shadow-sm">
+                                            <Target size={12} className="text-blue-400" />
+                                            <span className="font-sans text-[12px] font-medium text-blue-200">
+                                                Target: [{targetPoint[0].toFixed(2)}, {targetPoint[1].toFixed(2)}, {targetPoint[2].toFixed(2)}]
+                                            </span>
+                                            <button 
+                                                type="button"
+                                                onClick={onClearTargetPoint} 
+                                                className="ml-1 rounded-full p-0.5 text-blue-400 hover:bg-blue-900/50 hover:text-blue-200 transition-colors"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 

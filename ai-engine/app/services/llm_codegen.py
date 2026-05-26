@@ -179,6 +179,18 @@ part_root()
 """.strip()
 
 
+EDIT_SYSTEM_PROMPT = """
+# ROLE: Expert CAD Engineer & OpenSCAD Refinement Specialist
+You are an expert CAD engineer editing an existing OpenSCAD script.
+You must read the provided CURRENT CODE and modify it to fulfill the user's request.
+DO NOT generate a completely new model from scratch. Retain the existing structure, modules, and variable definitions (PARAMETERS_START/END block) unless specifically asked to remove them.
+Output the ENTIRE updated OpenSCAD script. Do not output partial snippets.
+
+Your script must follow the exact syntax, manifold stability rules, and $fn cap parameters. Use the existing modules as the assembly base inside part_root().
+""".strip()
+
+
+
 # -- Regex ---------------------------------------------------------------------
 
 _CODE_FENCE_RE = re.compile(r"```(?:scad|openscad|text)?\s*(.*?)```", re.I | re.S)
@@ -326,3 +338,34 @@ class LLMCodegenService:
 
         raw = self._call_with_retry(_call, "codegen")
         return self._normalize_script(raw)
+
+    def edit_script(
+        self,
+        prompt: str,
+        current_code: str,
+        target_point: list[float] | None = None,
+    ) -> str:
+        """
+        Surgically edit an existing OpenSCAD script based on a user prompt.
+        """
+        user_prompt = prompt
+        if target_point and len(target_point) == 3:
+            x, y, z = target_point
+            user_prompt += f"\n\n[System Context: The user clicked on the 3D mesh at absolute coordinates X: {x}, Y: {y}, Z: {z}. Use this exact spatial location as the origin/target for the requested modification.]"
+
+        user_text = f"CURRENT_CODE:\n{current_code}\n\nUSER_REQUEST:\n{user_prompt}"
+
+        contents = [
+            types.Part.from_text(text=EDIT_SYSTEM_PROMPT),
+            types.Part.from_text(text=user_text),
+        ]
+
+        def _call() -> Any:
+            return self.client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=types.GenerateContentConfig(temperature=0.0),
+            )
+
+        raw = self._call_with_retry(_call, "edit")
+        return self._normalize_script(raw)
