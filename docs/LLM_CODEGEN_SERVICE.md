@@ -1,209 +1,66 @@
-# LLM Codegen Service - Technical Documentation
+# LLM Codegen Service Specification
 
-## Overview
+The `LLMCodegenService` class manages GenAI API execution, prompt templates, and code formatting filters.
 
-The `LLMCodegenService` class provides AI-powered CAD script generation using Google's Gemini models. It implements a two-stage generation pipeline:
+---
 
-1. **Blueprint Analysis** - Vision-based feature extraction
-2. **Code Generation** - Text-based build123d script generation
+## 1. Prompt Engineering Pipeline
 
-## Architecture
+The service utilizes three isolated system instruction sets to configure Gemini's generation parameters:
 
-```
-User Prompt + Image
-      ↓
-Stage 1: SummariseBlueprint (Gemini Vision)
-      ↓
-Stage 2: StreamBuild123dScript (Gemini Text)
-      ↓
-Normalized build123d Code
-```
+### 1.1 `AUDIT_INSTRUCTION` (Vision Audit)
+* **Goal**: Analyze 2D technical drawings (image or PDF blueprint).
+* **Constraints**: Specifies Z-axis stacking guidelines and datum coordinate setup.
+* **Output**: Strictly JSON conforming to a schema.
 
-## Key Components
+### 1.2 `SYSTEM_INSTRUCTION` (Scratch Generation)
+* **Goal**: Synthesize OpenSCAD code.
+* **Key Guidelines**:
+  1. Manifold Stability: Mandates `$fn = 32` and clean boolean geometry.
+  2. Parametric Stacking: All heights and offsets must be derived variables, not hardcoded values.
+  3. Epsilon Protocol: Explicitly details the use of `eps = 0.01` to offset cutting cylinders and cubes to pierce manifolds cleanly.
+  4. Block Structure: Mandates variables inside `// PARAMETERS_START/END` comments and assembly calling inside `part_root()`.
 
-### Core Instructions
+### 1.3 `EDIT_SYSTEM_PROMPT` (Surgical Refinement)
+* **Goal**: Modify existing OpenSCAD code.
+* **Key Guidelines**:
+  - Focuses on modification in place.
+  - Instructs the LLM to retain the active variables blocks and module schemas, appending or removing lines selectively.
+  - Mandates outputting the entire updated file rather than partial snippets.
 
-| Instruction | Purpose |
-|-------------|---------|
-| `CORE_INSTRUCTION` | Main CAD generation protocol with mandatory contract |
-| `SAFETY_INSTRUCTION` | Topological safety rules for robustness |
-| `SUMMARISATION_INSTRUCTION` | Blueprint analysis protocol |
-| `FEW_SHOT_EXAMPLES` | Example scripts for few-shot learning |
+---
 
-### Instruction Sections
+## 2. API Method Definitions
 
-#### 1. Mandatory Contract
-- Parameters in `PARAMETERS = { ... }`
-- Function signature: `def build_model(params: dict) -> Part:`
-- Feature parity: every dimension mapped to code
-- No conversational text in output
+### `audit_blueprint(image_bytes: bytes, mime_type: str) -> dict`
+Analyzes technical drawing files.
+* **Parameters**:
+  * `image_bytes`: Binary data of PNG, JPEG, or PDF drawing.
+  * `mime_type`: File content type.
+* **Returns**: A JSON dictionary matching the feature-map schema.
 
-#### 2. Phase-Based Construction
-1. Main Body
-2. Counterbores & Central Bores
-3. Stepped Diameters & Shoulders
-4. Hole Patterns
-5. Slots & Keyways
-6. Finishing (fillets/chamfers in try/except)
+### `generate_script(prompt, image_bytes, mime_type, feature_map, base_code, selection_context) -> str`
+Generates a parametric OpenSCAD script from scratch.
+* **Parameters**:
+  * `prompt`: Sizing or topology request.
+  * `image_bytes` & `mime_type`: Original blueprint file.
+  * `feature_map`: Pre-audited JSON model from Stage 1.
+* **Returns**: Clean, parameterized OpenSCAD code.
 
-#### 3. Topological Precision
-- Face selection: `.faces().sort_by(Axis.Z)[-1]`
-- Advanced selectors: `Select.where(lambda e: e.length > ...)`
-- Robust fillet checks: `if edges: fillet(edges, r)`
+### `edit_script(prompt: str, current_code: str, target_point: Optional[list[float]]) -> str`
+Surgically edits active code.
+* **Parameters**:
+  * `prompt`: Refinement instruction.
+  * `current_code`: Current script contents.
+  * `target_point`: Target coordinates vector.
+* **Returns**: Updated OpenSCAD code.
 
-#### 4. Geometry Rules
-- 3D Primitives: `Box`, `Sphere`, `Cylinder` (inside `BuildPart`)
-- 2D Primitives: `Rectangle`, `Circle`, `Polygon` (inside `BuildSketch`)
-- 1D Primitives: `Line`, `Polyline`, `Spline`, `RadiusArc`, `TangentArc` (inside `BuildLine`)
+---
 
-## Class Reference
+## 3. Code Normalization
 
-### LLMCodegenService
+Gemini responses can sometimes contain markdown formatting blocks or conversational prefaces. The service runs `_normalize_script` to extract code content:
 
-#### `__init__(model: Optional[str] = None)`
-
-Initialize the LLM Codegen Service.
-
-**Parameters:**
-- `model`: Model name (e.g., "gemini-3.1-flash-lite"). Defaults to env var `GENAI_MODEL`.
-
-**Raises:**
-- `RuntimeError`: If google-genai is not installed or API key is missing.
-
-#### `summarise_blueprint(image_bytes: bytes, image_mime_type: str) -> str`
-
-Stage 1: Extract features and dimensions into a text summary.
-
-**Parameters:**
-- `image_bytes`: Raw image bytes (PNG, JPEG, PDF)
-- `image_mime_type`: MIME type of the image
-
-**Returns:**
-- Text summary of the blueprint analysis
-
-#### `stream_build123d_script(prompt: str, image_bytes: bytes, image_mime_type: str, summary: Optional[str] = None) -> Iterator[str]`
-
-Stage 2: Stream build123d script generation.
-
-**Parameters:**
-- `prompt`: User's CAD generation request
-- `image_bytes`: Raw image bytes for context
-- `image_mime_type`: MIME type of the image
-- `summary`: Optional blueprint analysis summary
-
-**Yields:**
-- Code tokens as they're generated
-
-**Raises:**
-- `RuntimeError`: If generation fails after all retries
-
-#### `normalize_script(script: str) -> str`
-
-Clean and extract Python code from LLM output.
-
-**Parameters:**
-- `script`: Raw output from LLM
-
-**Returns:**
-- Cleaned Python code string
-
-**Normalization Strategy:**
-1. Extract fenced code blocks (```python)
-2. Fallback to raw code with backtick trimming
-3. Remove conversational text before first code line
-
-#### `_log_diagnostic(prompt: str, raw_output: str, error: Optional[str]) -> None`
-
-Log diagnostic information to a JSON file.
-
-Creates timestamped log files in the logs directory with:
-- Timestamp and model used
-- Original prompt
-- Raw and normalized output
-- Any errors encountered
-
-### Static Methods
-
-| Method | Purpose |
-|--------|---------|
-| `_is_retryable_error()` | Check if error is retryable |
-| `_is_transient_error()` | Check for transient unavailability |
-| `_is_quota_error()` | Check for quota exhaustion |
-| `_is_daily_quota_error()` | Check for daily quota exhaustion |
-| `_extract_retry_delay_seconds()` | Extract retry delay from error message |
-
-## Error Handling
-
-### Error Classification
-
-| Error Type | Markers | Classification |
-|------------|---------|----------------|
-| 429 + quota | `resource_exhausted`, `quota exceeded` | Quota Error |
-| 429 + daily | `per day`, `requests per day` | Daily Quota Error |
-| 503 + temp | `unavailable`, `temporar` | Transient Error |
-| 408, 429, 500, 502, 503, 504 | HTTP status codes | Transient Error |
-
-### Retry Strategy
-
-```python
-backoff_delay = retry_base_delay * (2 ** (attempt - 1))
-delay = max(backoff_delay, retry_after_seconds)
-delay = min(delay, max_retry_delay)
-```
-
-## Configuration
-
-| Setting | Environment Variable | Default |
-|---------|---------------------|---------|
-| Model | `GENAI_MODEL` | `gemini-3.1-flash-lite` |
-| Max Retries | `GENAI_MAX_RETRIES` | `5` |
-| Max Prompt Tokens | `MAX_PROMPT_TOKENS` | `12000` |
-| Max Output Tokens | `MAX_OUTPUT_TOKENS` | `2048` |
-| Retry Base Delay | `GENAI_RETRY_BASE_DELAY` | `1.5` |
-| Max Retry Delay | `GENAI_MAX_RETRY_DELAY` | `60` |
-
-## Usage Example
-
-```python
-from app.services.llm_codegen import LLMCodegenService
-
-# Initialize service
-service = LLMCodegenService(model="gemini-3.1-flash-lite")
-
-# Load image
-with open("drawing.png", "rb") as f:
-    image_bytes = f.read()
-
-# Stage 1: Analyze blueprint
-summary = service.summarise_blueprint(image_bytes, "image/png")
-print(summary)
-
-# Stage 2: Generate code
-script = ""
-for chunk in service.stream_build123d_script(
-    prompt="Generate a part with 4 mounting holes",
-    image_bytes=image_bytes,
-    image_mime_type="image/png",
-    summary=summary
-):
-    script += chunk
-
-# Normalize the output
-clean_script = service.normalize_script(script)
-print(clean_script)
-```
-
-## Diagnostics
-
-Log files are written to `logs/cad_gen_<timestamp>_<uuid>.json`:
-
-```json
-{
-    "timestamp": "2024-01-01T12:00:00.000000",
-    "model": "gemini-3.1-flash-lite",
-    "prompt": "Generate a part...",
-    "raw_output": "```python...",
-    "cleaned_output": "from build123d import *...",
-    "error": null
-}
-```
+1. **Markdown Fences Extraction**: Extracts scripts wrapped in ` ```scad ` or ` ```openscad ` fences.
+2. **Fast-Forward Regex**: Searches for common OpenSCAD starting tokens (e.g. `// PARAMETERS_START`, `$fn =`, `module`) and slices away any text preceding them.
+3. **Trim**: Trims trailing whitespace and ticks.

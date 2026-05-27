@@ -1,251 +1,122 @@
-# CAD Copilot Monorepo
+# 📐 CAD Copilot
 
-CAD Copilot is a full-stack Docs/Image-to-CAD system.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.136.0-009688.svg?style=flat&logo=FastAPI)](https://fastapi.tiangolo.com)
+[![Next.js](https://img.shields.io/badge/Next.js-15.0-black.svg?style=flat&logo=next.js)](https://nextjs.org)
+[![Three.js](https://img.shields.io/badge/Three.js-0.184-black.svg?style=flat&logo=three.js)](https://threejs.org)
+[![Gemini](https://img.shields.io/badge/Gemini_API-3.5_Flash-4F5B93.svg?style=flat&logo=google)](https://ai.google.dev)
 
-It combines:
+CAD Copilot is a state-of-the-art, AI-assisted CAD workstation designed to bridge the gap between natural language/drawings and parameterized 3D design models. By pairing **Google's Gemini multimodal LLM engine** with a **client-side WebAssembly OpenSCAD compilation kernel**, CAD Copilot allows engineers to generate, visualize, and surgically edit CAD code in real time without heavy server dependencies.
 
-- A Next.js workspace UI (chat, parameter editing, code editing, STL preview)
-- A FastAPI AI engine (Gemini-powered build123d code generation and render execution)
-- PostgreSQL + Prisma for session persistence
+![CAD Workstation Landing Mockup](https://images.unsplash.com/photo-1581092160607-ee22621dd758?auto=format&fit=crop&w=1200&q=80) *(For visualization purposes only)*
 
-The platform generates a parameterized Python CAD script, lets users edit parameters and raw code, and re-renders STL/STEP artifacts on demand.
+---
 
-## High-Level Architecture
+## ⚡ Core Philosophy & Capabilities
 
-- web-ui: Next.js app that provides the user interface and BFF API routes
-- ai-engine: FastAPI service that runs LLM code generation and CAD rendering
-- postgres: persistence layer used by Prisma in web-ui
+Traditional CAD workflows require intensive manual drafting, while standard text-to-3D generators output un-editable, dense triangle meshes. CAD Copilot approaches 3D modeling as **Parametric Code Synthesis**. It generates human-readable, mathematically exact, and easily adjustable code.
 
-Data flow:
+### 🔍 1. Multimodal Blueprint Audit
+Upload an engineering drawing, blueprint (PDF/PNG/JPEG), or a hand-drawn sketch. The AI Engine performs a multi-view visual analysis, extracting exact dimensions, coordinate alignments, feature hierarchies, and stacking references into a structured design matrix.
 
-1. User submits prompt + image/PDF in UI
-2. web-ui POST /api/generate proxies multipart request to ai-engine /api/v1/generate
-3. ai-engine streams SSE tokens while building the CAD script
-4. UI receives final script + parsed PARAMETERS
-5. User edits parameters and/or code, then clicks Sync to Engine
-6. web-ui POST /api/render proxies JSON to ai-engine /api/v1/render
-7. ai-engine writes STL/STEP into ai-engine/outputs and returns artifact URLs
-8. UI loads latest STL into Three.js viewer and exposes download buttons
+### 🌐 2. Browser-Local WASM Kernel
+All 3D rendering happens directly on the client. Enforcing a global singleton WebAssembly worker instance (compiled from OpenSCAD), CAD Copilot processes changes and returns 3D STL geometry instantly in the browser. This setup eliminates rendering roundtrips, scales without server cost, and operates sandboxed.
 
-## Repository Structure
+### 📐 3. Proximity-Based "Quick Edit"
+Click directly on cylindrical walls, circular holes, or planar faces of the 3D mesh. The viewport runs a spatial proximity algorithm matching the click coordinate to parameter ranges:
+* **Diameters / Cylinders**: Shorts distance from selection to the infinite central axis line minus the feature's radius.
+* **Heights / Extrusions**: Point-to-plane distance along the extrusion direction to the top or bottom flat faces.
+Matches spawn an in-canvas, auto-focusing interactive overlay, letting you instantly change numeric parameters.
 
-```text
-cad_copilot/
-├── docker-compose.yml
-├── README.md
-├── docs/
-│   ├── PROJECT.md
-│   └── technical_details.md
-├── ai-engine/
-│   ├── app/
-│   │   ├── main.py
-│   │   ├── api/v1/router.py
-│   │   ├── models/schemas.py
-│   │   └── services/
-│   │       ├── llm_codegen.py
-│   │       └── parameter_render.py
-│   ├── outputs/
-│   ├── requirements.txt
-│   └── .env
-└── web-ui/
-    ├── app/
-    │   ├── page.tsx
-    │   ├── layout.tsx
-    │   └── api/
-    │       ├── generate/route.ts
-    │       └── render/route.ts
-    ├── components/
-    │   ├── HitlWorkspace.tsx
-    │   └── ui/sonner.tsx
-    ├── prisma/schema.prisma
-    ├── package.json
-    └── lib/prisma.ts
+### 📍 4. Spatial Target Context Injection
+Drop a glowing visual crosshair marker anywhere on the empty 3D model surface. The coordinate coordinates are added as a spatial target attachment chip in the chat composer. When you send a message (e.g. *"add a screw boss here"*), these absolute `[x, y, z]` coordinates are silently sent as system context, positioning the AI's edit right at the clicked spot.
+
+### 🗺️ 5. Automated 4-View technical Drawings
+Convert 3D assemblies into 2D vector drawings (DXF). The app implements safety projection wrappers that automatically generate standard engineering views (Top, Front, Right, and Isometric) in a single sheet.
+
+---
+
+## 🏗️ System Architecture
+
+CAD Copilot split roles cleanly between backend AI intelligence and client-side execution:
+
+```mermaid
+graph TD
+    User([User Prompt / Drawing]) -->|POST /generate| BFF[Next.js API Gateway]
+    BFF -->|Multipart Form| Python[FastAPI AI Backend]
+    Python -->|Stage 1: Vision Audit| GeminiVision[Gemini API - Vision]
+    GeminiVision -->|JSON Feature Map| GeminiText[Gemini API - Codegen]
+    GeminiText -->|OpenSCAD Code| Python
+    Python -->|Sanitize & Format| BFF
+    BFF -->|Code + Parameters| Client[Web Workspace]
+    Client -->|WASM Worker Singleton| Viewport[3D R3F Viewport]
+    
+    Viewport -->|Mesh Click Proximity| QuickEdit[Floating Overlay]
+    Viewport -->|Mesh Empty Click| TargetMarker[Target Marker]
+    TargetMarker -->|Coordinate injection| BFFEdit
+    
+    UserPromptEdit([Edit Instruction]) -->|POST /edit| BFFEdit[Next.js Edit Proxy]
+    BFFEdit -->|JSON Request| PythonEdit[FastAPI Edit Endpoint]
+    PythonEdit -->|Refinement Prompt| GeminiEdit[Gemini API - Isolated Edit]
+    GeminiEdit -->|Updated Code| PythonEdit
+    PythonEdit -->|Sanitized Script| BFFEdit
+    BFFEdit -->|Refreshed Model| Client
 ```
 
-## Core Features
+---
 
-- Prompt + image/PDF to build123d script generation
-- Real-time script streaming over SSE
-- Auto-parse of top-level PARAMETERS dictionary
-- Live parameter drawer editing
-- Monaco Editor code tab for manual Python script edits
-- Re-render pipeline using edited parameters and code
-- STL visualization with react-three-fiber + STLLoader
-- STEP/STL artifact downloads from UI
-- Toast-based status/error feedback with Sonner
-- Session persistence in PostgreSQL via Prisma
+## 🚦 Getting Started
 
-## Prerequisites
+### 1) Prerequisites
+- **Node.js 20+**
+- **Python 3.11+**
+- **Docker Desktop** (For local PostgreSQL persistence)
 
-- Python 3.11+ recommended
-- Node.js 20+ recommended
-- npm 10+ recommended
-- Docker Desktop (for PostgreSQL via docker-compose)
-
-## Environment Variables
-
-This repository includes safe environment templates:
-
-- ai-engine/.env.example
-- web-ui/.env.example
-
-Create real env files from them before running the apps.
-
-Windows (PowerShell):
-
-```powershell
-Copy-Item ai-engine/.env.example ai-engine/.env
-Copy-Item web-ui/.env.example web-ui/.env
-```
-
-macOS/Linux:
-
-```bash
-cp ai-engine/.env.example ai-engine/.env
-cp web-ui/.env.example web-ui/.env
-```
-
-### ai-engine/.env
-
-Required:
-
-- GOOGLE_API_KEY: Gemini API key
-
-Optional tuning:
-
-- GENAI_MODEL (example: gemini-3.1-flash-preview)
-- GENAI_MAX_RETRIES (default code fallback: 5)
-- GENAI_RETRY_BASE_DELAY (default code fallback: 1.5)
-- GENAI_MAX_RETRY_DELAY (default code fallback: 60)
-
-### web-ui/.env
-
-Required:
-
-- FASTAPI_URL=http://127.0.0.1:8000/api/v1
-- DATABASE_URL=postgresql://cad_user:cad_pass@localhost:5432/cad_db?schema=public
-- NEXT_PUBLIC_FASTAPI_URL=http://127.0.0.1:8000/api/v1
-
-Note:
-
-- If you prefer `.env.local`, copy the same keys there as well.
-
-## Quick Start (Local Development)
-
-### 1) Start PostgreSQL
-
-From repo root:
-
+### 2) Database Setup
+Start the PostgreSQL container from the root directory:
 ```bash
 docker compose up -d
 ```
 
-### 2) Start ai-engine
-
+### 3) FastAPI AI Engine Setup
+Configure your Google Gemini API key and dependencies:
 ```bash
 cd ai-engine
-cp .env.example .env  # Windows: Copy-Item .env.example .env
+cp .env.example .env  # Add GOOGLE_API_KEY=your_key
 python -m venv .venv
-# Windows
-. .venv/Scripts/activate
-# macOS/Linux
-# source .venv/bin/activate
+# Activate venv:
+# Windows (PowerShell): .venv\Scripts\Activate.ps1
+# macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Health check:
-
+### 4) Web UI Setup
+Initialize database schemas and run Next.js:
 ```bash
-curl http://127.0.0.1:8000/health
-```
-
-### 3) Start web-ui
-
-```bash
-cd web-ui
-cp .env.example .env  # Windows: Copy-Item .env.example .env
+cd ../web-ui
+cp .env.example .env
 npm install
 npm run prisma:generate
 npm run prisma:push
 npm run dev
 ```
+Navigate to `http://localhost:3000` to start editing.
 
-Open:
+---
 
-- http://localhost:3000
+## 🚀 Future Roadmap
 
-## API Summary
+We are expanding CAD Copilot into a comprehensive, production-grade engineering platform. The following features are currently planned:
 
-### ai-engine
+* **[ ] Native STEP Export**: Integrate python-based OpenCASCADE / FreeCAD rendering pipelines on the backend to allow downloading exact B-Rep STEP models alongside standard STL meshes.
+* **[ ] Slicing & G-Code Integration**: Direct client-side integration of lightweight slicing algorithms to allow generating 3D printing paths (G-code) directly from the parametric canvas.
+* **[ ] CNC Toolpath Previews**: Output post-processed G-code optimized for 3-axis CNC milling operations directly from the subtractive metadata.
+* **[ ] Offline LLM Support**: Support running local code models (e.g. Qwen-Coder or Llama-3-Coder) via Ollama, enabling offline CAD generation and secure parameter processing.
+* **[ ] Hierarchical Assembly Constraints**: Bind multiple generated parts together using rigid joints, cylindrical constraints, and mechanical mates inside the 3D viewport.
+* **[ ] Automated Tolerance Auditing**: AI checks matching parts for tolerances, interference fits, and mechanical clearances.
 
-- POST /api/v1/generate
-    - multipart/form-data
-    - fields: prompt, image, model_name
-    - response: text/event-stream
-    - events: status, token, done, error
+---
 
-- POST /api/v1/render
-    - JSON body:
-        - python_script: string
-        - parameters: object
-        - session_id: string (optional)
-    - response: JSON RenderResponse with artifacts
-
-- GET /outputs/{file}
-    - static artifact serving for STL/STEP
-
-### web-ui BFF routes
-
-- POST /api/generate
-    - validates input, creates CadSession, proxies SSE upstream
-
-- POST /api/render
-    - normalizes legacy payloads, proxies render request, stores artifact URLs in CadSession
-
-## Typical User Workflow
-
-1. Upload image/PDF and write prompt
-2. Choose model and click Generate CAD Script
-3. Wait for streamed script completion
-4. Adjust parameters in Parameters tab and/or edit code in Code Engine tab
-5. Click Sync to Engine
-6. View updated STL in viewport
-7. Download STL/STEP artifacts
-
-## Troubleshooting
-
-### App does not start
-
-- Check Python venv activation and dependency install
-- Check Node modules are installed in web-ui
-- Ensure Docker PostgreSQL is running
-
-### Generate fails immediately
-
-- Verify GOOGLE_API_KEY is set and valid
-- Verify selected model has quota
-- Check ai-engine logs for upstream model errors
-
-### Render succeeds but geometry looks old
-
-- The frontend appends cache-busting query params per sync to force fresh fetch
-- If still stale, verify session_id and output files in ai-engine/outputs
-
-### /api/render returns 500
-
-- Validate generated script defines top-level PARAMETERS
-- Validate script has build_model(params) and returns an exportable shape
-- Check stderr in ai-engine logs for kernel/runtime errors
-
-## Security and Operational Notes
-
-- Never commit real API keys to source control
-- Restrict CORS in production (currently permissive for local dev)
-- Place ai-engine behind auth/rate limiting before public exposure
-- Add structured logging/metrics for generate/render latency and failures
-
-## Additional Documentation
-
-- Product/project narrative: docs/PROJECT.md
-- Deep implementation details: docs/technical_details.md
+## 📄 License
+This project is licensed under the MIT License - see the LICENSE file for details.
