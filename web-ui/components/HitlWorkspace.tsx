@@ -399,7 +399,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
 
             {isChatOpen && (
                 <div
-                    className="w-[2px] cursor-col-resize bg-[#252526] transition-colors hover:bg-[#007ACC] relative z-10 hover:shadow-[0_0_8px_rgba(0,122,204,0.5)]"
+                    className="w-0.5 cursor-col-resize bg-[#252526] transition-colors hover:bg-[#007ACC] relative z-10 hover:shadow-[0_0_8px_rgba(0,122,204,0.5)]"
                     onMouseDown={(e) => {
                         const startX = e.clientX;
                         const startWidth = chatWidth;
@@ -441,6 +441,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
                     onShare={shareToken ? handleShare : undefined}
                     onParameterUpdate={handleParamChange}
                     targetPoint={targetPoint}
+                    isDemoMode={isDemoMode}
                 />
             </main>
 

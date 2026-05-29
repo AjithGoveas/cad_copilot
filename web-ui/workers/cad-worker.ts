@@ -11,7 +11,8 @@ type ExportRequest      = {
     format: 'stl' | 'dxf';
     dxfMode?: 'silhouette' | 'section' | 'blueprint';
 };
-type WorkerRequest      = WarmupRequest | CompileRequest | ExportRequest;
+type CompileCsgRequest  = { type: 'compile-csg'; id: number; script: string };
+type WorkerRequest      = WarmupRequest | CompileRequest | ExportRequest | CompileCsgRequest;
 
 type ReadyMessage           = { type: 'ready' };
 
@@ -30,6 +31,8 @@ type CompiledMessage = {
 
 type ExportedMessage        = { type: 'exported'; id: number; data: ArrayBuffer; format: 'stl' | 'dxf'; durationMs: number };
 
+type CsgCompiledMessage     = { type: 'csg-compiled'; id: number; csgTree: string };
+
 type ErrorMessage = {
     type: 'error';
     id?: number;
@@ -38,7 +41,7 @@ type ErrorMessage = {
     details: string; 
 };
 
-type WorkerMessage = ReadyMessage | CompiledMessage | ExportedMessage | ErrorMessage;
+type WorkerMessage = ReadyMessage | CompiledMessage | ExportedMessage | ErrorMessage | CsgCompiledMessage;
 
 // ─── Engine Interface ────────────────────────────────────────────────────────
 
@@ -304,6 +307,58 @@ async function compileToParts(
     }
 }
 
+async function compileCsg(
+    script: string
+): Promise<string> {
+    let fs: FS | undefined;
+    const INPUT_PATH = '/input.scad';
+    const OUTPUT_PATH = '/output.csg';
+
+    try {
+        const engine = await ensureEngine(true);
+        const instance = engine.getInstance();
+        fs = instance.FS;
+
+        stderrCapture.length = 0;
+
+        try { if (fs.analyzePath(INPUT_PATH).exists) fs.unlink(INPUT_PATH); } catch (e) {}
+        try { if (fs.analyzePath(OUTPUT_PATH).exists) fs.unlink(OUTPUT_PATH); } catch (e) {}
+
+        console.log('[CAD-Worker] Compiling CSG...');
+        fs.writeFile(INPUT_PATH, script);
+
+        const exitCode = instance.callMain(['-o', OUTPUT_PATH, INPUT_PATH]);
+
+        if (exitCode !== 0 || !fs.analyzePath(OUTPUT_PATH).exists) {
+            const details = stderrCapture.join('\n');
+            throw Object.assign(
+                new Error(`OpenSCAD CSG compilation failed (exit ${exitCode}).`),
+                { details, classified: classifyError('compile', details) }
+            );
+        }
+
+        const csgTree = fs.readFile(OUTPUT_PATH, { encoding: 'utf8' }) as string;
+        return csgTree;
+
+    } catch (err: unknown) {
+        throw normaliseThrown(err);
+    } finally {
+        if (fs) {
+            const filesToCleanup = [
+                INPUT_PATH,
+                OUTPUT_PATH
+            ];
+            for (const file of filesToCleanup) {
+                try {
+                    if (fs.analyzePath(file).exists) {
+                        fs.unlink(file);
+                    }
+                } catch (e) {}
+            }
+        }
+    }
+}
+
 // ─── Message Handler ─────────────────────────────────────────────────────────
 
 workerScope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
@@ -349,6 +404,20 @@ workerScope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
                         } satisfies ExportedMessage,
                         [result.buffer]
                     );
+                } catch (err: unknown) {
+                    handleWorkerError(err, data.id);
+                }
+                break;
+            }
+
+            case 'compile-csg': {
+                try {
+                    const csgTree = await compileCsg(data.script);
+                    workerScope.postMessage({
+                        type: 'csg-compiled',
+                        id: data.id,
+                        csgTree,
+                    } satisfies CsgCompiledMessage);
                 } catch (err: unknown) {
                     handleWorkerError(err, data.id);
                 }

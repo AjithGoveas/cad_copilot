@@ -5,10 +5,16 @@ import asyncio
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from app.models.schemas import GenerateResponse, EditRequest
+import uuid
+import io
+import gc
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, BackgroundTasks
+from fastapi.responses import FileResponse, StreamingResponse
+from app.models.schemas import GenerateResponse, EditRequest, StepRequest
+from app.services.csg_parser import CSGParser, export_to_step
 from app.services.llm_codegen import LLMCodegenService
 
 router = APIRouter(tags=["cad"])
@@ -203,4 +209,78 @@ async def edit(request: EditRequest) -> GenerateResponse:
     return GenerateResponse(
         openscad_script=script,
         parameters=_extract_parameters(script),
-    )
+    )
+
+
+def _cleanup_file(path: Path):
+    try:
+        if path.exists():
+            path.unlink()
+    except Exception:
+        pass
+
+
+@router.post("/step")
+async def export_step(request: StepRequest, background_tasks: BackgroundTasks) -> FileResponse:
+    """
+    Convert flat CSG tree into a parametric STEP model.
+    """
+    try:
+        shape = CSGParser.parse(request.csg_tree)
+        
+        # Create unique file path in outputs directory
+        outputs_dir = Path(__file__).resolve().parents[3] / "outputs"
+        outputs_dir.mkdir(exist_ok=True)
+        
+        step_filename = f"model_{uuid.uuid4().hex}.step"
+        step_path = outputs_dir / step_filename
+        
+        export_to_step(shape, str(step_path))
+        
+        background_tasks.add_task(_cleanup_file, step_path)
+        
+        return FileResponse(
+            path=step_path,
+            media_type="application/octet-stream",
+            filename="generated_model.step"
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"message": f"STEP conversion failed: {exc}"}}
+        )
+
+
+@router.post("/export-step")
+async def export_step_stream(request: StepRequest) -> StreamingResponse:
+    """
+    Convert flat CSG tree into a parametric STEP model and stream in-memory.
+    """
+    from app.services.export_utils import build123d_to_step_bytes
+    
+    try:
+        shape = CSGParser.parse(request.csg_tree)
+        step_bytes = build123d_to_step_bytes(shape)
+        
+        bio = io.BytesIO(step_bytes)
+        return StreamingResponse(
+            bio,
+            media_type="application/step",
+            headers={"Content-Disposition": "attachment; filename=model.step"}
+        )
+    except Exception as exc:
+        import traceback
+        log_path = Path(__file__).resolve().parents[3] / "error.log"
+        try:
+            with open(log_path, "w") as f:
+                traceback.print_exc(file=f)
+                f.write("\n\n--- CSG TREE ---\n")
+                f.write(request.csg_tree)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc)
+        )
+    finally:
+        gc.collect()

@@ -21,3 +21,9 @@ class EditRequest(StrictModel):
     target_point: list[float] | None = None
     model: str = "gemini-3.1-flash-lite"
 
+
+class StepRequest(StrictModel):
+    """Payload containing compiled CSG tree to convert to STEP."""
+    csg_tree: str
+
+

@@ -237,6 +237,33 @@ export function useCADEngine({
         }
     }, [script, getWorker]);
 
+    const compileCsgTree = useCallback(async (customScript?: string): Promise<string> => {
+        const codeToProcess = customScript || script;
+        if (!codeToProcess) throw new Error('No script available to compile CSG');
+
+        const worker = getWorker();
+        const requestId = Date.now();
+
+        setIsExporting(true);
+
+        try {
+            return await new Promise<string>((resolve, reject) => {
+                pendingRequestsRef.current.set(requestId, {
+                    resolve: (data) => resolve(data.csgTree),
+                    reject
+                });
+
+                worker.postMessage({ 
+                    type: 'compile-csg', 
+                    script: codeToProcess, 
+                    id: requestId 
+                });
+            });
+        } finally {
+            setIsExporting(false);
+        }
+    }, [script, getWorker]);
+
     const rebuild = useCallback(() => {
         if (!script) return;
         executeCompile(script);
@@ -279,5 +306,6 @@ export function useCADEngine({
         rebuild,
         respawn,
         exportModel,
+        compileCsgTree,
     };
 }

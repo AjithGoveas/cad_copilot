@@ -37,6 +37,7 @@ type CADViewerProps = {
     onShare?: () => void;
     onParameterUpdate?: (key: string, value: number) => void;
     targetPoint?: [number, number, number] | null;
+    isDemoMode?: boolean;
 };
 
 // --- DXF Safety Wrapper Logic ---
@@ -125,6 +126,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         onShare,
         onParameterUpdate,
         targetPoint = null,
+        isDemoMode = false,
     },
     ref
 ) {
@@ -138,6 +140,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         rebuild,
         respawn,
         exportModel,
+        compileCsgTree,
     } = useCADEngine({
         script: code,
         enabled: !!code,
@@ -223,6 +226,48 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         toast.success('SCAD File Downloaded');
     }, [code]);
 
+    const handleExportStep = useCallback(async () => {
+        if (!code) return;
+        toast.info("Exporting STEP…", { description: "Compiling CSG tree in browser…" });
+
+        try {
+            const csgTree = await compileCsgTree();
+            toast.info("CSG compiled successfully", { description: "Requesting STEP generation from backend…" });
+
+            const res = await fetch('/api/v1/export/step', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    csgTree,
+                    demoMode: isDemoMode,
+                }),
+            });
+
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(`STEP service failed: ${errText}`);
+            }
+
+            const buffer = await res.arrayBuffer();
+            const blob = new Blob([buffer], { type: 'application/step' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `generated_model.step`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            toast.success("STEP Exported Successfully");
+        } catch (err) {
+            toast.error("STEP Export Failed", { description: String(err) });
+        }
+    }, [code, compileCsgTree, isDemoMode]);
+
     return (
         <div className="relative flex flex-1 h-full w-full overflow-hidden bg-transparent">
             <Viewport
@@ -286,6 +331,17 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                                     </div>
                                 </div>
                             </DropdownMenuItem>
+                            <DropdownMenuItem onClick={handleExportStep} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+                                <div className="flex items-center gap-2.5">
+                                    <div className="flex size-5 items-center justify-center rounded bg-blue-500/20">
+                                        <Box size={11} className="text-blue-500" />
+                                    </div>
+                                    <div className="flex flex-col">
+                                        <span>Parametric CAD Sheet</span>
+                                        <span className="text-[9px] text-white/60">.STEP Model</span>
+                                    </div>
+                                </div>
+                            </DropdownMenuItem>
                             <DropdownMenuSub>
                                 <DropdownMenuSubTrigger className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
                                     <div className="flex items-center gap-2.5">
@@ -307,7 +363,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                                             Cross-Section Slice
                                         </DropdownMenuItem>
                                         <DropdownMenuSeparator className="bg-[#3C3C3C]" />
-                                        <DropdownMenuItem onClick={() => handleExport('dxf', 'blueprint')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer font-bold text-emerald-400">
+                                        <DropdownMenuItem onClick={() => handleExport('dxf', 'blueprint')} className="text-[11px] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer font-bold text-emerald-400">
                                             Multi-View Sheet
                                         </DropdownMenuItem>
                                     </DropdownMenuSubContent>
