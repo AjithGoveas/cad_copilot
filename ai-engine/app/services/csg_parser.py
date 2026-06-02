@@ -1063,16 +1063,18 @@ def parse_statements(tokens: List[Tuple[str, str]], index: int) -> Tuple[List[AS
     return statements, index
 
 def flatten_compound(shape) -> List[Any]:
+    if shape is None:
+        return []
     if isinstance(shape, (list, tuple)):
         flat = []
         for child in shape:
             flat.extend(flatten_compound(child))
-        return flat
+        return [f for f in flat if f is not None]
     elif isinstance(shape, Compound):
         flat = []
         for child in shape:
             flat.extend(flatten_compound(child))
-        return flat
+        return [f for f in flat if f is not None]
     else:
         return [shape]
 
@@ -1468,10 +1470,10 @@ def _evaluate_node_impl(node: ASTNode) -> Any:
               
         try:
             xz_profile = Rotation(90, 0, 0) * combined
-            return revolve(xz_profile, axis=Axis.Z, angle=angle)
+            return revolve(xz_profile, axis=Axis.Z, revolution_arc=angle)
         except Exception:
             try:
-                return revolve(combined, axis=Axis.Y, angle=angle)
+                return revolve(combined, axis=Axis.Y, revolution_arc=angle)
             except Exception:
                 return combined
 
@@ -1944,3 +1946,16 @@ class CSGParser:
             return shapes[0]
         else:
             return make_compound_safe(shapes)
+
+def export_to_step(shape, filename: str) -> None:
+    from build123d import export_step
+    try:
+        shape.parent = None
+    except Exception:
+        pass
+    for s in flatten_compound(shape):
+        try:
+            s.parent = None
+        except Exception:
+            pass
+    export_step(shape, filename)
