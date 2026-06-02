@@ -153,7 +153,11 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
                 });
             }
 
-            if (!res.ok) throw new Error(isEditing ? 'Modification failed' : 'Generation failed');
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                const errorMsg = errorData?.detail?.error?.message || errorData?.detail || "Generation failed on the backend.";
+                throw new Error(errorMsg);
+            }
 
             const data = await res.json();
             setCadScript(data.code);
@@ -177,8 +181,8 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
             
             if (isDemoMode) setPromptCount(prev => prev + 1);
             setTargetPoint(null);
-        } catch (err) {
-            toast.error(isEditing ? 'Failed to modify CAD model' : 'Failed to generate CAD model');
+        } catch (err: any) {
+            toast.error(err?.message || (isEditing ? 'Failed to modify CAD model' : 'Failed to generate CAD model'));
             console.error(err);
         } finally {
             setIsGenerating(false);
