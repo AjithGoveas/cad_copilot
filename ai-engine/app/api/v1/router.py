@@ -13,7 +13,7 @@ import io
 import gc
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
-from app.models.schemas import GenerateResponse, EditRequest, StepRequest
+from app.models.schemas import GenerateResponse, EditRequest, StepRequest, GCodeRequest, GCodeResponse, CAMJobRequest
 from app.services.csg_parser import CSGParser, export_to_step
 from app.services.llm_codegen import LLMCodegenService
 
@@ -220,35 +220,35 @@ def _cleanup_file(path: Path):
         pass
 
 
-@router.post("/step")
-async def export_step(request: StepRequest, background_tasks: BackgroundTasks) -> FileResponse:
-    """
-    Convert flat CSG tree into a parametric STEP model.
-    """
-    try:
-        shape = CSGParser.parse(request.csg_tree)
+# @router.post("/step")
+# async def export_step(request: StepRequest, background_tasks: BackgroundTasks) -> FileResponse:
+#     """
+#     Convert flat CSG tree into a parametric STEP model.
+#     """
+#     try:
+#         shape = CSGParser.parse(request.csg_tree)
         
-        # Create unique file path in outputs directory
-        outputs_dir = Path(__file__).resolve().parents[3] / "outputs"
-        outputs_dir.mkdir(exist_ok=True)
+#         # Create unique file path in outputs directory
+#         outputs_dir = Path(__file__).resolve().parents[3] / "outputs"
+#         outputs_dir.mkdir(exist_ok=True)
         
-        step_filename = f"model_{uuid.uuid4().hex}.step"
-        step_path = outputs_dir / step_filename
+#         step_filename = f"model_{uuid.uuid4().hex}.step"
+#         step_path = outputs_dir / step_filename
         
-        export_to_step(shape, str(step_path))
+#         export_to_step(shape, str(step_path))
         
-        background_tasks.add_task(_cleanup_file, step_path)
+#         background_tasks.add_task(_cleanup_file, step_path)
         
-        return FileResponse(
-            path=step_path,
-            media_type="application/octet-stream",
-            filename="generated_model.step"
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"message": f"STEP conversion failed: {exc}"}}
-        )
+#         return FileResponse(
+#             path=step_path,
+#             media_type="application/octet-stream",
+#             filename="generated_model.step"
+#         )
+#     except Exception as exc:
+#         raise HTTPException(
+#             status_code=500,
+#             detail={"error": {"message": f"STEP conversion failed: {exc}"}}
+#         )
 
 
 @router.post("/export-step")
@@ -284,3 +284,104 @@ async def export_step_stream(request: StepRequest) -> StreamingResponse:
         )
     finally:
         gc.collect()
+
+
+@router.post("/gcode", response_model=GCodeResponse)
+async def generate_gcode(request: CAMJobRequest) -> GCodeResponse:
+    """
+    Generate dialect-specific G-code from a CSG tree or STEP file.
+    """
+    import tempfile
+    import pathlib
+    from app.services.gcode_generator import GCodeGenerator
+    
+    # Print clean debug log confirming the operations pipeline order
+    print("\n=========================================")
+    print("      CAM OPERATIONS PIPELINE ORDER")
+    print("=========================================")
+    for idx, op in enumerate(request.operations_pipeline):
+        print(f"[{idx + 1}] Operation: {op.name}")
+        print(f"    Strategy: {op.strategy.upper()}")
+        print(f"    Tool Ref: T{op.tool_number}")
+        print(f"    Depth:    {op.cutting_depth} mm (Stepdown: {op.stepdown} mm)")
+        print(f"    Slowdown: {op.corner_slowdown_factor}")
+    print("=========================================\n")
+    
+    temp_path = None
+    try:
+        # Check if we should use step_file_path directly or compile CSG tree
+        if not request.csg_tree and request.step_file_path:
+            generator = GCodeGenerator(
+                controller=request.machine_configuration.controller,
+                safe_z=request.machine_configuration.safe_z,
+                resolution=request.machine_configuration.resolution
+            )
+            result = generator.generate(request)
+        else:
+            if not request.csg_tree:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"message": "Either 'csg_tree' or 'step_file_path' must be provided."}}
+                )
+            
+            # Generate the shape from the CSG tree
+            shape = CSGParser.parse(request.csg_tree)
+            
+            # Write to temporary file
+            with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as tf:
+                temp_path = pathlib.Path(tf.name)
+                
+            export_to_step(shape, str(temp_path))
+            
+            # Run GCodeGenerator on the temporary file
+            generator = GCodeGenerator(
+                controller=request.machine_configuration.controller,
+                safe_z=request.machine_configuration.safe_z,
+                resolution=request.machine_configuration.resolution
+            )
+            result = generator.generate(request, step_path=temp_path)
+        
+        # Check if the result has errors
+        gcode_content = result.get("gcode", "")
+        if gcode_content.startswith("; ERROR:"):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"message": gcode_content[8:].strip()}}
+            )
+            
+        return GCodeResponse(
+            gcode=gcode_content,
+            toolpaths=result.get("toolpaths", [])
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"message": f"G-code generation failed: {exc}"}}
+        )
+    finally:
+        # Ensure cleanup of the temporary file buffer
+        if temp_path and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+        gc.collect()
+
+
+@router.get("/material-defaults")
+def get_material_defaults_endpoint(material: str, diameter: float) -> dict:
+    """
+    Retrieve default feeds and speeds for a given material name and tool diameter.
+    """
+    from app.services.materials_db import get_material_defaults
+    try:
+        return get_material_defaults(material, diameter)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"message": f"Failed to retrieve material defaults: {exc}"}}
+        )

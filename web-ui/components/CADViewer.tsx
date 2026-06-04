@@ -3,8 +3,9 @@
 import { useState, useCallback, useMemo, useEffect, useImperativeHandle, forwardRef, useRef } from 'react';
 import { Viewport } from './Viewport';
 import { useCADEngine } from '@/hooks/useCADEngine';
+import CamConfigModal, { CamConfig } from './CamConfigModal';
 import { toast } from 'sonner';
-import { AlertCircle, Share2, Download, ChevronDown, Layers, Box, Loader2 } from 'lucide-react';
+import { AlertCircle, Share2, Download, ChevronDown, Layers, Box, Loader2, Cpu } from 'lucide-react';
 import { extractStructuredAnnotations } from '@/lib/openscadParameters';
 import {
     DropdownMenu,
@@ -146,6 +147,10 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         enabled: !!code,
     });
 
+    const [isCamModalOpen, setIsCamModalOpen] = useState(false);
+    const [selectedController, setSelectedController] = useState<string>('fanuc');
+    const [isGeneratingGCode, setIsGeneratingGCode] = useState(false);
+
     // Expose methods to parent ref
     useImperativeHandle(ref, () => ({
         rebuild,
@@ -268,6 +273,68 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         }
     }, [code, compileCsgTree, isDemoMode]);
 
+    const handleOpenCamModal = useCallback((controller: string) => {
+        setSelectedController(controller);
+        setIsCamModalOpen(true);
+    }, []);
+
+    const handleGenerateGCode = useCallback(async (config: CamConfig) => {
+        if (!code) return;
+        setIsGeneratingGCode(true);
+        const controllerLabel = config.controller.toUpperCase();
+        toast.info(`Generating ${controllerLabel} G-code…`, { description: "Compiling CSG tree in browser…" });
+
+        try {
+            const csgTree = await compileCsgTree();
+            toast.info("CSG compiled successfully", { description: `Requesting ${controllerLabel} G-code from backend…` });
+
+            const res = await fetch('/api/v1/export/gcode', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    csgTree,
+                    controller: config.controller,
+                    safe_z: config.safe_z,
+                    tools: config.tools,
+                    operations: config.operations,
+                    demoMode: isDemoMode,
+                }),
+            });
+
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.error?.message || errData.error || `G-code service failed`);
+            }
+
+            const data = await res.json();
+            const gcodeText = data.gcode;
+
+            if (!gcodeText) {
+                throw new Error("No G-code content returned from server.");
+            }
+
+            const blob = new Blob([gcodeText], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `generated_model_${config.controller}.gcode`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            toast.success(`${controllerLabel} G-code Generated Successfully`);
+            setIsCamModalOpen(false);
+        } catch (err) {
+            toast.error("G-code Export Failed", { description: String(err) });
+        } finally {
+            setIsGeneratingGCode(false);
+        }
+    }, [code, compileCsgTree, isDemoMode]);
+
     return (
         <div className="relative flex flex-1 h-full w-full overflow-hidden bg-transparent">
             <Viewport
@@ -369,6 +436,17 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                                     </DropdownMenuSubContent>
                                 </DropdownMenuPortal>
                             </DropdownMenuSub>
+                            <DropdownMenuItem onClick={() => handleOpenCamModal('fanuc')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+                                <div className="flex items-center gap-2.5">
+                                    <div className="flex size-5 items-center justify-center rounded bg-orange-500/20">
+                                        <Cpu size={11} className="text-orange-500" />
+                                    </div>
+                                    <div className="flex flex-col text-left">
+                                        <span>CNC Toolpath</span>
+                                        <span className="text-[9px] text-white/60">.GCODE File</span>
+                                    </div>
+                                </div>
+                            </DropdownMenuItem>
                         </DropdownMenuContent>
                     </DropdownMenu>
                 </div>
@@ -396,6 +474,14 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                     </div>
                 </div>
             )}
+
+            <CamConfigModal
+                isOpen={isCamModalOpen}
+                onClose={() => setIsCamModalOpen(false)}
+                onGenerate={handleGenerateGCode}
+                isGenerating={isGeneratingGCode}
+                initialController={selectedController}
+            />
         </div>
     );
 });
