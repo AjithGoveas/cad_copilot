@@ -11,7 +11,7 @@ from typing import Any
 import uuid
 import io
 import gc
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, BackgroundTasks
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, BackgroundTasks, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from app.models.schemas import GenerateResponse, EditRequest, StepRequest, GCodeRequest, GCodeResponse, CAMJobRequest
 from app.services.csg_parser import CSGParser, export_to_step
@@ -287,59 +287,117 @@ async def export_step_stream(request: StepRequest) -> StreamingResponse:
 
 
 @router.post("/gcode", response_model=GCodeResponse)
-async def generate_gcode(request: CAMJobRequest) -> GCodeResponse:
+async def generate_gcode(
+    request: Request,
+    file: UploadFile | None = File(None),
+    job_request: str | None = Form(None)
+) -> GCodeResponse:
     """
     Generate dialect-specific G-code from a CSG tree or STEP file.
+    Supports both JSON payloads and multipart/form-data uploads.
     """
     import tempfile
     import pathlib
     from app.services.gcode_generator import GCodeGenerator
     
+    content_type = request.headers.get("content-type", "")
+    temp_path = None
+    
+    if "multipart/form-data" in content_type:
+        if not file or not job_request:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"message": "Form data must include 'file' and 'job_request'."}}
+            )
+        try:
+            job_request_data = json.loads(job_request)
+            cam_request = CAMJobRequest(**job_request_data)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"message": f"Invalid CAMJobRequest JSON payload: {exc}"}}
+            )
+        
+        file_bytes = await file.read()
+        filename = file.filename or ""
+        
+        # Check if uploaded file is a STEP file or CSG tree string
+        is_step = False
+        if filename.endswith((".step", ".stp")):
+            is_step = True
+        elif file_bytes.startswith(b"ISO-10303-21") or b"HEADER;" in file_bytes[:500]:
+            is_step = True
+            
+        if is_step:
+            with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as tf:
+                tf.write(file_bytes)
+                temp_path = pathlib.Path(tf.name)
+            cam_request.step_file_path = str(temp_path)
+        else:
+            try:
+                cam_request.csg_tree = file_bytes.decode("utf-8")
+            except Exception:
+                with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as tf:
+                    tf.write(file_bytes)
+                    temp_path = pathlib.Path(tf.name)
+                cam_request.step_file_path = str(temp_path)
+    else:
+        # Fallback to application/json
+        try:
+            body_bytes = await request.body()
+            body_json = json.loads(body_bytes)
+            cam_request = CAMJobRequest(**body_json)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"message": f"Invalid JSON body: {exc}"}}
+            )
+
     # Print clean debug log confirming the operations pipeline order
     print("\n=========================================")
     print("      CAM OPERATIONS PIPELINE ORDER")
     print("=========================================")
-    for idx, op in enumerate(request.operations_pipeline):
+    for idx, op in enumerate(cam_request.operations_pipeline):
         print(f"[{idx + 1}] Operation: {op.name}")
         print(f"    Strategy: {op.strategy.upper()}")
         print(f"    Tool Ref: T{op.tool_number}")
         print(f"    Depth:    {op.cutting_depth} mm (Stepdown: {op.stepdown} mm)")
-        print(f"    Slowdown: {op.corner_slowdown_factor}")
+        print(f"    Slowdown: {op.corner_slowdown}")
     print("=========================================\n")
     
-    temp_path = None
     try:
         # Check if we should use step_file_path directly or compile CSG tree
-        if not request.csg_tree and request.step_file_path:
+        if not cam_request.csg_tree and cam_request.step_file_path:
             generator = GCodeGenerator(
-                controller=request.machine_configuration.controller,
-                safe_z=request.machine_configuration.safe_z,
-                resolution=request.machine_configuration.resolution
+                controller=cam_request.machine_configuration.controller,
+                safe_z=cam_request.machine_configuration.safe_z,
+                resolution=cam_request.machine_configuration.resolution
             )
-            result = generator.generate(request)
+            result = generator.generate(cam_request, step_path=cam_request.step_file_path)
         else:
-            if not request.csg_tree:
+            if not cam_request.csg_tree:
                 raise HTTPException(
                     status_code=400,
                     detail={"error": {"message": "Either 'csg_tree' or 'step_file_path' must be provided."}}
                 )
             
             # Generate the shape from the CSG tree
-            shape = CSGParser.parse(request.csg_tree)
+            shape = CSGParser.parse(cam_request.csg_tree)
             
-            # Write to temporary file
-            with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as tf:
-                temp_path = pathlib.Path(tf.name)
+            # If tempfile wasn't created by multipart handler, create one for the CSG-to-STEP compile
+            if not temp_path:
+                with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as tf:
+                    temp_path = pathlib.Path(tf.name)
                 
             export_to_step(shape, str(temp_path))
             
             # Run GCodeGenerator on the temporary file
             generator = GCodeGenerator(
-                controller=request.machine_configuration.controller,
-                safe_z=request.machine_configuration.safe_z,
-                resolution=request.machine_configuration.resolution
+                controller=cam_request.machine_configuration.controller,
+                safe_z=cam_request.machine_configuration.safe_z,
+                resolution=cam_request.machine_configuration.resolution
             )
-            result = generator.generate(request, step_path=temp_path)
+            result = generator.generate(cam_request, step_path=temp_path)
         
         # Check if the result has errors
         gcode_content = result.get("gcode", "")

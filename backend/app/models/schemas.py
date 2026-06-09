@@ -27,15 +27,21 @@ class StepRequest(StrictModel):
     csg_tree: str
 
 
-class MachineConfiguration(StrictModel):
+class MachineConfigModel(StrictModel):
     controller: str = Field(default="fanuc", description="CNC Controller dialect")
     safe_z: float = Field(default=5.0, ge=0.0, description="Safe clearance height Z in mm")
     coolant_active: bool = Field(default=True, description="Enable flood coolant M8/M9 commands")
     resolution: float = Field(default=0.5, gt=0.0, description="Path interpolation resolution")
 
 
+# Backwards compatibility alias
+class MachineConfiguration(MachineConfigModel):
+    pass
+
+
 class ToolModel(StrictModel):
     number: int = Field(..., ge=1, description="Tool identification number")
+    type: str = Field(default="endmill", description="Tool type (endmill, ballnose, drill, face)")
     diameter: float = Field(..., gt=0.0, description="Tool bit diameter in mm")
     spindle_speed: float = Field(..., gt=0.0, description="Spindle speed in RPM")
     feed_rate: float = Field(..., gt=0.0, description="Cutting feed rate in mm/min")
@@ -45,19 +51,30 @@ class ToolModel(StrictModel):
 
 class OperationModel(StrictModel):
     name: str = Field(..., description="Operation name")
-    strategy: str = Field(..., description="Machining strategy (profile, pocket, engrave)")
+    strategy: str = Field(..., description="Machining strategy (surface, profile, pocket, engrave, drill, face)")
     tool_number: int = Field(..., ge=1, description="Target tool number from tool library")
     cutting_depth: float = Field(..., gt=0.0, description="Total target depth of cut in mm")
     stepdown: float = Field(..., gt=0.0, description="Maximum depth per cutting pass in mm")
     units: str = Field(default="metric", description="Metric or imperial units")
-    corner_slowdown_factor: float = Field(default=0.5, ge=0.1, le=1.0, description="Feed slowdown factor at corners")
+    corner_slowdown: float = Field(default=0.5, ge=0.1, le=1.0, description="Feed slowdown factor at corners")
+    corner_slowdown_factor: float | None = Field(default=None, description="Deprecated. Use corner_slowdown instead.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_corner_slowdown(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "corner_slowdown_factor" in data and "corner_slowdown" not in data:
+                data["corner_slowdown"] = data["corner_slowdown_factor"]
+            elif "corner_slowdown" in data and "corner_slowdown_factor" not in data:
+                data["corner_slowdown_factor"] = data["corner_slowdown"]
+        return data
 
 
 class CAMJobRequest(StrictModel):
     """CAM Job Request payload containing compiled CSG or STEP path and CAM configuration."""
     csg_tree: str | None = Field(default=None, description="Optional compiled CSG tree string")
     step_file_path: str | None = Field(default=None, description="Optional path to STEP file")
-    machine_configuration: MachineConfiguration = Field(default_factory=MachineConfiguration)
+    machine_configuration: MachineConfigModel = Field(default_factory=MachineConfigModel)
     tool_library: list[ToolModel] = Field(..., description="List of available tools")
     operations_pipeline: list[OperationModel] = Field(..., description="List of machining operations")
 
@@ -77,11 +94,14 @@ class CAMJobRequest(StrictModel):
 class ToolSchema(ToolModel):
     pass
 
+
 class OperationSchema(OperationModel):
     pass
 
+
 class GCodeRequest(CAMJobRequest):
     pass
+
 
 class GCodeResponse(StrictModel):
     """Payload containing generated G-code program and 3D toolpath lines."""

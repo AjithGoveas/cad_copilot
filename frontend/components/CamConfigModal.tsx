@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 
 export interface ToolConfig {
     number: number;
+    type: 'endmill' | 'ballnose' | 'drill' | 'face';
     diameter: number;
     spindle_speed: number;
     feed_rate: number;
@@ -19,18 +20,19 @@ export interface ToolConfig {
 
 export interface OperationConfig {
     name: string;
-    strategy: 'profile' | 'pocket' | 'engrave';
+    strategy: 'surface' | 'profile' | 'pocket' | 'engrave' | 'drill' | 'face';
     tool_number: number;
     cutting_depth: number;
     stepdown: number;
     units: 'metric' | 'imperial';
-    corner_slowdown_factor: number;
+    corner_slowdown: number;
 }
 
 export interface CamConfig {
     controller: string;
     safe_z: number;
     coolant: boolean;
+    resolution: number;
     tools: ToolConfig[];
     operations: OperationConfig[];
 }
@@ -73,10 +75,12 @@ export default function CamConfigModal({
     const [controller, setController] = useState<string>(initialController || 'fanuc');
     const [safeZ, setSafeZ] = useState<number>(5.0);
     const [coolant, setCoolant] = useState<boolean>(true);
+    const [resolution, setResolution] = useState<number>(0.5);
 
     const [tools, setTools] = useState<ToolConfig[]>([
         {
             number: 1,
+            type: 'endmill',
             diameter: 3.175,
             spindle_speed: 10000,
             feed_rate: 400,
@@ -93,7 +97,7 @@ export default function CamConfigModal({
             cutting_depth: 5.0,
             stepdown: 0.5,
             units: 'metric',
-            corner_slowdown_factor: 0.5
+            corner_slowdown: 0.5
         }
     ]);
 
@@ -185,6 +189,7 @@ export default function CamConfigModal({
             ...tools,
             {
                 number: nextNum,
+                type: 'endmill',
                 diameter: 3.175,
                 spindle_speed: 12000,
                 feed_rate: 800,
@@ -226,8 +231,8 @@ export default function CamConfigModal({
             const oldNum = updated[index].number;
             setOperations(operations.map(op => op.tool_number === oldNum ? { ...op, tool_number: numVal } : op));
             updated[index].number = numVal;
-        } else if (field === 'description') {
-            updated[index].description = value;
+        } else if (field === 'description' || field === 'type') {
+            updated[index][field] = value as any;
         } else {
             updated[index][field] = parseFloat(value) || 0;
         }
@@ -247,7 +252,7 @@ export default function CamConfigModal({
                 cutting_depth: 5.0,
                 stepdown: 1.0,
                 units: 'metric',
-                corner_slowdown_factor: 0.5
+                corner_slowdown: 0.5
             }
         ]);
         setValidationError(null);
@@ -325,6 +330,7 @@ export default function CamConfigModal({
             controller,
             safe_z: safeZ,
             coolant,
+            resolution,
             tools,
             operations
         });
@@ -572,6 +578,24 @@ export default function CamConfigModal({
                                             </button>
                                         </div>
                                     </div>
+                                    
+                                    {/* Path interpolation resolution */}
+                                    <div className="p-5 rounded-lg border border-[#3C3C3C] bg-[#252526]/30">
+                                        <div className="flex items-center justify-between">
+                                            <label className="text-[10px] font-bold text-zinc-400 tracking-wider uppercase">Path Interpolation Resolution</label>
+                                            <span className="text-xs font-bold text-blue-400 font-mono">{resolution.toFixed(2)} mm</span>
+                                        </div>
+                                        <input 
+                                            type="range"
+                                            min="0.1"
+                                            max="2.0"
+                                            step="0.05"
+                                            value={resolution}
+                                            onChange={(e) => setResolution(parseFloat(e.target.value) || 0.5)}
+                                            className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-[#007ACC] my-2"
+                                        />
+                                        <p className="text-[9.5px] text-[#A6A6A6] leading-normal">Defines the maximum chordal deviation/step size used when interpolating curves into linear segments.</p>
+                                    </div>
                                 </div>
                             )}
 
@@ -602,7 +626,7 @@ export default function CamConfigModal({
                                                 <div className="flex items-center justify-between border-b border-[#3C3C3C]/60 pb-2">
                                                     <div className="flex items-center gap-2">
                                                         <span className="flex h-5 px-2 items-center justify-center rounded bg-blue-500/10 text-blue-400 border border-blue-500/10 text-[9px] font-bold font-mono">
-                                                            T{tool.number}
+                                                            T{tool.number} ({tool.type.toUpperCase()})
                                                         </span>
                                                         <span className="text-xs font-bold text-zinc-300">{tool.description || `Tool T${tool.number}`}</span>
                                                     </div>
@@ -620,7 +644,7 @@ export default function CamConfigModal({
                                                     {renderToolSvg(tool.diameter)}
 
                                                     {/* Center: Specs Grid */}
-                                                    <div className="flex-1 grid grid-cols-2 sm:grid-cols-5 gap-3.5">
+                                                    <div className="flex-1 grid grid-cols-2 sm:grid-cols-6 gap-3">
                                                         <div className="flex flex-col gap-1">
                                                             <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Slot ID</label>
                                                             <input
@@ -628,18 +652,32 @@ export default function CamConfigModal({
                                                                 min="1"
                                                                 value={tool.number}
                                                                 onChange={(e) => handleToolChange(idx, 'number', e.target.value)}
-                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2.5 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
+                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
                                                             />
                                                         </div>
 
                                                         <div className="flex flex-col gap-1">
-                                                            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Diameter (mm)</label>
+                                                            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Type</label>
+                                                            <select
+                                                                value={tool.type}
+                                                                onChange={(e) => handleToolChange(idx, 'type', e.target.value)}
+                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
+                                                            >
+                                                                <option value="endmill">Endmill</option>
+                                                                <option value="ballnose">Ballnose</option>
+                                                                <option value="drill">Drill</option>
+                                                                <option value="face">Face Mill</option>
+                                                            </select>
+                                                        </div>
+
+                                                        <div className="flex flex-col gap-1">
+                                                            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Dia (mm)</label>
                                                             <input
                                                                 type="number"
                                                                 step="0.001"
                                                                 value={tool.diameter}
                                                                 onChange={(e) => handleToolChange(idx, 'diameter', e.target.value)}
-                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2.5 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
+                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
                                                             />
                                                         </div>
 
@@ -649,7 +687,7 @@ export default function CamConfigModal({
                                                                 type="number"
                                                                 value={tool.spindle_speed}
                                                                 onChange={(e) => handleToolChange(idx, 'spindle_speed', e.target.value)}
-                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2.5 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
+                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
                                                             />
                                                         </div>
 
@@ -659,7 +697,7 @@ export default function CamConfigModal({
                                                                 type="number"
                                                                 value={tool.feed_rate}
                                                                 onChange={(e) => handleToolChange(idx, 'feed_rate', e.target.value)}
-                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2.5 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
+                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
                                                             />
                                                         </div>
 
@@ -669,11 +707,11 @@ export default function CamConfigModal({
                                                                 type="number"
                                                                 value={tool.plunge_rate}
                                                                 onChange={(e) => handleToolChange(idx, 'plunge_rate', e.target.value)}
-                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2.5 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
+                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
                                                             />
                                                         </div>
 
-                                                        <div className="col-span-2 sm:col-span-5 flex flex-col gap-1">
+                                                        <div className="col-span-2 sm:col-span-6 flex flex-col gap-1">
                                                             <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Description</label>
                                                             <input
                                                                 type="text"
@@ -786,7 +824,7 @@ export default function CamConfigModal({
                                                         <div className="w-full lg:w-44 shrink-0 flex flex-col gap-1.5">
                                                             <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Milling Strategy</label>
                                                             <div className="grid grid-cols-3 gap-1">
-                                                                {(['profile', 'pocket', 'engrave'] as const).map((strat) => (
+                                                                {(['surface', 'profile', 'pocket', 'engrave', 'drill', 'face'] as const).map((strat) => (
                                                                     <button
                                                                         key={strat}
                                                                         onClick={() => handleOperationChange(idx, 'strategy', strat)}
@@ -798,7 +836,10 @@ export default function CamConfigModal({
                                                                     >
                                                                         {strat === 'profile' && <Layers size={11} className="mb-1" />}
                                                                         {strat === 'pocket' && <Hammer size={11} className="mb-1" />}
+                                                                        {strat === 'surface' && <Cpu size={11} className="mb-1" />}
                                                                         {strat === 'engrave' && <Sparkles size={11} className="mb-1" />}
+                                                                        {strat === 'drill' && <Info size={11} className="mb-1" />}
+                                                                        {strat === 'face' && <Settings size={11} className="mb-1" />}
                                                                         {strat}
                                                                     </button>
                                                                 ))}
@@ -867,7 +908,7 @@ export default function CamConfigModal({
                                                             <div className="col-span-2 md:col-span-4 flex flex-col gap-1.5 mt-1">
                                                                 <div className="flex justify-between items-center text-[9px] font-bold text-zinc-500 uppercase tracking-wider">
                                                                     <span>Corner Slowdown Factor</span>
-                                                                    <span className="text-blue-400 font-mono">{(op.corner_slowdown_factor * 100).toFixed(0)}%</span>
+                                                                    <span className="text-blue-400 font-mono">{(op.corner_slowdown * 100).toFixed(0)}%</span>
                                                                 </div>
                                                                 <div className="flex items-center gap-3">
                                                                     <input
@@ -875,8 +916,8 @@ export default function CamConfigModal({
                                                                         min="0.10"
                                                                         max="1.00"
                                                                         step="0.05"
-                                                                        value={op.corner_slowdown_factor}
-                                                                        onChange={(e) => handleOperationChange(idx, 'corner_slowdown_factor', e.target.value)}
+                                                                        value={op.corner_slowdown}
+                                                                        onChange={(e) => handleOperationChange(idx, 'corner_slowdown', e.target.value)}
                                                                         className="flex-1 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-[#007ACC]"
                                                                     />
                                                                     <span className="text-[8px] text-zinc-600 font-medium shrink-0">Decelerates over 30° bends.</span>
@@ -962,7 +1003,6 @@ export default function CamConfigModal({
                                 <span className="text-[8.5px] uppercase font-bold text-zinc-500 tracking-wider">Milling Timeline</span>
                                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                                     {operations.map((op, oIdx) => {
-                                        const tool = tools.find(t => t.number === op.tool_number);
                                         const passes = getPassCount(op.cutting_depth, op.stepdown);
                                         return (
                                             <div key={oIdx} className="relative pl-4 border-l border-[#3C3C3C] py-0.5">
