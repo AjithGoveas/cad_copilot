@@ -56,6 +56,15 @@ const CONTROLLER_DIALECTS = [
     { id: 'mitsubishi', name: 'Mitsubishi CNC', desc: 'Optimized G-code dialect syntax for Mitsubishi systems.', ext: '.gcode' },
 ];
 
+const STRATEGY_DESCRIPTIONS = {
+    surface: '3D Surfacing: Scans the entire 3D surface using grid/drop-cutter toolpaths.',
+    profile: '2.5D Profiling: Cuts along the outer/inner contours of flat boundary walls.',
+    pocket: '2.5D Pocketing: Clears bulk inner material within closed boundaries.',
+    engrave: 'Engraving: Traces nominal wireframe lines directly without offsets.',
+    drill: 'Drilling: Automatically recognizes circular holes and executes canned cycles.',
+    face: 'Facing: Raster-mills the topmost stock surface to establish a flat Z reference.'
+};
+
 const MATERIAL_CHIPS = [
     { name: 'Aluminum 6061', label: 'Al 6061', type: 'Metal', style: 'border-[#3C3C3C] text-slate-300 hover:border-blue-500/50 hover:bg-blue-500/5' },
     { name: 'Plywood', label: 'Plywood', type: 'Wood', style: 'border-amber-900/40 text-amber-300 hover:border-blue-500/50 hover:bg-blue-500/5' },
@@ -828,6 +837,7 @@ export default function CamConfigModal({
                                                                     <button
                                                                         key={strat}
                                                                         onClick={() => handleOperationChange(idx, 'strategy', strat)}
+                                                                        title={STRATEGY_DESCRIPTIONS[strat]}
                                                                         className={`flex flex-col items-center justify-center py-2.5 rounded-lg border text-[8px] font-bold uppercase transition-all duration-150 ${
                                                                             op.strategy === strat
                                                                                 ? 'border-[#007ACC]/40 bg-[#007ACC]/5 text-blue-400'
@@ -844,6 +854,9 @@ export default function CamConfigModal({
                                                                     </button>
                                                                 ))}
                                                             </div>
+                                                            <p className="text-[9px] text-[#A6A6A6] mt-1.5 leading-normal italic">
+                                                                {STRATEGY_DESCRIPTIONS[op.strategy]}
+                                                            </p>
                                                         </div>
 
                                                         {/* Parameters inputs */}
