@@ -15,7 +15,8 @@ export async function POST(req: NextRequest) {
             resolution,
             tools,
             operations,
-            demoMode
+            demoMode,
+            stock_configuration
         } = body;
         
         const isDemoMode = demoMode === true;
@@ -38,6 +39,15 @@ export async function POST(req: NextRequest) {
                 safe_z: safe_z !== undefined ? Number(safe_z) : 5.0,
                 coolant_active: coolant !== undefined ? Boolean(coolant) : true,
                 resolution: resolution !== undefined ? Number(resolution) : 0.5
+            },
+            stock_configuration: stock_configuration || {
+                stock_type: 'block',
+                length_x: null,
+                width_y: null,
+                height_z: null,
+                outer_diameter: null,
+                inner_diameter: 0.0,
+                length_z: null
             },
             tool_library: (tools || []).map((t: any) => ({
                 number: Number(t.number),

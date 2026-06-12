@@ -4,23 +4,24 @@ import { useState, useEffect } from 'react';
 import { 
     X, Plus, Trash2, Settings, Hammer, Layers, AlertCircle, Play, Loader2, 
     Sparkles, ChevronRight, ChevronLeft, ShieldCheck, Gauge, Zap, 
-    ChevronUp, ChevronDown, Cpu, Check, Info
+    ChevronUp, ChevronDown, Cpu, Check, Info, Box, HelpCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export interface ToolConfig {
     number: number;
-    type: 'endmill' | 'ballnose' | 'drill' | 'face';
+    type: 'endmill' | 'ballnose' | 'drill' | 'face' | 'turning_rough' | 'turning_finish';
     diameter: number;
     spindle_speed: number;
     feed_rate: number;
     plunge_rate: number;
     description: string;
+    flute_length?: number;
 }
 
 export interface OperationConfig {
     name: string;
-    strategy: 'surface' | 'profile' | 'pocket' | 'engrave' | 'drill' | 'face';
+    strategy: 'surface' | 'profile' | 'pocket' | 'engrave' | 'drill' | 'face' | 'turn_rough' | 'turn_finish';
     tool_number: number;
     cutting_depth: number;
     stepdown: number;
@@ -28,11 +29,22 @@ export interface OperationConfig {
     corner_slowdown: number;
 }
 
+export interface StockConfig {
+    stock_type: 'block' | 'cylinder';
+    length_x?: number | null;
+    width_y?: number | null;
+    height_z?: number | null;
+    outer_diameter?: number | null;
+    inner_diameter?: number | null;
+    length_z?: number | null;
+}
+
 export interface CamConfig {
     controller: string;
     safe_z: number;
     coolant: boolean;
     resolution: number;
+    stock_configuration: StockConfig;
     tools: ToolConfig[];
     operations: OperationConfig[];
 }
@@ -45,7 +57,7 @@ interface CamConfigModalProps {
     initialController: string;
 }
 
-type StepType = 'machine' | 'tools' | 'operations';
+type StepType = 'machine' | 'stock' | 'tools' | 'operations';
 
 const CONTROLLER_DIALECTS = [
     { id: 'fanuc', name: 'Fanuc Dialect', desc: 'Standard ISO G-code compatible with most CNC machinery.', ext: '.nc' },
@@ -62,15 +74,17 @@ const STRATEGY_DESCRIPTIONS = {
     pocket: '2.5D Pocketing: Clears bulk inner material within closed boundaries.',
     engrave: 'Engraving: Traces nominal wireframe lines directly without offsets.',
     drill: 'Drilling: Automatically recognizes circular holes and executes canned cycles.',
-    face: 'Facing: Raster-mills the topmost stock surface to establish a flat Z reference.'
+    face: 'Facing: Raster-mills the topmost stock surface to establish a flat Z reference.',
+    turn_rough: 'Turning Rough: Axisymmetric material-peeling passes along length to reduce diameter.',
+    turn_finish: 'Turning Finish: Axisymmetric profile finishing passes along target contour.'
 };
 
 const MATERIAL_CHIPS = [
-    { name: 'Aluminum 6061', label: 'Al 6061', type: 'Metal', style: 'border-[#3C3C3C] text-slate-300 hover:border-blue-500/50 hover:bg-blue-500/5' },
-    { name: 'Plywood', label: 'Plywood', type: 'Wood', style: 'border-amber-900/40 text-amber-300 hover:border-blue-500/50 hover:bg-blue-500/5' },
-    { name: 'Acrylic', label: 'Acrylic', type: 'Plastic', style: 'border-sky-900/40 text-sky-300 hover:border-blue-500/50 hover:bg-blue-500/5' },
-    { name: 'Delrin', label: 'Delrin', type: 'Engineering', style: 'border-emerald-900/40 text-emerald-300 hover:border-blue-500/50 hover:bg-blue-500/5' },
-    { name: 'Mild Steel', label: 'Steel', type: 'Ferrous', style: 'border-red-950/80 text-red-300 hover:border-blue-500/50 hover:bg-blue-500/5' }
+    { name: 'Aluminum 6061', label: 'Al 6061', type: 'Metal' },
+    { name: 'Plywood', label: 'Plywood', type: 'Wood' },
+    { name: 'Acrylic', label: 'Acrylic', type: 'Plastic' },
+    { name: 'Delrin', label: 'Delrin', type: 'Polymer' },
+    { name: 'Mild Steel', label: 'Steel', type: 'Ferrous' }
 ];
 
 export default function CamConfigModal({
@@ -86,6 +100,14 @@ export default function CamConfigModal({
     const [coolant, setCoolant] = useState<boolean>(true);
     const [resolution, setResolution] = useState<number>(0.5);
 
+    const [stockType, setStockType] = useState<'block' | 'cylinder'>('block');
+    const [stockLengthX, setStockLengthX] = useState<number | null>(null);
+    const [stockWidthY, setStockWidthY] = useState<number | null>(null);
+    const [stockHeightZ, setStockHeightZ] = useState<number | null>(null);
+    const [stockOuterDiameter, setStockOuterDiameter] = useState<number | null>(null);
+    const [stockInnerDiameter, setStockInnerDiameter] = useState<number>(0.0);
+    const [stockLengthZ, setStockLengthZ] = useState<number | null>(null);
+
     const [tools, setTools] = useState<ToolConfig[]>([
         {
             number: 1,
@@ -94,7 +116,8 @@ export default function CamConfigModal({
             spindle_speed: 10000,
             feed_rate: 400,
             plunge_rate: 150,
-            description: '1/8in Flat Endmill'
+            description: '1/8in Flat Endmill',
+            flute_length: 25.0
         }
     ]);
 
@@ -203,7 +226,8 @@ export default function CamConfigModal({
                 spindle_speed: 12000,
                 feed_rate: 800,
                 plunge_rate: 200,
-                description: `Tool T${nextNum}`
+                description: `Tool T${nextNum}`,
+                flute_length: 25.0
             }
         ]);
         setValidationError(null);
@@ -309,6 +333,8 @@ export default function CamConfigModal({
 
     const handleNextStep = () => {
         if (currentStep === 'machine') {
+            setCurrentStep('stock');
+        } else if (currentStep === 'stock') {
             setCurrentStep('tools');
         } else if (currentStep === 'tools') {
             const numSet = new Set(tools.map(t => t.number));
@@ -325,6 +351,8 @@ export default function CamConfigModal({
         if (currentStep === 'operations') {
             setCurrentStep('tools');
         } else if (currentStep === 'tools') {
+            setCurrentStep('stock');
+        } else if (currentStep === 'stock') {
             setCurrentStep('machine');
         }
     };
@@ -340,6 +368,15 @@ export default function CamConfigModal({
             safe_z: safeZ,
             coolant,
             resolution,
+            stock_configuration: {
+                stock_type: stockType,
+                length_x: stockType === 'block' ? stockLengthX : null,
+                width_y: stockType === 'block' ? stockWidthY : null,
+                height_z: stockType === 'block' ? stockHeightZ : null,
+                outer_diameter: stockType === 'cylinder' ? stockOuterDiameter : null,
+                inner_diameter: stockType === 'cylinder' ? stockInnerDiameter : 0.0,
+                length_z: stockType === 'cylinder' ? stockLengthZ : null
+            },
             tools,
             operations
         });
@@ -349,21 +386,20 @@ export default function CamConfigModal({
     const renderToolSvg = (diameter: number) => {
         const displayWidth = Math.max(8, Math.min(40, diameter * 3.5));
         return (
-            <div className="flex flex-col items-center justify-center bg-[#1E1E1E] border border-[#3C3C3C] rounded-lg p-3 h-32 w-24 shrink-0">
-                <svg width="48" height="72" viewBox="0 0 48 72" className="text-blue-500/70 drop-shadow-[0_0_8px_rgba(59,130,246,0.25)]">
-                    {/* Shank */}
-                    <rect x="18" y="2" width="12" height="28" fill="currentColor" opacity="0.25" rx="1" />
-                    {/* Taper transition */}
+            <div className="relative flex flex-col items-center justify-center border border-zinc-800 bg-zinc-950 p-3 h-36 w-24 shrink-0 overflow-hidden rounded-lg">
+                <div className="absolute inset-0 opacity-5 pointer-events-none" style={{
+                    backgroundImage: 'radial-gradient(circle, #3b82f6 1px, transparent 1px)',
+                    backgroundSize: '8px 8px'
+                }} />
+                <svg width="48" height="72" viewBox="0 0 48 72" className="text-blue-500 z-10">
+                    <rect x="18" y="2" width="12" height="28" fill="currentColor" opacity="0.2" rx="0" />
                     <polygon points={`18,30 30,30 ${24 + displayWidth/2},34 ${24 - displayWidth/2},34`} fill="currentColor" opacity="0.4" />
-                    {/* Flutes */}
-                    <rect x={24 - displayWidth/2} y="34" width={displayWidth} height="28" fill="currentColor" rx="1" />
-                    {/* Flute Spiral patterns */}
-                    <path d={`M ${24 - displayWidth/2} 40 Q 24 43 ${24 + displayWidth/2} 45`} stroke="#1e1e1e" strokeWidth="1.5" fill="none" opacity="0.7"/>
-                    <path d={`M ${24 - displayWidth/2} 50 Q 24 53 ${24 + displayWidth/2} 55`} stroke="#1e1e1e" strokeWidth="1.5" fill="none" opacity="0.7"/>
-                    {/* Tip */}
+                    <rect x={24 - displayWidth/2} y="34" width={displayWidth} height="28" fill="currentColor" rx="0" opacity="0.8" />
+                    <path d={`M ${24 - displayWidth/2} 40 Q 24 43 ${24 + displayWidth/2} 45`} stroke="#09090b" strokeWidth="1.5" fill="none" opacity="0.8"/>
+                    <path d={`M ${24 - displayWidth/2} 50 Q 24 53 ${24 + displayWidth/2} 55`} stroke="#09090b" strokeWidth="1.5" fill="none" opacity="0.8"/>
                     <polygon points={`${24 - displayWidth/2},62 ${24 + displayWidth/2},62 24,66`} fill="currentColor" />
                 </svg>
-                <span className="text-[9px] font-mono font-bold text-zinc-500 mt-1">{diameter.toFixed(3)}mm</span>
+                <span className="text-[10px] font-mono font-medium text-blue-400 mt-2 z-10">{diameter.toFixed(3)}mm</span>
             </div>
         );
     };
@@ -371,38 +407,23 @@ export default function CamConfigModal({
     const renderPassVisualizer = (depth: number, stepdown: number) => {
         const passes = getPassCount(depth, stepdown);
         if (passes === 0) return null;
-        
         const maxDisplayLines = 8;
         const displayLines = Math.min(passes, maxDisplayLines);
-
         return (
-            <div className="flex flex-col gap-2 p-3 bg-[#1E1E1E] border border-[#3C3C3C] rounded-lg">
-                <div className="flex justify-between items-center text-[10px] uppercase font-bold text-zinc-400">
-                    <span className="flex items-center gap-1.5"><Info size={11} className="text-zinc-500"/> Pass Profile</span>
-                    <span className="text-blue-400 font-mono text-[10px]">{passes} Cuts</span>
+            <div className="flex flex-col gap-2 p-3.5 bg-zinc-900/40 border border-zinc-800/80 rounded-xl">
+                <div className="flex justify-between items-center text-[10px] uppercase font-semibold tracking-wider text-zinc-400">
+                    <span>Pass Profile</span>
+                    <span className="text-blue-400 font-mono border border-blue-500/20 bg-blue-500/5 px-1.5 py-0.5 rounded">{passes}P</span>
                 </div>
-                
-                <div className="relative h-20 w-full bg-[#252526] border border-[#3C3C3C] rounded-lg overflow-hidden flex flex-col justify-end">
-                    <div className="absolute inset-0 bg-gradient-to-b from-zinc-950/10 to-zinc-950/40" />
-                    
-                    {/* Ramping Indicator */}
-                    <div className="absolute top-1 left-2 flex items-center gap-1 opacity-40">
-                        <svg width="24" height="12" viewBox="0 0 24 12" className="text-blue-500 fill-none" stroke="currentColor" strokeWidth="1">
-                            <path d="M 1,1 L 12,9 L 23,9" strokeDasharray="2,2" />
-                            <polygon points="12,9 8,6 8,11" fill="currentColor"/>
-                        </svg>
-                        <span className="text-[7px] font-bold tracking-wider text-zinc-500 uppercase">Ramp Entry</span>
-                    </div>
-
-                    {/* Cut lines */}
-                    <div className="relative h-14 w-full flex flex-col justify-between px-2 pb-1.5">
+                <div className="relative h-20 w-full bg-zinc-950 border border-zinc-900 rounded-lg overflow-hidden flex flex-col justify-end">
+                    <div className="relative h-16 w-full flex flex-col justify-between px-3 pb-2">
                         {Array.from({ length: displayLines }).map((_, lineIdx) => {
                             const currentDepthVal = ((lineIdx + 1) / passes) * depth;
                             return (
-                                <div key={lineIdx} className="w-full relative h-[1px] bg-zinc-800/80">
-                                    <div className="absolute left-0 right-0 h-[1px] border-t border-dashed border-blue-500/20" />
-                                    <span className="absolute right-0 -top-2 text-[7px] text-zinc-500 font-mono">
-                                        -{currentDepthVal.toFixed(2)}mm
+                                <div key={lineIdx} className="w-full relative h-[1px]">
+                                    <div className="absolute left-3 right-0 h-[1px] border-t border-dashed border-blue-500/20" />
+                                    <span className="absolute right-0 -top-2.5 text-[8px] text-blue-400/80 font-mono">
+                                        -{currentDepthVal.toFixed(2)}
                                     </span>
                                 </div>
                             );
@@ -410,136 +431,148 @@ export default function CamConfigModal({
                     </div>
                 </div>
                 {passes > maxDisplayLines && (
-                    <span className="text-[7px] text-zinc-500 text-center font-medium italic">Showing first {maxDisplayLines} of {passes} total stepdowns.</span>
+                    <span className="text-[9px] text-zinc-500 text-center font-sans">+{passes - maxDisplayLines} more passes</span>
                 )}
             </div>
         );
     };
 
+    const STEPS: { key: StepType; label: string; num: number }[] = [
+        { key: 'machine', label: 'Machine', num: 1 },
+        { key: 'stock',   label: 'Stock',   num: 2 },
+        { key: 'tools',   label: 'Tools',   num: 3 },
+        { key: 'operations', label: 'Operations', num: 4 },
+    ];
+
+    const getStepIndex = (key: StepType) => {
+        return STEPS.findIndex(s => s.key === key);
+    };
+
+    const currentStepIdx = getStepIndex(currentStep);
+
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#09090b]/80 backdrop-blur-sm p-4 transition-all duration-300">
-            <div className="flex flex-col w-full max-w-6xl h-[85vh] rounded-xl border border-[#3C3C3C] bg-[#252526] shadow-[0_0_80px_-10px_rgba(0,122,204,0.15)] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                
-                {/* Custom Studio Header */}
-                <div className="flex items-center justify-between border-b border-[#3C3C3C] bg-[#252526] px-6 py-4 shrink-0">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+            <div className="relative flex flex-col w-full max-w-5xl h-[85vh] border border-zinc-800 bg-[#09090b] shadow-2xl rounded-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+
+                {/* Header */}
+                <div className="flex items-center justify-between border-b border-zinc-800/80 bg-zinc-950 px-6 py-4 shrink-0">
                     <div className="flex items-center gap-3">
-                        <div className="flex size-9 items-center justify-center rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                        <div className="bg-blue-500/10 text-blue-400 p-2 rounded-lg">
                             <Hammer size={18} />
                         </div>
                         <div>
-                            <h3 className="text-[13px] font-semibold text-zinc-100 tracking-wide">CAM Operations Studio</h3>
-                            <p className="text-[10px] text-[#A6A6A6]">Formulate and sequence toolpath presets for target controller units.</p>
+                            <h3 className="text-sm font-semibold text-zinc-100 tracking-wide font-sans">CAM Studio</h3>
+                            <p className="text-xs text-zinc-500 font-sans tracking-wide">Configure toolpaths, select tooling, and compile G-code</p>
                         </div>
                     </div>
-                    <button 
-                        onClick={onClose} 
-                        className="rounded-lg p-1.5 text-zinc-500 hover:bg-[#3C3C3C] hover:text-zinc-200 transition-all focus:outline-none"
-                    >
-                        <X size={15} />
-                    </button>
+                    <div className="flex items-center gap-3">
+                        <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[10px] font-medium font-sans border-zinc-800 bg-zinc-900 text-zinc-300`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${isValid ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                            <span className="uppercase">{isValid ? 'Ready to Compile' : 'Validation Error'}</span>
+                        </div>
+                        <button onClick={onClose} className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition-colors">
+                            <X size={16} />
+                        </button>
+                    </div>
                 </div>
 
-                {/* Main Split-Pane Workspace */}
+                {/* Stepper Dot Navigation with Animated Paths */}
+                <div className="flex items-center justify-center gap-2 border-b border-zinc-800/80 bg-zinc-950 px-6 py-4 shrink-0 overflow-x-auto">
+                    {STEPS.map((step, idx) => {
+                        const isCompleted = currentStepIdx > idx;
+                        const isActive = currentStepIdx === idx;
+                        const isNextConnected = idx < STEPS.length - 1;
+                        const isPathActive = currentStepIdx > idx;
+
+                        return (
+                            <div key={step.key} className="flex items-center">
+                                {/* Dot & Label Button */}
+                                <button
+                                    onClick={() => setCurrentStep(step.key)}
+                                    className="flex items-center gap-2.5 focus:outline-none group"
+                                >
+                                    <div className={`flex size-6 items-center justify-center rounded-full border text-[11px] font-bold transition-all duration-300 ${
+                                        isActive 
+                                            ? 'border-blue-500 bg-blue-500 text-white shadow-sm shadow-blue-500/20 scale-105' 
+                                            : isCompleted 
+                                                ? 'border-blue-500 bg-blue-500/10 text-blue-400'
+                                                : 'border-zinc-800 bg-zinc-900 text-zinc-500 group-hover:border-zinc-700 group-hover:text-zinc-300'
+                                    }`}>
+                                        {isCompleted ? <Check size={12} strokeWidth={3} /> : step.num}
+                                    </div>
+                                    <span className={`text-xs font-medium tracking-wide transition-colors duration-300 ${
+                                        isActive 
+                                            ? 'text-blue-400 font-semibold' 
+                                            : isCompleted 
+                                                ? 'text-zinc-300' 
+                                                : 'text-zinc-500 group-hover:text-zinc-300'
+                                    }`}>
+                                        {step.label}
+                                    </span>
+                                </button>
+
+                                {/* Animated path connector */}
+                                {isNextConnected && (
+                                    <div className="w-12 h-[2px] bg-zinc-800 mx-3 rounded-full overflow-hidden relative">
+                                        <div 
+                                            className={`absolute left-0 top-0 h-full bg-blue-500 transition-all duration-700 ease-in-out ${
+                                                isPathActive ? 'w-full' : 'w-0'
+                                            }`} 
+                                        />
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+
+                {/* Main Layout */}
                 <div className="flex flex-1 overflow-hidden">
-                    
-                    {/* Left Pane: Config Tabs & Forms */}
-                    <div className="flex-1 flex flex-col min-w-0 bg-[#252526]">
-                        
-                        {/* Tab wizard timeline */}
-                        <div className="flex items-center gap-6 border-b border-[#3C3C3C] bg-[#252526] px-8 py-3 shrink-0">
-                            <button
-                                onClick={() => setCurrentStep('machine')}
-                                className={`flex items-center gap-2 transition-all duration-150 ${
-                                    currentStep === 'machine' ? 'text-blue-400 font-semibold' : 'text-zinc-500 hover:text-zinc-300'
-                                }`}
-                            >
-                                <div className={`flex size-5 items-center justify-center rounded-full text-[9px] font-bold border transition-all duration-200 ${
-                                    currentStep === 'machine' 
-                                        ? 'bg-blue-500/10 border-[#007ACC] text-blue-400 shadow-[0_0_8px_rgba(0,122,204,0.2)]' 
-                                        : 'bg-[#1E1E1E] border-[#3C3C3C] text-zinc-500'
-                                }`}>
-                                    1
-                                </div>
-                                <span className="text-[11px] font-medium tracking-wide">Machine Configuration</span>
-                            </button>
 
-                            <div className="w-8 h-[1px] bg-[#3C3C3C]" />
+                    {/* Left: Form Area */}
+                    <div className="flex-1 flex flex-col overflow-hidden">
 
-                            <button
-                                onClick={() => setCurrentStep('tools')}
-                                className={`flex items-center gap-2 transition-all duration-150 ${
-                                    currentStep === 'tools' ? 'text-blue-400 font-semibold' : 'text-zinc-500 hover:text-zinc-300'
-                                }`}
-                            >
-                                <div className={`flex size-5 items-center justify-center rounded-full text-[9px] font-bold border transition-all duration-200 ${
-                                    currentStep === 'tools' 
-                                        ? 'bg-blue-500/10 border-[#007ACC] text-blue-400 shadow-[0_0_8px_rgba(0,122,204,0.2)]' 
-                                        : 'bg-[#1E1E1E] border-[#3C3C3C] text-zinc-500'
-                                }`}>
-                                    2
-                                </div>
-                                <span className="text-[11px] font-medium tracking-wide">Tool Library ({tools.length})</span>
-                            </button>
+                        {/* Validation Error Banner */}
+                        {validationError && (
+                            <div className="shrink-0 flex items-center gap-3 border-b border-red-500/20 bg-red-500/5 px-6 py-3 text-xs text-red-400 font-sans">
+                                <AlertCircle size={14} className="shrink-0" />
+                                <span>{validationError}</span>
+                            </div>
+                        )}
 
-                            <div className="w-8 h-[1px] bg-[#3C3C3C]" />
-
-                            <button
-                                onClick={() => setCurrentStep('operations')}
-                                className={`flex items-center gap-2 transition-all duration-150 ${
-                                    currentStep === 'operations' ? 'text-blue-400 font-semibold' : 'text-zinc-500 hover:text-zinc-300'
-                                }`}
-                            >
-                                <div className={`flex size-5 items-center justify-center rounded-full text-[9px] font-bold border transition-all duration-200 ${
-                                    currentStep === 'operations' 
-                                        ? 'bg-blue-500/10 border-[#007ACC] text-blue-400 shadow-[0_0_8px_rgba(0,122,204,0.2)]' 
-                                        : 'bg-[#1E1E1E] border-[#3C3C3C] text-zinc-500'
-                                }`}>
-                                    3
-                                </div>
-                                <span className="text-[11px] font-medium tracking-wide">Operations Pipeline ({operations.length})</span>
-                            </button>
-                        </div>
-
-                        {/* Configuration Form Body */}
-                        <div className="flex-1 overflow-y-auto p-6 bg-[#1E1E1E]">
-                            
-                            {validationError && (
-                                <div className="mb-4 flex items-center gap-3 rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3 text-xs text-red-200 animate-in fade-in duration-200">
-                                    <AlertCircle size={14} className="text-red-400 shrink-0" />
-                                    <span className="font-semibold">{validationError}</span>
-                                </div>
-                            )}
+                        <div className="flex-1 overflow-y-auto p-6 bg-zinc-950/20">
 
                             {/* STEP 1: Machine Setup */}
                             {currentStep === 'machine' && (
-                                <div className="max-w-3xl mx-auto py-2 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-200">
-                                    
+                                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-200">
+
                                     <div className="space-y-3">
-                                        <label className="text-[10px] font-bold text-zinc-400 tracking-wider uppercase">Select CNC Controller Dialect</label>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        <div className="flex items-center gap-2 border-b border-zinc-800 pb-2">
+                                            <Cpu size={14} className="text-blue-400" />
+                                            <span className="text-xs font-semibold text-zinc-300 tracking-wide uppercase font-sans">Controller Dialect</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                                             {CONTROLLER_DIALECTS.map((dial) => {
                                                 const isSel = controller === dial.id;
                                                 return (
                                                     <button
                                                         key={dial.id}
                                                         onClick={() => setController(dial.id)}
-                                                        className={`flex items-start gap-3 p-4 rounded-lg border text-left transition-all duration-200 ${
-                                                            isSel 
-                                                                ? 'border-[#007ACC]/50 bg-[#007ACC]/5 ring-1 ring-[#007ACC]/20' 
-                                                                : 'border-[#3C3C3C] bg-[#252526]/50 hover:border-zinc-700 hover:bg-[#252526]'
+                                                        className={`flex items-start gap-3 p-4 rounded-xl border text-left transition-all ${
+                                                            isSel
+                                                                ? 'border-blue-500 bg-blue-500/5 shadow-sm'
+                                                                : 'border-zinc-800 bg-zinc-900/20 hover:border-zinc-700 hover:bg-zinc-900/40'
                                                         }`}
                                                     >
-                                                        <div className={`flex size-5 shrink-0 items-center justify-center rounded-full border transition-all mt-0.5 ${
-                                                            isSel ? 'border-[#007ACC] bg-[#007ACC] text-white' : 'border-zinc-700 bg-zinc-950 text-transparent'
-                                                        }`}>
-                                                            <Check size={11} strokeWidth={3} />
+                                                        <div className={`w-4 h-4 shrink-0 rounded-full border mt-0.5 flex items-center justify-center transition-colors ${isSel ? 'border-blue-500 bg-blue-500 text-white' : 'border-zinc-700'}`}>
+                                                            {isSel && <Check size={10} strokeWidth={3} />}
                                                         </div>
-                                                        <div className="min-w-0">
-                                                            <div className="flex items-center gap-1.5">
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="flex items-center justify-between gap-1">
                                                                 <span className={`text-xs font-semibold ${isSel ? 'text-blue-400' : 'text-zinc-200'}`}>{dial.name}</span>
-                                                                <span className="text-[8px] font-mono bg-[#1E1E1E] border border-[#3C3C3C] text-zinc-500 px-1 rounded">{dial.ext}</span>
+                                                                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${isSel ? 'border-blue-500/30 text-blue-400 bg-blue-500/5' : 'border-zinc-800 text-zinc-500 bg-zinc-900'}`}>{dial.ext.replace('.','')}</span>
                                                             </div>
-                                                            <p className="text-[9.5px] text-[#A6A6A6] mt-1 leading-normal">{dial.desc}</p>
+                                                            <p className="text-[11px] text-zinc-500 mt-1.5 leading-normal">{dial.desc}</p>
                                                         </div>
                                                     </button>
                                                 );
@@ -547,205 +580,408 @@ export default function CamConfigModal({
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                                        <div className="flex flex-col gap-2 p-5 rounded-lg border border-[#3C3C3C] bg-[#252526]/30">
-                                            <div className="flex items-center justify-between">
-                                                <label className="text-[10px] font-bold text-zinc-400 tracking-wider uppercase">Safe Clearance Z</label>
-                                                <span className="text-xs font-bold text-blue-400 font-mono">{safeZ.toFixed(1)} mm</span>
-                                            </div>
-                                            <input 
-                                                type="range"
-                                                min="1.0"
-                                                max="15.0"
-                                                step="0.5"
-                                                value={safeZ}
-                                                onChange={(e) => setSafeZ(parseFloat(e.target.value) || 5.0)}
-                                                className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-[#007ACC] my-2"
-                                            />
-                                            <p className="text-[9.5px] text-[#A6A6A6] leading-normal">Safety height in millimeters above the stock top surface for rapid linear G0 travel relocations.</p>
+                                    <div className="border border-zinc-800/80 bg-zinc-900/30 rounded-xl p-5 space-y-5">
+                                        <div className="flex items-center gap-2 border-b border-zinc-800 pb-2.5">
+                                            <Settings size={14} className="text-zinc-400" />
+                                            <span className="text-xs font-semibold text-zinc-300 tracking-wide uppercase font-sans">Environment Variables</span>
                                         </div>
-
-                                        <div className="flex items-center justify-between p-5 rounded-lg border border-[#3C3C3C] bg-[#252526]/30">
-                                            <div className="flex flex-col gap-1 pr-4">
-                                                <div className="flex items-center gap-2">
-                                                    <Zap size={14} className="text-blue-400" />
-                                                    <span className="text-[10px] font-bold text-zinc-200 tracking-wider uppercase">Coolant Control (M08)</span>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                            <div className="space-y-2">
+                                                <div className="flex justify-between items-center text-xs">
+                                                    <div className="flex items-center gap-1.5 text-zinc-400">
+                                                        <label className="font-medium">Safe Clearance Z</label>
+                                                        <div className="group relative cursor-pointer text-zinc-500 hover:text-zinc-300">
+                                                            <HelpCircle size={13} />
+                                                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2.5 bg-zinc-950 border border-zinc-800 text-[11px] text-zinc-400 rounded-lg shadow-lg z-30 leading-normal">
+                                                                The height above the stock Z-zero at which the tool can retract and move rapidly between cuts safely.
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <span className="font-semibold text-blue-400 font-mono">{safeZ.toFixed(1)} mm</span>
                                                 </div>
-                                                <p className="text-[9.5px] text-[#A6A6A6] leading-normal">Injects flood coolant start M08 and stop M09 blocks around tooling changes.</p>
+                                                <div className="flex items-center gap-3 bg-zinc-950 border border-zinc-800 rounded-lg p-2.5">
+                                                    <input type="range" min="1.0" max="15.0" step="0.5" value={safeZ}
+                                                        onChange={(e) => setSafeZ(parseFloat(e.target.value) || 5.0)}
+                                                        className="flex-1 h-1 appearance-none bg-zinc-800 accent-blue-500 rounded-lg cursor-pointer" />
+                                                    <input type="number" min="1.0" max="15.0" step="0.5" value={safeZ}
+                                                        onChange={(e) => setSafeZ(Math.max(1, Math.min(15, parseFloat(e.target.value) || 5)))}
+                                                        className="w-12 bg-transparent text-right text-xs font-mono text-zinc-200 focus:outline-none" />
+                                                </div>
                                             </div>
-                                            <button
-                                                onClick={() => setCoolant(!coolant)}
-                                                className={`relative inline-flex h-5 w-10 shrink-0 items-center rounded-full transition-all duration-200 ${
-                                                    coolant ? 'bg-[#007ACC] shadow-[0_0_12px_rgba(0,122,204,0.25)]' : 'bg-[#3C3C3C]'
-                                                }`}
-                                            >
-                                                <span
-                                                    className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-all duration-200 ${
-                                                        coolant ? 'translate-x-5.5' : 'translate-x-1'
-                                                    }`}
-                                                />
+                                            <div className="space-y-2">
+                                                <div className="flex justify-between items-center text-xs">
+                                                    <div className="flex items-center gap-1.5 text-zinc-400">
+                                                        <label className="font-medium">Step Resolution</label>
+                                                        <div className="group relative cursor-pointer text-zinc-500 hover:text-zinc-300">
+                                                            <HelpCircle size={13} />
+                                                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2.5 bg-zinc-950 border border-zinc-800 text-[11px] text-zinc-400 rounded-lg shadow-lg z-30 leading-normal">
+                                                                Determines path resolution. Lower values produce a smoother surface finish but increase generation time.
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <span className="font-semibold text-blue-400 font-mono">{resolution.toFixed(2)} mm</span>
+                                                </div>
+                                                <div className="flex items-center gap-3 bg-zinc-950 border border-zinc-800 rounded-lg p-2.5">
+                                                    <input type="range" min="0.05" max="2.00" step="0.05" value={resolution}
+                                                        onChange={(e) => setResolution(parseFloat(e.target.value) || 0.5)}
+                                                        className="flex-1 h-1 appearance-none bg-zinc-800 accent-blue-500 rounded-lg cursor-pointer" />
+                                                    <input type="number" min="0.05" max="2.00" step="0.05" value={resolution}
+                                                        onChange={(e) => setResolution(Math.max(0.05, Math.min(2, parseFloat(e.target.value) || 0.5)))}
+                                                        className="w-12 bg-transparent text-right text-xs font-mono text-zinc-200 focus:outline-none" />
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center justify-between border-t border-zinc-800 pt-4">
+                                            <div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs font-semibold text-zinc-200 font-sans">Flood Coolant</span>
+                                                    <span className={`text-[10px] font-semibold font-mono px-1.5 py-0.5 rounded border ${coolant ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-400' : 'border-zinc-800 bg-zinc-900 text-zinc-500'}`}>
+                                                        {coolant ? 'M08 ON' : 'M09 OFF'}
+                                                    </span>
+                                                </div>
+                                                <p className="text-[11px] text-zinc-500 mt-1 font-sans">Inject flood coolant commands at tool changes</p>
+                                            </div>
+                                            <button onClick={() => setCoolant(!coolant)}
+                                                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-all duration-200 ${coolant ? 'bg-blue-600' : 'bg-zinc-800'}`}>
+                                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-all ${coolant ? 'translate-x-6' : 'translate-x-1'}`} />
                                             </button>
                                         </div>
-                                    </div>
-                                    
-                                    {/* Path interpolation resolution */}
-                                    <div className="p-5 rounded-lg border border-[#3C3C3C] bg-[#252526]/30">
-                                        <div className="flex items-center justify-between">
-                                            <label className="text-[10px] font-bold text-zinc-400 tracking-wider uppercase">Path Interpolation Resolution</label>
-                                            <span className="text-xs font-bold text-blue-400 font-mono">{resolution.toFixed(2)} mm</span>
-                                        </div>
-                                        <input 
-                                            type="range"
-                                            min="0.1"
-                                            max="2.0"
-                                            step="0.05"
-                                            value={resolution}
-                                            onChange={(e) => setResolution(parseFloat(e.target.value) || 0.5)}
-                                            className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-[#007ACC] my-2"
-                                        />
-                                        <p className="text-[9.5px] text-[#A6A6A6] leading-normal">Defines the maximum chordal deviation/step size used when interpolating curves into linear segments.</p>
                                     </div>
                                 </div>
                             )}
 
-                            {/* STEP 2: Tool Library */}
+                            {/* STEP 2: Stock Setup */}
+                            {currentStep === 'stock' && (
+                                <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                                    <div className="border border-zinc-800/80 bg-zinc-900/30 rounded-xl p-5 space-y-5">
+                                        <div className="flex items-center gap-2 border-b border-zinc-800 pb-2.5">
+                                            <Box size={14} className="text-zinc-400" />
+                                            <span className="text-xs font-semibold text-zinc-300 tracking-wide uppercase font-sans">Stock Envelope</span>
+                                        </div>
+
+                                        <div className="flex p-1 bg-zinc-950 border border-zinc-800 rounded-lg">
+                                            {(['block', 'cylinder'] as const).map(t => (
+                                                <button key={t} onClick={() => setStockType(t)}
+                                                    className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${
+                                                        stockType === t ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
+                                                    }`}>
+                                                    {t === 'block' ? 'Prismatic Block' : 'Cylindrical'}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        {stockType === 'block' ? (
+                                            <div className="grid grid-cols-3 gap-3">
+                                                {[
+                                                    { label: 'Length X', val: stockLengthX, set: setStockLengthX, tip: 'Prismatic width of raw workpiece along X axis' },
+                                                    { label: 'Width Y', val: stockWidthY, set: setStockWidthY, tip: 'Prismatic depth of raw workpiece along Y axis' },
+                                                    { label: 'Height Z', val: stockHeightZ, set: setStockHeightZ, tip: 'Thickness height of raw workpiece along Z axis' },
+                                                ].map(f => (
+                                                    <div key={f.label} className="space-y-1">
+                                                        <div className="flex items-center gap-1 text-[10px] font-medium text-zinc-400">
+                                                            <span>{f.label}</span>
+                                                            <div className="group relative cursor-pointer text-zinc-500 hover:text-zinc-300">
+                                                                <HelpCircle size={10} />
+                                                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-36 p-2 bg-zinc-950 border border-zinc-800 text-[10px] text-zinc-400 rounded-lg shadow-lg z-30 leading-normal">
+                                                                    {f.tip}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center border border-zinc-800 bg-zinc-950 rounded-lg px-2">
+                                                            <input type="number" placeholder="Auto"
+                                                                value={f.val || ''}
+                                                                onChange={(e) => f.set(parseFloat(e.target.value) || null)}
+                                                                className="flex-1 bg-transparent py-2 text-xs font-mono text-zinc-200 focus:outline-none w-0" />
+                                                            <span className="text-[10px] text-zinc-600 font-medium ml-1">mm</span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-3 gap-3">
+                                                {[
+                                                    { label: 'Outer Dia', val: stockOuterDiameter, set: setStockOuterDiameter, placeholder: 'Auto', tip: 'Total outer diameter of round/bar stock' },
+                                                    { label: 'Inner Dia', val: stockInnerDiameter, set: (v: any) => setStockInnerDiameter(v || 0), placeholder: '0', tip: 'Inner hollow diameter for tube stock' },
+                                                    { label: 'Length Z', val: stockLengthZ, set: setStockLengthZ, placeholder: 'Auto', tip: 'Workpiece cylinder length along longitudinal axis' },
+                                                ].map(f => (
+                                                    <div key={f.label} className="space-y-1">
+                                                        <div className="flex items-center gap-1 text-[10px] font-medium text-zinc-400">
+                                                            <span>{f.label}</span>
+                                                            <div className="group relative cursor-pointer text-zinc-500 hover:text-zinc-300">
+                                                                <HelpCircle size={10} />
+                                                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-36 p-2 bg-zinc-950 border border-zinc-800 text-[10px] text-zinc-400 rounded-lg shadow-lg z-30 leading-normal">
+                                                                    {f.tip}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center border border-zinc-800 bg-zinc-950 rounded-lg px-2">
+                                                            <input type="number" placeholder={f.placeholder}
+                                                                value={f.val || ''}
+                                                                onChange={(e) => f.set(parseFloat(e.target.value) || null)}
+                                                                className="flex-1 bg-transparent py-2 text-xs font-mono text-zinc-200 focus:outline-none w-0" />
+                                                            <span className="text-[10px] text-zinc-600 font-medium ml-1">mm</span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        <div className="flex items-start gap-2.5 bg-blue-500/5 border border-blue-500/10 rounded-lg p-3.5">
+                                            <Info size={14} className="text-blue-400 shrink-0 mt-0.5" />
+                                            <span className="text-[11px] text-zinc-400 font-sans leading-relaxed">Leave fields blank to auto-compute boundary dimensions directly from the CAD bounding box.</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Blueprint Preview with Elegant High-Contrast Labels */}
+                                    <div className="border border-zinc-800/80 bg-zinc-900/30 rounded-xl flex flex-col items-center justify-center gap-4 relative overflow-hidden p-6" style={{
+                                        backgroundImage: 'radial-gradient(#27272a 1px, transparent 1px)',
+                                        backgroundSize: '20px 20px',
+                                        backgroundAttachment: 'local'
+                                    }}>
+                                        <div className="absolute inset-0 bg-zinc-950/20" />
+                                        <div className="relative z-10 flex flex-col items-center gap-4 w-full">
+                                            {stockType === 'block' ? (
+                                                <div className="border border-zinc-800 rounded-2xl flex flex-col items-center justify-center bg-zinc-950 shadow-md p-6 w-full max-w-[290px]">
+                                                    <svg width="200" height="160" viewBox="0 0 120 100" fill="none" strokeWidth="1.5" className="overflow-visible">
+                                                        <defs>
+                                                            <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                                                                <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#3b82f6" />
+                                                            </marker>
+                                                        </defs>
+
+                                                        {/* Isometric Coordinate Axis Triad */}
+                                                        <g transform="translate(115, 10)">
+                                                            <line x1="0" y1="0" x2="12" y2="6" stroke="#ef4444" strokeWidth="0.75" />
+                                                            <line x1="0" y1="0" x2="-12" y2="6" stroke="#22c55e" strokeWidth="0.75" />
+                                                            <line x1="0" y1="0" x2="0" y2="-12" stroke="#3b82f6" strokeWidth="0.75" />
+                                                            <text x="14" y="9" fill="#ef4444" fontSize="6" fontFamily="sans-serif">X</text>
+                                                            <text x="-17" y="9" fill="#22c55e" fontSize="6" fontFamily="sans-serif">Y</text>
+                                                            <text x="-2" y="-14" fill="#3b82f6" fontSize="6" fontFamily="sans-serif">Z</text>
+                                                        </g>
+
+                                                        {/* 3D Box projections */}
+                                                        <path d="M 25 70 L 25 35 L 60 20 L 95 35 L 95 70 L 60 85 Z" stroke='#3b82f6' />
+                                                        <path d="M 25 35 L 60 50 L 95 35" stroke='#3b82f6' />
+                                                        <path d="M 60 50 L 60 85" stroke='#3b82f6' />
+                                                        <path d="M 25 70 L 60 85 L 95 70" strokeDasharray="2,2" stroke='#3b82f6' />
+                                                        
+                                                        {/* X Dimension extension lines */}
+                                                        <line x1="25" y1="71" x2="20" y2="79" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
+                                                        <line x1="60" y1="86" x2="55" y2="94" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
+                                                        {/* X Dimension Line (Bottom Left Edge) with arrows */}
+                                                        <path d="M 22 76 L 53 89" stroke="#ffffff" strokeWidth="0.75" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+
+                                                        {/* Y Dimension extension lines */}
+                                                        <line x1="95" y1="71" x2="100" y2="79" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
+                                                        <line x1="60" y1="86" x2="65" y2="94" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
+                                                        {/* Y Dimension Line (Bottom Right Edge) with arrows */}
+                                                        <path d="M 67 89 L 98 76" stroke="#ffffff" strokeWidth="0.75" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+
+                                                        {/* Z Dimension extension lines */}
+                                                        <line x1="24" y1="35" x2="10" y2="35" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
+                                                        <line x1="24" y1="70" x2="10" y2="70" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
+                                                        {/* Z Dimension Line (Left Side) with arrows */}
+                                                        <path d="M 12 37 L 12 68" stroke="#ffffff" strokeWidth="0.75" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+
+                                                        {/* Thin Clean White Labels with custom letter spacing */}
+                                                        <text x="32" y="96" fill="#ffffff" fontSize="9" fontFamily="sans-serif" style={{ fontWeight: 300, letterSpacing: '0.06em' }} textAnchor="middle">
+                                                            X: {stockLengthX ? `${stockLengthX}mm` : 'Auto'}
+                                                        </text>
+                                                        <text x="88" y="96" fill="#ffffff" fontSize="9" fontFamily="sans-serif" style={{ fontWeight: 300, letterSpacing: '0.06em' }} textAnchor="middle">
+                                                            Y: {stockWidthY ? `${stockWidthY}mm` : 'Auto'}
+                                                        </text>
+                                                        <text x="2" y="53" fill="#ffffff" fontSize="9" fontFamily="sans-serif" style={{ fontWeight: 300, letterSpacing: '0.06em' }} textAnchor="end">
+                                                            Z: {stockHeightZ ? `${stockHeightZ}mm` : 'Auto'}
+                                                        </text>
+                                                    </svg>
+                                                    
+                                                    <div className="w-full flex items-center justify-between border-t border-zinc-850 pt-3 mt-1.5 text-[9px] text-zinc-500 font-mono tracking-wider">
+                                                        <span>SCALE: 1:1</span>
+                                                        <span>UNITS: MM</span>
+                                                        <span>BLOCK STOCK</span>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="border border-zinc-800 rounded-2xl flex flex-col items-center justify-center bg-zinc-950 shadow-md p-6 w-full max-w-[290px]">
+                                                    <svg width="200" height="160" viewBox="0 0 120 100" fill="none" strokeWidth="1.5" className="overflow-visible">
+                                                        <defs>
+                                                            <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                                                                <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#3b82f6" />
+                                                            </marker>
+                                                            <marker id="arrow-amber" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                                                                <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#f59e0b" />
+                                                            </marker>
+                                                        </defs>
+
+                                                        {/* Isometric Coordinate Axis Triad */}
+                                                        <g transform="translate(115, 10)">
+                                                            <line x1="0" y1="0" x2="12" y2="6" stroke="#ef4444" strokeWidth="0.75" />
+                                                            <line x1="0" y1="0" x2="-12" y2="6" stroke="#22c55e" strokeWidth="0.75" />
+                                                            <line x1="0" y1="0" x2="0" y2="-12" stroke="#3b82f6" strokeWidth="0.75" />
+                                                            <text x="14" y="9" fill="#ef4444" fontSize="6" fontFamily="sans-serif">X</text>
+                                                            <text x="-17" y="9" fill="#22c55e" fontSize="6" fontFamily="sans-serif">Y</text>
+                                                            <text x="-2" y="-14" fill="#3b82f6" fontSize="6" fontFamily="sans-serif">Z</text>
+                                                        </g>
+
+                                                        {/* Top Ellipse */}
+                                                        <ellipse cx="60" cy="25" rx="30" ry="10" stroke='#3b82f6'/>
+                                                        {/* Cylindrical Sides */}
+                                                        <path d="M 30 25 L 30 75 A 30 10 0 0 0 90 75 L 90 25" stroke='#3b82f6' />
+                                                        
+                                                        {/* Inner hollow cylinder ellipse if ID > 0 */}
+                                                        {stockInnerDiameter !== null && stockInnerDiameter > 0 && (
+                                                            <ellipse cx="60" cy="25" rx="12" ry="4" strokeDasharray="2,2" stroke="#64748b" />
+                                                        )}
+
+                                                        {/* OD Extension lines */}
+                                                        <line x1="30" y1="24" x2="30" y2="10" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
+                                                        <line x1="90" y1="24" x2="90" y2="10" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
+                                                        {/* OD Dimension line with arrows */}
+                                                        <path d="M 32 12 L 88 12" stroke="#ffffff" strokeWidth="0.75" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+
+                                                        {/* ID Dimension line if ID > 0 with arrows */}
+                                                        {stockInnerDiameter !== null && stockInnerDiameter > 0 && (
+                                                            <>
+                                                                <line x1="48" y1="25" x2="48" y2="38" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
+                                                                <line x1="72" y1="25" x2="72" y2="38" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
+                                                                <path d="M 50 35 L 70 35" stroke="#f59e0b" strokeWidth="0.75" marker-start="url(#arrow-amber)" marker-end="url(#arrow-amber)" />
+                                                            </>
+                                                        )}
+
+                                                        {/* Height/Length extension lines */}
+                                                        <line x1="28" y1="25" x2="14" y2="25" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
+                                                        <line x1="28" y1="75" x2="14" y2="75" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
+                                                        {/* Height/Length Dimension line with arrows */}
+                                                        <path d="M 16 27 L 16 73" stroke="#ffffff" strokeWidth="0.75" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+
+                                                        {/* Thin Clean White Labels with custom letter spacing */}
+                                                        <text x="60" y="6" fill="#ffffff" fontSize="9" fontFamily="sans-serif" style={{ fontWeight: 300, letterSpacing: '0.06em' }} textAnchor="middle">
+                                                            OD: {stockOuterDiameter ? `${stockOuterDiameter}mm` : 'Auto'}
+                                                        </text>
+                                                        {stockInnerDiameter !== null && stockInnerDiameter > 0 && (
+                                                            <text x="60" y="44" fill="#f59e0b" fontSize="8" fontFamily="sans-serif" style={{ fontWeight: 300, letterSpacing: '0.06em' }} textAnchor="middle">
+                                                                ID: {stockInnerDiameter}mm
+                                                            </text>
+                                                        )}
+                                                        <text x="6" y="53" fill="#ffffff" fontSize="9" fontFamily="sans-serif" style={{ fontWeight: 300, letterSpacing: '0.06em' }} textAnchor="end">
+                                                            L: {stockLengthZ ? `${stockLengthZ}mm` : 'Auto'}
+                                                        </text>
+                                                    </svg>
+                                                    
+                                                    <div className="w-full flex items-center justify-between border-t border-zinc-850 pt-3 mt-1.5 text-[9px] text-zinc-500 font-mono tracking-wider">
+                                                        <span>SCALE: 1:1</span>
+                                                        <span>UNITS: MM</span>
+                                                        <span>CYLINDER STOCK</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                            <div className="text-center">
+                                                <p className="text-xs font-semibold text-zinc-300 uppercase tracking-wide font-sans">{stockType === 'block' ? 'Prismatic Envelope' : 'Axisymmetric Cylinder'}</p>
+                                                <p className="text-[11px] text-zinc-500 font-sans mt-1">{stockType === 'block' ? '3/5-Axis Milling · Layer-by-layer Z descent' : 'Lathe / Turning · Diametral programming'}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* STEP 3: Tool Library */}
                             {currentStep === 'tools' && (
                                 <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
-                                    <div className="flex justify-between items-center bg-[#252526]/40 p-3.5 rounded-lg border border-[#3C3C3C]">
+                                    <div className="flex justify-between items-center border border-zinc-800/80 bg-zinc-900/30 rounded-xl px-4 py-3">
                                         <div className="flex items-center gap-2">
                                             <Gauge size={14} className="text-blue-400" />
-                                            <span className="text-[10px] font-bold text-zinc-300 tracking-wider uppercase">Configured Tools ({tools.length})</span>
+                                            <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wide font-sans">Tool Library</span>
+                                            <span className="bg-zinc-800 border border-zinc-700/60 text-zinc-300 text-[10px] font-mono px-2 py-0.5 rounded-full">{tools.length}</span>
                                         </div>
-                                        <button
-                                            onClick={handleAddTool}
-                                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#007ACC] hover:bg-[#007ACC]/90 text-[10.5px] font-semibold text-white shadow-lg transition-all duration-150 active:scale-97"
-                                        >
-                                            <Plus size={12} />
-                                            Add Tool
+                                        <button onClick={handleAddTool}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors">
+                                            <Plus size={14} /> Add Tool
                                         </button>
                                     </div>
 
-                                    <div className="grid grid-cols-1 gap-4">
+                                    <div className="space-y-4">
                                         {tools.map((tool, idx) => (
-                                            <div 
-                                                key={idx} 
-                                                className="flex flex-col gap-4 rounded-lg border border-[#3C3C3C] bg-[#252526]/20 p-4 hover:border-zinc-700 transition-all duration-250"
-                                            >
-                                                {/* Header */}
-                                                <div className="flex items-center justify-between border-b border-[#3C3C3C]/60 pb-2">
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="flex h-5 px-2 items-center justify-center rounded bg-blue-500/10 text-blue-400 border border-blue-500/10 text-[9px] font-bold font-mono">
-                                                            T{tool.number} ({tool.type.toUpperCase()})
-                                                        </span>
-                                                        <span className="text-xs font-bold text-zinc-300">{tool.description || `Tool T${tool.number}`}</span>
+                                            <div key={idx} className="border border-zinc-800/80 bg-zinc-900/20 rounded-xl p-5">
+                                                <div className="flex items-center justify-between border-b border-zinc-800/80 pb-3 mb-4">
+                                                    <div className="flex items-center gap-2.5">
+                                                        <span className="bg-blue-500/15 text-blue-400 border border-blue-500/20 text-xs font-semibold px-2 py-0.5 rounded-md font-mono">T{tool.number}</span>
+                                                        <span className="text-[10px] font-semibold text-zinc-400 bg-zinc-800 border border-zinc-700/60 rounded px-2 py-0.5 uppercase tracking-wider">{tool.type.replace('_',' ')}</span>
+                                                        <span className="text-xs font-semibold text-zinc-200">{tool.description || `Tool T${tool.number}`}</span>
                                                     </div>
-                                                    <button
-                                                        onClick={() => handleRemoveTool(idx)}
-                                                        className="p-1 rounded text-zinc-500 hover:bg-red-500/5 hover:text-red-400 border border-transparent hover:border-red-950/20 transition-all shrink-0"
-                                                        title="Delete tool"
-                                                    >
-                                                        <Trash2 size={13} />
+                                                    <button onClick={() => handleRemoveTool(idx)}
+                                                        className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 border border-zinc-800 hover:border-red-500/20 rounded-lg transition-all">
+                                                        <Trash2 size={14} />
                                                     </button>
                                                 </div>
-
-                                                <div className="flex flex-col md:flex-row gap-4 items-stretch">
-                                                    {/* Left: 2D Visualizer */}
+                                                <div className="flex flex-col md:flex-row gap-5">
                                                     {renderToolSvg(tool.diameter)}
-
-                                                    {/* Center: Specs Grid */}
-                                                    <div className="flex-1 grid grid-cols-2 sm:grid-cols-6 gap-3">
-                                                        <div className="flex flex-col gap-1">
-                                                            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Slot ID</label>
-                                                            <input
-                                                                type="number"
-                                                                min="1"
-                                                                value={tool.number}
+                                                    <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-4">
+                                                        <div className="space-y-1">
+                                                            <label className="text-[10px] font-medium text-zinc-400">Slot #</label>
+                                                            <input type="number" min="1" value={tool.number}
                                                                 onChange={(e) => handleToolChange(idx, 'number', e.target.value)}
-                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
-                                                            />
+                                                                className="w-full h-9 border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs font-mono text-zinc-200 rounded-lg focus:border-blue-500 focus:outline-none transition-colors" />
                                                         </div>
-
-                                                        <div className="flex flex-col gap-1">
-                                                            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Type</label>
-                                                            <select
-                                                                value={tool.type}
-                                                                onChange={(e) => handleToolChange(idx, 'type', e.target.value)}
-                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
-                                                            >
-                                                                <option value="endmill">Endmill</option>
-                                                                <option value="ballnose">Ballnose</option>
-                                                                <option value="drill">Drill</option>
-                                                                <option value="face">Face Mill</option>
-                                                            </select>
+                                                        <div className="space-y-1">
+                                                            <label className="text-[10px] font-medium text-zinc-400">Type</label>
+                                                            <div className="relative">
+                                                                <select value={tool.type} onChange={(e) => handleToolChange(idx, 'type', e.target.value)}
+                                                                    className="w-full h-9 border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 rounded-lg focus:border-blue-500 focus:outline-none appearance-none cursor-pointer">
+                                                                    {['endmill','ballnose','drill','face','turning_rough','turning_finish'].map(t => (
+                                                                        <option key={t} value={t} className="bg-zinc-950">{t.replace('_',' ')}</option>
+                                                                    ))}
+                                                                </select>
+                                                                <ChevronDown size={14} className="absolute right-2.5 top-2.5 text-zinc-500 pointer-events-none" />
+                                                            </div>
                                                         </div>
-
-                                                        <div className="flex flex-col gap-1">
-                                                            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Dia (mm)</label>
-                                                            <input
-                                                                type="number"
-                                                                step="0.001"
-                                                                value={tool.diameter}
+                                                        <div className="space-y-1">
+                                                            <label className="text-[10px] font-medium text-zinc-400">Dia (mm)</label>
+                                                            <input type="number" step="0.001" value={tool.diameter}
                                                                 onChange={(e) => handleToolChange(idx, 'diameter', e.target.value)}
-                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
-                                                            />
+                                                                className="w-full h-9 border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs font-mono text-zinc-200 rounded-lg focus:border-blue-500 focus:outline-none transition-colors" />
                                                         </div>
-
-                                                        <div className="flex flex-col gap-1">
-                                                            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Spindle (RPM)</label>
-                                                            <input
-                                                                type="number"
-                                                                value={tool.spindle_speed}
+                                                        <div className="space-y-1">
+                                                            <label className="text-[10px] font-medium text-zinc-400">Flute L (mm)</label>
+                                                            <input type="number" step="1" value={tool.flute_length ?? 25}
+                                                                onChange={(e) => handleToolChange(idx, 'flute_length', e.target.value)}
+                                                                className="w-full h-9 border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs font-mono text-zinc-200 rounded-lg focus:border-blue-500 focus:outline-none transition-colors" />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <label className="text-[10px] font-medium text-zinc-400">Spindle (RPM)</label>
+                                                            <input type="number" value={tool.spindle_speed}
                                                                 onChange={(e) => handleToolChange(idx, 'spindle_speed', e.target.value)}
-                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
-                                                            />
+                                                                className="w-full h-9 border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs font-mono text-zinc-200 rounded-lg focus:border-blue-500 focus:outline-none transition-colors" />
                                                         </div>
-
-                                                        <div className="flex flex-col gap-1">
-                                                            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Feed (mm/m)</label>
-                                                            <input
-                                                                type="number"
-                                                                value={tool.feed_rate}
+                                                        <div className="space-y-1">
+                                                            <label className="text-[10px] font-medium text-zinc-400">Feed (mm/m)</label>
+                                                            <input type="number" value={tool.feed_rate}
                                                                 onChange={(e) => handleToolChange(idx, 'feed_rate', e.target.value)}
-                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
-                                                            />
+                                                                className="w-full h-9 border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs font-mono text-zinc-200 rounded-lg focus:border-blue-500 focus:outline-none transition-colors" />
                                                         </div>
-
-                                                        <div className="flex flex-col gap-1">
-                                                            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Plunge (mm/m)</label>
-                                                            <input
-                                                                type="number"
-                                                                value={tool.plunge_rate}
+                                                        <div className="space-y-1">
+                                                            <label className="text-[10px] font-medium text-zinc-400">Plunge (mm/m)</label>
+                                                            <input type="number" value={tool.plunge_rate}
                                                                 onChange={(e) => handleToolChange(idx, 'plunge_rate', e.target.value)}
-                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
-                                                            />
+                                                                className="w-full h-9 border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs font-mono text-zinc-200 rounded-lg focus:border-blue-500 focus:outline-none transition-colors" />
                                                         </div>
-
-                                                        <div className="col-span-2 sm:col-span-6 flex flex-col gap-1">
-                                                            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Description</label>
-                                                            <input
-                                                                type="text"
-                                                                value={tool.description}
+                                                        <div className="space-y-1 col-span-2 sm:col-span-1">
+                                                            <label className="text-[10px] font-medium text-zinc-400">Description</label>
+                                                            <input type="text" value={tool.description}
                                                                 onChange={(e) => handleToolChange(idx, 'description', e.target.value)}
-                                                                className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2.5 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
-                                                            />
+                                                                className="w-full h-9 border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 rounded-lg focus:border-blue-500 focus:outline-none transition-colors" />
                                                         </div>
                                                     </div>
-
-                                                    {/* Right: Presets */}
-                                                    <div className="w-full md:w-44 shrink-0 flex flex-col gap-1.5 md:border-l md:border-[#3C3C3C]/60 md:pl-4">
-                                                        <div className="flex items-center gap-1">
-                                                            <Sparkles size={11} className="text-blue-400" />
-                                                            <label className="text-[9px] uppercase font-bold text-zinc-400">Material Speeds</label>
+                                                    <div className="w-full md:w-40 shrink-0 space-y-2 border-t md:border-t-0 md:border-l border-zinc-800/80 pt-3 md:pt-0 md:pl-4">
+                                                        <div className="flex items-center gap-1.5 pb-1.5 border-b border-zinc-800/80">
+                                                            <Sparkles size={12} className="text-amber-500" />
+                                                            <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Presets</span>
                                                         </div>
-                                                        <div className="grid grid-cols-2 md:grid-cols-1 gap-1.5 pt-0.5">
+                                                        <div className="space-y-1">
                                                             {MATERIAL_CHIPS.map((mat) => (
-                                                                <button
-                                                                    key={mat.name}
-                                                                    onClick={() => handleApplyMaterialPreset(idx, mat.name)}
-                                                                    className={`flex items-center justify-between px-2.5 py-1 rounded-lg border text-left transition-all duration-150 active:scale-97 ${mat.style}`}
-                                                                >
-                                                                    <span className="text-[10px] font-semibold">{mat.label}</span>
-                                                                    <span className="text-[7.5px] text-zinc-500 opacity-80">{mat.type}</span>
+                                                                <button key={mat.name} onClick={() => handleApplyMaterialPreset(idx, mat.name)}
+                                                                    className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900/30 hover:border-blue-500/50 hover:bg-blue-500/5 text-left transition-all">
+                                                                    <span className="text-xs font-medium text-zinc-300">{mat.label}</span>
+                                                                    <span className="text-[9px] font-sans text-zinc-500">{mat.type}</span>
                                                                 </button>
                                                             ))}
                                                         </div>
@@ -757,197 +993,163 @@ export default function CamConfigModal({
                                 </div>
                             )}
 
-                            {/* STEP 3: Operations Setup */}
+                            {/* STEP 4: Operations */}
                             {currentStep === 'operations' && (
                                 <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
-                                    <div className="flex justify-between items-center bg-[#252526]/40 p-3.5 rounded-lg border border-[#3C3C3C]">
+                                    <div className="flex justify-between items-center border border-zinc-800/80 bg-zinc-900/30 rounded-xl px-4 py-3">
                                         <div className="flex items-center gap-2">
                                             <Layers size={14} className="text-blue-400" />
-                                            <span className="text-[10px] font-bold text-zinc-300 tracking-wider uppercase">Pipeline Sequence ({operations.length})</span>
+                                            <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wide font-sans">Pipeline Sequence</span>
+                                            <span className="bg-zinc-800 border border-zinc-700/60 text-zinc-300 text-[10px] font-mono px-2 py-0.5 rounded-full">{operations.length}</span>
                                         </div>
-                                        <button
-                                            onClick={handleAddOperation}
-                                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#007ACC] hover:bg-[#007ACC]/90 text-[10.5px] font-semibold text-white shadow-lg transition-all duration-150 active:scale-97"
-                                        >
-                                            <Plus size={12} />
-                                            Add Op
+                                        <button onClick={handleAddOperation}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors">
+                                            <Plus size={14} /> Add Op
                                         </button>
                                     </div>
 
-                                    <div className="space-y-3.5">
+                                    <div className="space-y-4">
                                         {operations.map((op, idx) => {
                                             const passes = getPassCount(op.cutting_depth, op.stepdown);
-                                            const isDepthWarning = op.cutting_depth < op.stepdown;
+                                            const isWarn = op.cutting_depth < op.stepdown;
                                             return (
-                                                <div 
-                                                    key={idx} 
-                                                    className={`flex flex-col gap-4 rounded-lg border p-4 transition-all duration-200 ${
-                                                        isDepthWarning 
-                                                            ? 'border-red-500/25 bg-red-950/5 shadow-[0_0_15px_rgba(239,68,68,0.03)]' 
-                                                            : 'border-[#3C3C3C] bg-[#252526]/10 hover:border-zinc-700'
-                                                    }`}
-                                                >
-                                                    {/* Header */}
-                                                    <div className="flex items-center justify-between border-b border-[#3C3C3C]/60 pb-2">
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#1E1E1E] border border-[#3C3C3C] text-[9px] font-bold text-zinc-400">
-                                                                {idx + 1}
-                                                            </span>
-                                                            <input
-                                                                type="text"
-                                                                value={op.name}
+                                                <div key={idx} className={`border rounded-xl bg-zinc-900/20 p-5 ${isWarn ? 'border-red-500/30 bg-red-500/5' : 'border-zinc-800/80'}`}>
+                                                    <div className="flex items-center justify-between border-b border-zinc-800/80 pb-3 mb-4">
+                                                        <div className="flex items-center gap-2.5">
+                                                            <span className="bg-zinc-800 border border-zinc-700 text-zinc-400 text-[10px] font-bold font-mono px-2 py-0.5 rounded">{String(idx+1).padStart(2,'0')}</span>
+                                                            <input type="text" value={op.name}
                                                                 onChange={(e) => handleOperationChange(idx, 'name', e.target.value)}
-                                                                className="h-7 w-44 bg-transparent border-b border-transparent hover:border-zinc-700 focus:border-[#007ACC] focus:outline-none text-xs font-bold text-zinc-300 transition-all px-1"
-                                                            />
+                                                                className="bg-transparent border-b border-transparent hover:border-zinc-800 focus:border-blue-500 focus:outline-none text-xs font-semibold text-zinc-200 w-44 px-1 py-0.5 rounded" />
                                                         </div>
                                                         <div className="flex items-center gap-1.5">
-                                                            <button
-                                                                onClick={() => handleMoveOpUp(idx)}
-                                                                disabled={idx === 0}
-                                                                className="p-1 rounded text-zinc-500 hover:text-zinc-300 disabled:opacity-30 disabled:hover:text-zinc-500 transition-all"
-                                                                title="Move Operation Up"
-                                                            >
-                                                                <ChevronUp size={13} />
+                                                            <button onClick={() => handleMoveOpUp(idx)} disabled={idx===0}
+                                                                className="p-1 border border-zinc-800 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 disabled:opacity-30 rounded-lg transition-all">
+                                                                <ChevronUp size={14} />
                                                             </button>
-                                                            <button
-                                                                onClick={() => handleMoveOpDown(idx)}
-                                                                disabled={idx === operations.length - 1}
-                                                                className="p-1 rounded text-zinc-500 hover:text-zinc-300 disabled:opacity-30 disabled:hover:text-zinc-500 transition-all"
-                                                                title="Move Operation Down"
-                                                            >
-                                                                <ChevronDown size={13} />
+                                                            <button onClick={() => handleMoveOpDown(idx)} disabled={idx===operations.length-1}
+                                                                className="p-1 border border-zinc-800 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 disabled:opacity-30 rounded-lg transition-all">
+                                                                <ChevronDown size={14} />
                                                             </button>
-                                                            <div className="w-[1px] h-3.5 bg-[#3C3C3C] mx-1" />
-                                                            <button
-                                                                onClick={() => handleRemoveOperation(idx)}
-                                                                className="p-1 rounded text-zinc-500 hover:bg-red-500/5 hover:text-red-400 border border-transparent hover:border-red-950/20 transition-all shrink-0"
-                                                                title="Delete Operation"
-                                                            >
-                                                                <Trash2 size={13} />
+                                                            <button onClick={() => handleRemoveOperation(idx)}
+                                                                className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 border border-zinc-800 hover:border-red-500/20 rounded-lg transition-all">
+                                                                <Trash2 size={14} />
                                                             </button>
                                                         </div>
                                                     </div>
 
-                                                    <div className="flex flex-col lg:flex-row gap-4 items-stretch">
-                                                        {/* Strategy Selection */}
-                                                        <div className="w-full lg:w-44 shrink-0 flex flex-col gap-1.5">
-                                                            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Milling Strategy</label>
-                                                            <div className="grid grid-cols-3 gap-1">
-                                                                {(['surface', 'profile', 'pocket', 'engrave', 'drill', 'face'] as const).map((strat) => (
-                                                                    <button
-                                                                        key={strat}
-                                                                        onClick={() => handleOperationChange(idx, 'strategy', strat)}
-                                                                        title={STRATEGY_DESCRIPTIONS[strat]}
-                                                                        className={`flex flex-col items-center justify-center py-2.5 rounded-lg border text-[8px] font-bold uppercase transition-all duration-150 ${
-                                                                            op.strategy === strat
-                                                                                ? 'border-[#007ACC]/40 bg-[#007ACC]/5 text-blue-400'
-                                                                                : 'border-[#3C3C3C] bg-[#1E1E1E]/40 text-zinc-500 hover:text-[#D4D4D4] hover:border-zinc-700'
-                                                                        }`}
-                                                                    >
-                                                                        {strat === 'profile' && <Layers size={11} className="mb-1" />}
-                                                                        {strat === 'pocket' && <Hammer size={11} className="mb-1" />}
-                                                                        {strat === 'surface' && <Cpu size={11} className="mb-1" />}
-                                                                        {strat === 'engrave' && <Sparkles size={11} className="mb-1" />}
-                                                                        {strat === 'drill' && <Info size={11} className="mb-1" />}
-                                                                        {strat === 'face' && <Settings size={11} className="mb-1" />}
-                                                                        {strat}
-                                                                    </button>
-                                                                ))}
+                                                    <div className="flex flex-col lg:flex-row gap-5">
+                                                        <div className="w-full lg:w-44 shrink-0 space-y-2">
+                                                            <div className="flex items-center gap-1.5 text-[10px] font-medium text-zinc-400">
+                                                                <span>Strategy</span>
+                                                                <div className="group relative cursor-pointer text-zinc-500 hover:text-zinc-300">
+                                                                    <HelpCircle size={12} />
+                                                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2.5 bg-zinc-950 border border-zinc-800 text-[11px] text-zinc-400 rounded-lg shadow-lg z-30 leading-normal">
+                                                                        Hover individual strategy options to view details on tool paths and operation types.
+                                                                    </div>
+                                                                </div>
                                                             </div>
-                                                            <p className="text-[9px] text-[#A6A6A6] mt-1.5 leading-normal italic">
-                                                                {STRATEGY_DESCRIPTIONS[op.strategy]}
-                                                            </p>
+                                                            <div className="grid grid-cols-4 lg:grid-cols-3 gap-1">
+                                                                {(['surface','profile','pocket','engrave','drill','face','turn_rough','turn_finish'] as const).map(strat => {
+                                                                    const isS = op.strategy === strat;
+                                                                    const short = strat === 'turn_rough' ? 'T.Rough' : strat === 'turn_finish' ? 'T.Fin' : strat.charAt(0).toUpperCase()+strat.slice(1);
+                                                                    return (
+                                                                        <div key={strat} className="relative group">
+                                                                            <button onClick={() => handleOperationChange(idx, 'strategy', strat)}
+                                                                                className={`w-full py-1 text-[10px] font-medium rounded transition-all border ${
+                                                                                    isS 
+                                                                                        ? 'bg-blue-600 text-white border-blue-500' 
+                                                                                        : 'border-zinc-800 text-zinc-400 bg-zinc-900/30 hover:border-zinc-700 hover:text-zinc-200'
+                                                                                }`}>
+                                                                                {short}
+                                                                            </button>
+                                                                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2 bg-zinc-950 border border-zinc-800 text-[10px] text-zinc-300 rounded shadow-md z-30 leading-normal">
+                                                                                {STRATEGY_DESCRIPTIONS[strat]}
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                            <p className="text-[11px] text-zinc-500 leading-snug">{STRATEGY_DESCRIPTIONS[op.strategy].split(':')[0]}</p>
                                                         </div>
 
-                                                        {/* Parameters inputs */}
-                                                        <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-3.5">
-                                                            <div className="flex flex-col gap-1">
-                                                                <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Active Tool</label>
-                                                                <select
-                                                                    value={op.tool_number}
-                                                                    onChange={(e) => handleOperationChange(idx, 'tool_number', e.target.value)}
-                                                                    className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
-                                                                >
-                                                                    {tools.map(t => (
-                                                                        <option key={t.number} value={t.number}>
-                                                                            T{t.number} ({t.diameter}mm)
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
+                                                        <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-4">
+                                                            <div className="space-y-1">
+                                                                <label className="text-[10px] font-medium text-zinc-400">Active Tool</label>
+                                                                <div className="relative">
+                                                                    <select value={op.tool_number} onChange={(e) => handleOperationChange(idx, 'tool_number', e.target.value)}
+                                                                        className="w-full h-9 border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 rounded-lg focus:border-blue-500 focus:outline-none appearance-none cursor-pointer">
+                                                                        {tools.map(t => <option key={t.number} value={t.number} className="bg-zinc-950">T{t.number} ({t.diameter}mm)</option>)}
+                                                                    </select>
+                                                                    <ChevronDown size={14} className="absolute right-2.5 top-2.5 text-zinc-500 pointer-events-none" />
+                                                                </div>
                                                             </div>
-
-                                                            <div className="flex flex-col gap-1">
-                                                                <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Units</label>
-                                                                <select
-                                                                    value={op.units}
-                                                                    onChange={(e) => handleOperationChange(idx, 'units', e.target.value)}
-                                                                    className="w-full h-8 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E] px-2 text-xs text-zinc-200 focus:border-[#007ACC] focus:outline-none transition-all"
-                                                                >
-                                                                    <option value="metric">Metric (mm)</option>
-                                                                    <option value="imperial">Imperial (in)</option>
-                                                                </select>
+                                                            <div className="space-y-1">
+                                                                <label className="text-[10px] font-medium text-zinc-400">Units</label>
+                                                                <div className="relative">
+                                                                    <select value={op.units} onChange={(e) => handleOperationChange(idx, 'units', e.target.value)}
+                                                                        className="w-full h-9 border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 rounded-lg focus:border-blue-500 focus:outline-none appearance-none cursor-pointer">
+                                                                        <option value="metric" className="bg-zinc-950">Metric (mm)</option>
+                                                                        <option value="imperial" className="bg-zinc-950">Imperial (in)</option>
+                                                                    </select>
+                                                                    <ChevronDown size={14} className="absolute right-2.5 top-2.5 text-zinc-500 pointer-events-none" />
+                                                                </div>
                                                             </div>
-
-                                                            <div className="flex flex-col gap-1">
-                                                                <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Cutting Depth</label>
-                                                                <input
-                                                                    type="number"
-                                                                    step="0.5"
-                                                                    value={op.cutting_depth}
+                                                            <div className="space-y-1">
+                                                                <div className="flex items-center gap-1 text-[10px] font-medium text-zinc-400">
+                                                                    <span>Cut Depth</span>
+                                                                    <div className="group relative cursor-pointer text-zinc-500 hover:text-zinc-300">
+                                                                        <HelpCircle size={10} />
+                                                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-36 p-2 bg-zinc-950 border border-zinc-800 text-[10px] text-zinc-400 rounded-lg shadow-lg z-30 leading-normal">
+                                                                            Total depth to be cut into the raw stock workpiece.
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                                <input type="number" step="0.5" value={op.cutting_depth}
                                                                     onChange={(e) => handleOperationChange(idx, 'cutting_depth', e.target.value)}
-                                                                    className={`w-full h-8 rounded-lg border bg-[#1E1E1E] px-2.5 text-xs text-zinc-200 focus:outline-none transition-all ${
-                                                                        isDepthWarning 
-                                                                            ? 'border-red-500/60 text-red-200' 
-                                                                            : 'border-[#3C3C3C] focus:border-[#007ACC]'
-                                                                    }`}
-                                                                />
+                                                                    className={`w-full h-9 border bg-zinc-950 px-3 py-1.5 text-xs font-mono rounded-lg focus:outline-none transition-colors ${isWarn ? 'border-red-500 text-red-400 focus:border-red-500' : 'border-zinc-800 text-zinc-200 focus:border-blue-500'}`} />
                                                             </div>
-
-                                                            <div className="flex flex-col gap-1">
-                                                                <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Pass Stepdown</label>
-                                                                <input
-                                                                    type="number"
-                                                                    step="0.25"
-                                                                    value={op.stepdown}
+                                                            <div className="space-y-1">
+                                                                <div className="flex items-center gap-1 text-[10px] font-medium text-zinc-400">
+                                                                    <span>Stepdown</span>
+                                                                    <div className="group relative cursor-pointer text-zinc-500 hover:text-zinc-300">
+                                                                        <HelpCircle size={10} />
+                                                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-36 p-2 bg-zinc-950 border border-zinc-800 text-[10px] text-zinc-400 rounded-lg shadow-lg z-30 leading-normal">
+                                                                            Maximum depth of material removed per pass in the Z axis.
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                                <input type="number" step="0.25" value={op.stepdown}
                                                                     onChange={(e) => handleOperationChange(idx, 'stepdown', e.target.value)}
-                                                                    className={`w-full h-8 rounded-lg border bg-[#1E1E1E] px-2.5 text-xs text-zinc-200 focus:outline-none transition-all ${
-                                                                        isDepthWarning 
-                                                                            ? 'border-red-500/60 text-red-200' 
-                                                                            : 'border-[#3C3C3C] focus:border-[#007ACC]'
-                                                                    }`}
-                                                                />
+                                                                    className={`w-full h-9 border bg-zinc-950 px-3 py-1.5 text-xs font-mono rounded-lg focus:outline-none transition-colors ${isWarn ? 'border-red-500 text-red-400 focus:border-red-500' : 'border-zinc-800 text-zinc-200 focus:border-blue-500'}`} />
                                                             </div>
-
-                                                            <div className="col-span-2 md:col-span-4 flex flex-col gap-1.5 mt-1">
-                                                                <div className="flex justify-between items-center text-[9px] font-bold text-zinc-500 uppercase tracking-wider">
-                                                                    <span>Corner Slowdown Factor</span>
-                                                                    <span className="text-blue-400 font-mono">{(op.corner_slowdown * 100).toFixed(0)}%</span>
+                                                            <div className="col-span-2 md:col-span-4 space-y-2">
+                                                                <div className="flex justify-between text-[10px] font-medium text-zinc-400">
+                                                                    <div className="flex items-center gap-1">
+                                                                        <span>Corner Slowdown</span>
+                                                                        <div className="group relative cursor-pointer text-zinc-500 hover:text-zinc-300">
+                                                                            <HelpCircle size={10} />
+                                                                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-48 p-2.5 bg-zinc-950 border border-zinc-800 text-[11px] text-zinc-400 rounded-lg shadow-lg z-30 leading-normal">
+                                                                                Reduces feed rate along corners and small arcs to avoid tool chatter and deflection.
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                    <span className="text-blue-400 font-semibold">{(op.corner_slowdown*100).toFixed(0)}%</span>
                                                                 </div>
-                                                                <div className="flex items-center gap-3">
-                                                                    <input
-                                                                        type="range"
-                                                                        min="0.10"
-                                                                        max="1.00"
-                                                                        step="0.05"
-                                                                        value={op.corner_slowdown}
-                                                                        onChange={(e) => handleOperationChange(idx, 'corner_slowdown', e.target.value)}
-                                                                        className="flex-1 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-[#007ACC]"
-                                                                    />
-                                                                    <span className="text-[8px] text-zinc-600 font-medium shrink-0">Decelerates over 30° bends.</span>
-                                                                </div>
+                                                                <input type="range" min="0.10" max="1.00" step="0.05" value={op.corner_slowdown}
+                                                                    onChange={(e) => handleOperationChange(idx, 'corner_slowdown', e.target.value)}
+                                                                    className="w-full h-1 appearance-none bg-zinc-800 accent-blue-500 rounded-lg cursor-pointer" />
                                                             </div>
                                                         </div>
 
-                                                        {/* Right: Pass Visualizer */}
-                                                        <div className="w-full lg:w-44 shrink-0">
+                                                        <div className="w-full lg:w-40 shrink-0">
                                                             {renderPassVisualizer(op.cutting_depth, op.stepdown)}
                                                         </div>
                                                     </div>
 
-                                                    {isDepthWarning && (
-                                                        <div className="flex items-center gap-2 text-[9px] text-red-400 font-semibold bg-red-950/20 border border-red-900/10 p-2 rounded-lg animate-in fade-in duration-200">
-                                                            <AlertCircle size={12} className="shrink-0" />
-                                                            <span>Warning: Stepdown cannot exceed total target cutting depth.</span>
+                                                    {isWarn && (
+                                                        <div className="flex items-center gap-2 mt-3.5 border border-red-500/20 bg-red-500/5 px-3.5 py-2.5 rounded-lg text-xs text-red-400 font-sans">
+                                                            <AlertCircle size={14} className="shrink-0" />
+                                                            <span>Stepdown exceeds total cutting depth — invalid pass configuration.</span>
                                                         </div>
                                                     )}
                                                 </div>
@@ -956,163 +1158,133 @@ export default function CamConfigModal({
                                     </div>
                                 </div>
                             )}
-
                         </div>
                     </div>
 
-                    {/* Right Pane: Live CAM Program Inspector Sidebar */}
-                    <div className="w-80 border-l border-[#3C3C3C] bg-[#252526] p-5 flex flex-col justify-between shrink-0 overflow-y-auto">
-                        <div className="space-y-5">
-                            
-                            {/* Header */}
-                            <div className="flex items-center justify-between border-b border-[#3C3C3C] pb-3">
-                                <div className="flex items-center gap-2">
-                                    <Cpu size={14} className="text-blue-400" />
-                                    <span className="text-[11px] font-semibold text-zinc-200 tracking-wide">CAM Live Inspector</span>
+                    {/* Right: Telemetry Sidebar */}
+                    <div className="w-64 border-l border-zinc-800 bg-zinc-950 flex flex-col shrink-0">
+                        <div className="flex items-center gap-2 border-b border-zinc-800/80 px-4 py-4 shrink-0">
+                            <Cpu size={14} className="text-blue-400" />
+                            <span className="text-xs font-semibold text-zinc-200 uppercase tracking-wide font-sans">CAM Telemetry</span>
+                        </div>
+
+                        <div className="flex-1 p-4 space-y-4 overflow-y-auto">
+                            <div className="bg-zinc-900/30 border border-zinc-800/80 rounded-xl p-3.5 space-y-2 text-[11px] font-sans">
+                                <div className="flex justify-between items-center border-b border-zinc-800/80 pb-2">
+                                    <span className="font-semibold text-blue-400 uppercase text-[10px]">Controller</span>
+                                    <span className="text-zinc-500 font-mono">v1.2</span>
                                 </div>
-                                <div className="flex items-center gap-1.5">
-                                    <span className={`h-1.5 w-1.5 rounded-full ${isValid ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
-                                    <span className={`text-[8.5px] font-bold uppercase ${isValid ? 'text-emerald-500' : 'text-red-500'}`}>
-                                        {isValid ? 'Ready' : 'Error'}
-                                    </span>
-                                </div>
+                                <div className="flex justify-between"><span className="text-zinc-400">Dialect</span><span className="text-zinc-200 font-semibold uppercase">{controller}</span></div>
+                                <div className="flex justify-between"><span className="text-zinc-400">Extension</span><span className="text-blue-400 font-mono font-semibold">{CONTROLLER_DIALECTS.find(d => d.id === controller)?.ext || '.nc'}</span></div>
+                                <div className="flex justify-between"><span className="text-zinc-400">Safe Z</span><span className="text-zinc-200 font-semibold font-mono">{safeZ.toFixed(1)} mm</span></div>
+                                <div className="flex justify-between"><span className="text-zinc-400">Coolant</span><span className={`font-semibold font-mono ${coolant ? 'text-emerald-400' : 'text-zinc-500'}`}>{coolant ? 'M08' : 'OFF'}</span></div>
                             </div>
 
-                            {/* Section 1: Controller Dialect */}
-                            <div className="space-y-1.5 p-3 rounded-lg border border-[#3C3C3C] bg-[#1E1E1E]/50">
-                                <span className="text-[8.5px] uppercase font-bold text-zinc-500 tracking-wider">Controller Unit</span>
-                                <div className="flex items-center justify-between">
-                                    <span className="text-xs font-semibold text-zinc-300 capitalize text-[11px]">
-                                        {CONTROLLER_DIALECTS.find(d => d.id === controller)?.name || controller}
-                                    </span>
-                                    <span className="text-[9px] font-mono text-zinc-500">
-                                        {CONTROLLER_DIALECTS.find(d => d.id === controller)?.ext || '.nc'}
-                                    </span>
+                            <div className="bg-zinc-900/30 border border-zinc-800/80 rounded-xl p-3.5 space-y-2 text-[11px] font-sans">
+                                <div className="flex justify-between items-center border-b border-zinc-800/80 pb-2">
+                                    <span className="font-semibold text-zinc-300 uppercase text-[10px]">Stock Envelope</span>
+                                    <span className="text-zinc-400 font-medium capitalize">{stockType}</span>
                                 </div>
-                                <div className="flex items-center justify-between text-[9.5px] text-[#A6A6A6] pt-1 border-t border-[#3C3C3C]/40 mt-1">
-                                    <span>Safe Z: <strong className="text-zinc-400 font-mono">{safeZ.toFixed(1)}mm</strong></span>
-                                    <span>Coolant: <strong className="text-zinc-400">{coolant ? 'Active' : 'M09'}</strong></span>
-                                </div>
+                                {stockType === 'block' ? (
+                                    <>
+                                        <div className="flex justify-between"><span className="text-zinc-400">Length X</span><span className="text-zinc-200 font-semibold">{stockLengthX ? `${stockLengthX}mm` : 'AUTO'}</span></div>
+                                        <div className="flex justify-between"><span className="text-zinc-400">Width Y</span><span className="text-zinc-200 font-semibold">{stockWidthY ? `${stockWidthY}mm` : 'AUTO'}</span></div>
+                                        <div className="flex justify-between"><span className="text-zinc-400">Height Z</span><span className="text-zinc-200 font-semibold">{stockHeightZ ? `${stockHeightZ}mm` : 'AUTO'}</span></div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="flex justify-between"><span className="text-zinc-400">Outer Dia</span><span className="text-zinc-200 font-semibold">{stockOuterDiameter ? `${stockOuterDiameter}mm` : 'AUTO'}</span></div>
+                                        <div className="flex justify-between"><span className="text-zinc-400">Inner Dia</span><span className="text-zinc-200 font-semibold">{stockInnerDiameter}mm</span></div>
+                                        <div className="flex justify-between"><span className="text-zinc-400">Length Z</span><span className="text-zinc-200 font-semibold">{stockLengthZ ? `${stockLengthZ}mm` : 'AUTO'}</span></div>
+                                    </>
+                                )}
                             </div>
 
-                            {/* Section 2: Loaded Tool Slots */}
-                            <div className="space-y-1.5">
-                                <span className="text-[8.5px] uppercase font-bold text-zinc-500 tracking-wider">Registered Tool Library</span>
-                                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                                    {tools.map((t) => (
-                                        <div key={t.number} className="flex items-center justify-between p-2 rounded border border-[#3C3C3C]/50 bg-[#1E1E1E]/30 text-xs">
-                                            <div className="flex items-center gap-1.5 min-w-0">
-                                                <span className="text-[8.5px] font-mono font-bold bg-blue-500/10 border border-blue-500/10 text-blue-400 px-1 rounded">T{t.number}</span>
-                                                <span className="text-[10px] text-zinc-400 truncate max-w-28">{t.description || 'Flat Endmill'}</span>
+                            <div className="space-y-2">
+                                <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Tool Register</span>
+                                <div className="space-y-1 max-h-32 overflow-y-auto">
+                                    {tools.map(t => (
+                                        <div key={t.number} className="flex items-center justify-between px-2.5 py-1.5 border border-zinc-800 rounded-lg bg-zinc-900/20 text-xs">
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                <span className="text-[10px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded font-mono">T{t.number}</span>
+                                                <span className="text-zinc-300 truncate font-medium">{t.description || 'Endmill'}</span>
                                             </div>
-                                            <span className="text-[9.5px] font-mono text-zinc-500 font-semibold">{t.diameter.toFixed(3)}mm</span>
+                                            <span className="text-blue-400 font-semibold font-mono shrink-0 ml-1">{t.diameter.toFixed(2)}mm</span>
                                         </div>
                                     ))}
                                 </div>
                             </div>
 
-                            {/* Section 3: Operations Timeline sequence */}
                             <div className="space-y-2">
-                                <span className="text-[8.5px] uppercase font-bold text-zinc-500 tracking-wider">Milling Timeline</span>
-                                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                                    {operations.map((op, oIdx) => {
-                                        const passes = getPassCount(op.cutting_depth, op.stepdown);
-                                        return (
-                                            <div key={oIdx} className="relative pl-4 border-l border-[#3C3C3C] py-0.5">
-                                                {/* Timeline bullet */}
-                                                <div className="absolute -left-1 top-2.5 size-2 rounded-full border border-[#252526] bg-[#007ACC] shadow-[0_0_6px_rgba(0,122,204,0.3)]" />
-                                                
-                                                <div className="p-2 rounded border border-[#3C3C3C] bg-[#1E1E1E]/30 space-y-1">
-                                                    <div className="flex items-center justify-between">
-                                                        <span className="text-[10px] font-semibold text-zinc-300 truncate max-w-32">{op.name}</span>
-                                                        <span className="text-[8.5px] uppercase font-bold text-zinc-500 tracking-wider">{op.strategy}</span>
-                                                    </div>
-                                                    <div className="flex items-center justify-between text-[9.5px] text-[#A6A6A6]">
-                                                        <span>Slot: <strong className="text-zinc-400 font-mono">T{op.tool_number}</strong></span>
-                                                        <span>Depth: <strong className="text-zinc-400 font-mono">{op.cutting_depth}mm</strong></span>
-                                                        <span>Passes: <strong className="text-blue-400 font-mono">{passes}</strong></span>
-                                                    </div>
+                                <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Operation Flow</span>
+                                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                                    {operations.map((op, i) => (
+                                        <div key={i} className="pl-2.5 border-l border-zinc-800 py-0.5">
+                                            <div className="bg-zinc-900/20 border border-zinc-800/80 rounded-lg p-2.5 text-xs space-y-1">
+                                                <div className="flex justify-between gap-1.5">
+                                                    <span className="font-semibold text-zinc-200 truncate uppercase text-[10px]">{op.name}</span>
+                                                    <span className="text-blue-400 text-[10px] font-mono capitalize">{op.strategy}</span>
+                                                </div>
+                                                <div className="flex justify-between text-[10px] text-zinc-500">
+                                                    <span>Tool T{op.tool_number}</span>
+                                                    <span className="font-mono text-zinc-400">{getPassCount(op.cutting_depth, op.stepdown)} Passes</span>
                                                 </div>
                                             </div>
-                                        );
-                                    })}
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
-
                         </div>
 
-                        {/* Validation Error list or Success Box */}
-                        <div className="pt-4 border-t border-[#3C3C3C] mt-4">
+                        <div className="p-4 border-t border-zinc-800 shrink-0">
                             {validationIssues.length > 0 ? (
-                                <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 space-y-1.5">
-                                    <div className="flex items-center gap-1.5 text-red-400 text-[10px] font-bold uppercase">
-                                        <AlertCircle size={12} />
-                                        <span>Compilation Blocked</span>
+                                <div className="border border-red-500/20 bg-red-500/5 rounded-xl p-3.5 space-y-1.5 font-sans">
+                                    <div className="flex items-center gap-1.5 text-red-400 text-xs font-semibold">
+                                        <AlertCircle size={14} /> Compilation Blocked
                                     </div>
-                                    <ul className="list-disc list-inside text-[9.5px] text-red-300/80 leading-normal space-y-1">
-                                        {validationIssues.map((iss, i) => <li key={i}>{iss}</li>)}
+                                    <ul className="text-zinc-400 text-[11px] space-y-0.5 list-disc list-inside">
+                                        {validationIssues.map((iss, i) => <li key={i} className="truncate">{iss}</li>)}
                                     </ul>
                                 </div>
                             ) : (
-                                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-1">
-                                    <div className="flex items-center gap-1.5 text-emerald-400 text-[10px] font-bold uppercase">
-                                        <ShieldCheck size={12} />
-                                        <span>Parameters Verified</span>
+                                <div className="border border-emerald-500/20 bg-emerald-500/5 rounded-xl p-3.5 font-sans">
+                                    <div className="flex items-center gap-1.5 text-emerald-400 text-xs font-semibold">
+                                        <ShieldCheck size={14} /> System Verified
                                     </div>
-                                    <p className="text-[9.5px] text-zinc-500 leading-normal">Operational sequence and tool slots match constraints. Safe to output dialect script.</p>
+                                    <p className="text-zinc-400 text-[11px] mt-1">Ready to compile clean CNC code.</p>
                                 </div>
                             )}
                         </div>
-
                     </div>
                 </div>
 
-                {/* Footer Controls */}
-                <div className="flex justify-between items-center border-t border-[#3C3C3C] bg-[#252526] px-6 py-4.5 shrink-0">
+                {/* Footer */}
+                <div className="flex justify-between items-center border-t border-zinc-800/80 bg-zinc-950 px-6 py-4 shrink-0">
                     <div>
                         {currentStep !== 'machine' && (
-                            <button
-                                onClick={handleBackStep}
-                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[#3C3C3C] text-[11px] font-medium text-[#A6A6A6] hover:bg-[#3C3C3C] hover:text-[#D4D4D4] hover:border-zinc-700 transition-all duration-150 active:scale-97"
-                            >
-                                <ChevronLeft size={12} />
-                                Back
+                            <button onClick={handleBackStep}
+                                className="flex items-center gap-1.5 px-3.5 py-2 border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800 hover:text-zinc-100 text-zinc-300 text-xs font-medium rounded-lg transition-colors">
+                                <ChevronLeft size={14} /> Back
                             </button>
                         )}
                     </div>
-
-                    <div className="flex gap-2.5">
-                        <button
-                            onClick={onClose}
-                            className="px-3.5 py-1.5 rounded-lg border border-[#3C3C3C] text-[11px] font-medium text-[#A6A6A6] hover:bg-[#3C3C3C] hover:text-[#D4D4D4] hover:border-zinc-700 transition-all duration-150 active:scale-97"
-                        >
+                    <div className="flex gap-3">
+                        <button onClick={onClose}
+                            className="px-4 py-2 text-zinc-400 hover:text-zinc-200 text-xs font-medium transition-colors">
                             Cancel
                         </button>
-                        
                         {currentStep !== 'operations' ? (
-                            <button
-                                onClick={handleNextStep}
-                                className="flex items-center gap-1 px-4 py-1.5 rounded-lg bg-[#007ACC] hover:bg-[#007ACC]/90 text-[11px] font-medium text-white shadow-lg transition-all duration-150 active:scale-97"
-                            >
-                                Continue
-                                <ChevronRight size={12} />
+                            <button onClick={handleNextStep}
+                                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg shadow-sm transition-colors">
+                                Continue <ChevronRight size={14} />
                             </button>
                         ) : (
-                            <button
-                                onClick={handleFormSubmit}
-                                disabled={isGenerating || !isValid}
-                                className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-[#007ACC] hover:bg-[#007ACC]/90 disabled:bg-[#3C3C3C] disabled:text-[#A6A6A6] text-[11px] font-semibold text-white shadow-lg transition-all duration-200 active:scale-97"
-                            >
+                            <button onClick={handleFormSubmit} disabled={isGenerating || !isValid}
+                                className="flex items-center gap-2 px-5 py-2 bg-amber-500 hover:bg-amber-400 disabled:bg-zinc-850 disabled:text-zinc-650 text-black text-xs font-semibold rounded-lg shadow-sm transition-colors disabled:opacity-50">
                                 {isGenerating ? (
-                                    <>
-                                        <Loader2 size={12} className="animate-spin shrink-0 text-white" />
-                                        Compiling Pipeline...
-                                    </>
+                                    <><Loader2 size={14} className="animate-spin" /> Compiling...</>
                                 ) : (
-                                    <>
-                                        <Play size={10} fill="currentColor" />
-                                        Compile G-code
-                                    </>
+                                    <><Play size={12} fill="currentColor" /> Compile G-code</>
                                 )}
                             </button>
                         )}

@@ -1083,6 +1083,17 @@ class GCodeGenerator:
         if hasattr(shape, "wrapped") and shape.wrapped is None:
             return {"gcode": "; ERROR: Wrapped shape is None", "toolpaths": []}
 
+        # Route Turning (Lathe) configurations
+        if request is not None and getattr(request, "stock_configuration", None) is not None:
+            if getattr(request.stock_configuration, "stock_type", "") == "cylinder":
+                if not self.verify_lathe_compatibility(shape):
+                    return {
+                        "gcode": "; ERROR: Model contains invalid prismatic elements",
+                        "toolpaths": []
+                    }
+                return self.generate_lathe_turning(request, shape, target_path)
+
+
         # Pydantic schema type: List[List[Tuple[float, float, float]]]
         toolpaths: List[List[Tuple[float, float, float]]] = []
 
@@ -1134,7 +1145,37 @@ class GCodeGenerator:
                 current_tool_number = tool.number
 
             tool_radius = tool.diameter / 2.0
-            num_passes = max(1, math.ceil(cutting_depth / stepdown))
+
+            # Flute Length Gate
+            flute_length = getattr(tool, "flute_length", None) or 25.0
+            if cutting_depth > flute_length:
+                gcode_lines += [
+                    "; ---------------------------------------------------",
+                    f"; CRITICAL WARNING: Cutting depth ({cutting_depth:.3f}) exceeds tool flute length ({flute_length:.3f})!",
+                    "; This poses a high risk of tool holder collision or rubbing.",
+                    "; ---------------------------------------------------"
+                ]
+
+
+            # Calculate stock_top_z and pass depths
+            stock_top_z = None
+            if request is not None and getattr(request, "stock_configuration", None) is not None:
+                stock_top_z = getattr(request.stock_configuration, "height_z", None)
+            if stock_top_z is None:
+                stock_top_z = bbox.max.Z if bbox else 0.0
+
+            current_contour_nominal_z = stock_top_z - cutting_depth
+            excess_material = stock_top_z - current_contour_nominal_z
+
+            pass_depths = []
+            z_val = stock_top_z - stepdown
+            while z_val > current_contour_nominal_z + 1e-4:
+                pass_depths.append(round(z_val, 4))
+                z_val -= stepdown
+
+            if not pass_depths or pass_depths[-1] > current_contour_nominal_z + 1e-4:
+                pass_depths.append(round(current_contour_nominal_z, 4))
+
 
             # ============================================================
             # STRATEGY: 3D SURFACE (TOOL-AWARE DROP-CUTTER)
@@ -1255,8 +1296,7 @@ class GCodeGenerator:
 
                 gcode_lines.append("; Facing (Raster)")
 
-                for pass_idx in range(num_passes):
-                    current_z = -min((pass_idx + 1) * stepdown, cutting_depth)
+                for pass_idx, current_z in enumerate(pass_depths):
                     gcode_lines.append(f"; Depth pass {pass_idx+1} (Z={current_z:.3f})")
 
                     y_cur = y_min
@@ -1300,6 +1340,39 @@ class GCodeGenerator:
                             planar_faces.append(f)
                 except Exception as e:
                     gcode_lines.append(f"; ERROR: Face extraction failed: {e}")
+
+                # Radius Gouge Gate
+                if strategy in ("profile", "pocket"):
+                    gouge_warnings = set()
+                    try:
+                        edges_to_check = []
+                        if planar_faces:
+                            for f in planar_faces:
+                                edges_to_check.extend(list(_call(f, "edges")))
+                        else:
+                            edges_to_check = list(_call(shape, "edges"))
+
+                        for edge in edges_to_check:
+                            try:
+                                curve = BRepAdaptor_Curve(edge.wrapped)
+                                if curve.GetType() == GeomAbs_Circle:
+                                    feature_radius = curve.Circle().Radius()
+                                    if tool_radius > feature_radius:
+                                        gouge_warnings.add(
+                                            f"; WARNING: Tool radius ({tool_radius:.3f}) exceeds internal feature radius ({feature_radius:.3f})"
+                                        )
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                    if gouge_warnings:
+                        gcode_lines.append("; ---------------------------------------------------")
+                        for warning in sorted(list(gouge_warnings)):
+                            gcode_lines.append(warning)
+                        gcode_lines.append("; Unmachined material will remain in the corners.")
+                        gcode_lines.append("; ---------------------------------------------------")
+
 
                 wires: List[Any] = []
 
@@ -1371,8 +1444,7 @@ class GCodeGenerator:
                     first_seg = segments[0]
                     start_x, start_y = first_seg["start_x"], first_seg["start_y"]
 
-                    for pass_idx in range(num_passes):
-                        current_z = -min((pass_idx + 1) * stepdown, cutting_depth)
+                    for pass_idx, current_z in enumerate(pass_depths):
                         gcode_lines.append(f"; Pass {pass_idx+1} (Z={current_z:.3f})")
 
                         # Independent approach protocol (every pass, every contour)
@@ -1407,6 +1479,158 @@ class GCodeGenerator:
             "gcode": "\n".join(gcode_lines),
             "toolpaths": toolpaths,  # List[List[Tuple[float,float,float]]] ✓
         }
+
+    @staticmethod
+    def verify_lathe_compatibility(shape: Any) -> bool:
+        """
+        Scan B-Rep faces. If a planar face ('GeomAbs_Plane') is detected facing the Z-normal direction
+        and resides inside the interior bounding box of the workpiece, classify it as an
+        unmachinable milling feature and return False.
+        """
+        try:
+            from OCP.BRepAdaptor import BRepAdaptor_Surface
+            from OCP.GeomAbs import GeomAbs_Plane
+
+            bbox = shape.bounding_box()
+            z_min = bbox.min.Z
+            z_max = bbox.max.Z
+            margin = 0.1
+
+            for face in _iter_faces(shape):
+                surf = BRepAdaptor_Surface(face.wrapped)
+                if surf.GetType() == GeomAbs_Plane:
+                    normal = _call(face, "normal_at")
+                    if abs(normal.Z) > 0.95:
+                        face_bbox = face.bounding_box()
+                        if face_bbox.min.Z > z_min + margin and face_bbox.max.Z < z_max - margin:
+                            return False
+        except Exception:
+            pass
+        return True
+
+    def generate_lathe_turning(
+        self,
+        request: Any,
+        shape: Any,
+        step_path: Any = None
+    ) -> Dict[str, Any]:
+        """
+        Generate G18 absolute turning toolpaths with diametral X outputs.
+        """
+        filename = "Memory_Shape"
+        if isinstance(step_path, (str, Path)):
+            filename = Path(step_path).name
+
+        safe_z = getattr(request.machine_configuration, "safe_z", 5.0)
+        coolant = getattr(request.machine_configuration, "coolant_active", True)
+        tools_list = request.tool_library
+        ops = request.operations_pipeline
+
+        gcode_lines = [
+            "%",
+            "O0002 (CAD COPILOT GENERATED TURNING PROGRAM)",
+            f"; Source File: {filename}",
+            "G18 G21 G40 G80 G90 G99 ; ZX plane, metric, cancel compensation, absolute mode, feed/rev",
+        ]
+
+        toolpaths: List[List[Tuple[float, float, float]]] = []
+
+        # Calculate cylinder stock parameters
+        stock_diameter = getattr(request.stock_configuration, "outer_diameter", None)
+        stock_length = getattr(request.stock_configuration, "length_z", None)
+        bbox = shape.bounding_box() if shape else None
+        if stock_diameter is None:
+            stock_diameter = 2.0 * max(abs(bbox.max.X), abs(bbox.min.X)) if bbox else 50.0
+        if stock_length is None:
+            stock_length = (bbox.max.Z - bbox.min.Z) if bbox else 100.0
+
+        stock_radius = stock_diameter / 2.0
+        tools_map = {t.number: t for t in tools_list}
+        current_tool_number = None
+
+        for op_idx, op in enumerate(ops):
+            tool_num = int(getattr(op, "tool_number", 0))
+            tool = tools_map.get(tool_num)
+            if not tool:
+                gcode_lines.append(f"; ERROR: Op {op_idx+1} — T{tool_num} not in tool library. Skipped.")
+                continue
+
+            cutting_depth = float(getattr(op, "cutting_depth", 5.0))
+            stepdown = float(getattr(op, "stepdown", 1.0))
+
+            gcode_lines += [
+                "",
+                f"; ===================================================",
+                f"; OPERATION {op_idx+1}: {op.name} ({op.strategy.upper()})",
+                f"; Tool: T{tool.number} — Ø{tool.diameter}mm — {tool.description}",
+                f"; ===================================================",
+            ]
+
+            if tool.number != current_tool_number:
+                gcode_lines += [
+                    f"T{tool.number:02d}{tool.number:02d} ; Select turning tool and offset",
+                    f"G97 S{int(tool.spindle_speed)} M03 ; Direct RPM, spindle CW",
+                ]
+                if coolant:
+                    gcode_lines.append("M08 ; Coolant ON")
+                current_tool_number = tool.number
+
+            target_radius = max(0.1, stock_radius - cutting_depth)
+
+            # Generate pass radii
+            pass_radii = []
+            r_val = stock_radius - stepdown
+            while r_val > target_radius + 1e-4:
+                pass_radii.append(round(r_val, 4))
+                r_val -= stepdown
+
+            if not pass_radii or pass_radii[-1] > target_radius + 1e-4:
+                pass_radii.append(round(target_radius, 4))
+
+            # Peeling passes
+            for pass_idx, r in enumerate(pass_radii):
+                gcode_lines.append(f"; Pass {pass_idx+1} (Radial R={r:.3f}, Diametral X={2.0*r:.3f})")
+
+                # Diametral X values for industrial G-code
+                x_diam_start = 2.0 * stock_radius
+                x_diam_cut = 2.0 * r
+                x_diam_retract = 2.0 * (r + 1.0)
+
+                # Tool paths cut along Z axis
+                z_start = safe_z
+                z_end = -stock_length
+
+                # G-code moves in diametral format
+                gcode_lines.append(f"G00 X{x_diam_start:.3f} Z{z_start:.3f}")
+                gcode_lines.append(f"G00 X{x_diam_cut:.3f}")
+                gcode_lines.append(f"G01 Z{z_end:.3f} F{tool.feed_rate:.1f}")
+                gcode_lines.append(f"G01 X{x_diam_retract:.3f} F{tool.plunge_rate:.1f}")
+                gcode_lines.append(f"G00 Z{z_start:.3f}")
+
+                # Visualizer coordinate tracking with hard-locked Y=0.0
+                pass_path = [
+                    (stock_radius, 0.0, z_start),
+                    (r, 0.0, z_start),
+                    (r, 0.0, z_end),
+                    (r + 1.0, 0.0, z_end),
+                    (r + 1.0, 0.0, z_start),
+                ]
+                toolpaths.append(pass_path)
+
+        if coolant:
+            gcode_lines.append("M09 ; Coolant OFF")
+        gcode_lines += [
+            "M05 ; Spindle OFF",
+            "G28 U0 W0 ; Return to home ref",
+            "M30 ; End program",
+            "%"
+        ]
+
+        return {
+            "gcode": "\n".join(gcode_lines),
+            "toolpaths": toolpaths
+        }
+
 
 
 # ==============================================================================

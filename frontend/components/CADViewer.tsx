@@ -299,6 +299,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                     safe_z: config.safe_z,
                     coolant: config.coolant,
                     resolution: config.resolution,
+                    stock_configuration: config.stock_configuration,
                     tools: config.tools,
                     operations: config.operations,
                     demoMode: isDemoMode,

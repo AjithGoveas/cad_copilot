@@ -1,6 +1,6 @@
 """Pydantic schemas for the CAD Copilot API."""
 from __future__ import annotations
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -27,6 +27,16 @@ class StepRequest(StrictModel):
     csg_tree: str
 
 
+class StockConfiguration(StrictModel):
+    stock_type: Literal["block", "cylinder"]
+    length_x: float | None = None
+    width_y: float | None = None
+    height_z: float | None = None
+    outer_diameter: float | None = None
+    inner_diameter: float | None = 0.0
+    length_z: float | None = None
+
+
 class MachineConfigModel(StrictModel):
     controller: str = Field(default="fanuc", description="CNC Controller dialect")
     safe_z: float = Field(default=5.0, ge=0.0, description="Safe clearance height Z in mm")
@@ -41,21 +51,26 @@ class MachineConfiguration(MachineConfigModel):
 
 class ToolModel(StrictModel):
     number: int = Field(..., ge=1, description="Tool identification number")
-    type: str = Field(default="endmill", description="Tool type (endmill, ballnose, drill, face)")
+    type: Literal["endmill", "ballnose", "drill", "face", "turning_rough", "turning_finish"] = Field(
+        default="endmill", description="Tool type (endmill, ballnose, drill, face, turning_rough, turning_finish)"
+    )
     diameter: float = Field(..., gt=0.0, description="Tool bit diameter in mm")
     spindle_speed: float = Field(..., gt=0.0, description="Spindle speed in RPM")
     feed_rate: float = Field(..., gt=0.0, description="Cutting feed rate in mm/min")
     plunge_rate: float = Field(..., gt=0.0, description="Plunge feed rate in mm/min")
-    description: str | None = Field(default="Endmill", description="Optional tool description")
+    description: str = Field(default="Endmill", description="Tool description")
+    flute_length: float | None = Field(default=25.0, description="Length of tool cutting flutes in mm")
 
 
 class OperationModel(StrictModel):
     name: str = Field(..., description="Operation name")
-    strategy: str = Field(..., description="Machining strategy (surface, profile, pocket, engrave, drill, face)")
+    strategy: Literal["face", "spot", "drill", "pocket", "profile", "surface", "turn_rough", "turn_finish"] = Field(
+        ..., description="Machining strategy (face, spot, drill, pocket, profile, surface, turn_rough, turn_finish)"
+    )
     tool_number: int = Field(..., ge=1, description="Target tool number from tool library")
     cutting_depth: float = Field(..., gt=0.0, description="Total target depth of cut in mm")
     stepdown: float = Field(..., gt=0.0, description="Maximum depth per cutting pass in mm")
-    units: str = Field(default="metric", description="Metric or imperial units")
+    units: Literal["metric", "imperial"] = Field(default="metric", description="Metric or imperial units")
     corner_slowdown: float = Field(default=0.5, ge=0.1, le=1.0, description="Feed slowdown factor at corners")
     corner_slowdown_factor: float | None = Field(default=None, description="Deprecated. Use corner_slowdown instead.")
 
@@ -75,6 +90,7 @@ class CAMJobRequest(StrictModel):
     csg_tree: str | None = Field(default=None, description="Optional compiled CSG tree string")
     step_file_path: str | None = Field(default=None, description="Optional path to STEP file")
     machine_configuration: MachineConfigModel = Field(default_factory=MachineConfigModel)
+    stock_configuration: StockConfiguration | None = Field(default=None, description="Optional raw stock configuration")
     tool_library: list[ToolModel] = Field(..., description="List of available tools")
     operations_pipeline: list[OperationModel] = Field(..., description="List of machining operations")
 
