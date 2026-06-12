@@ -1,474 +1,920 @@
-'use client';
+"use client"
 
-import React, { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { ContactShadows, Edges, OrbitControls } from '@react-three/drei';
-import * as THREE from 'three';
-import { 
-    ArrowRight, Code2, SlidersHorizontal, MessageSquare, 
-    Upload, GitCommit, Box, FileCode, Cpu, Square, Circle, Plus,
-    Activity, TerminalSquare, Layers, Play,
-    X, Minus
-} from 'lucide-react';
+import React, { useRef, useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { Canvas, useFrame } from '@react-three/fiber'
+import { OrbitControls, Cylinder, Box, Torus, Edges, Float, Environment } from '@react-three/drei'
+import * as THREE from 'three'
+import Link from 'next/link'
+import { ArrowRight, Cuboid, Zap, Layers, Code2, FileCode, Sliders, Play, Terminal, Paperclip, ArrowUp, Sparkles, Share2, Download, ChevronDown, Check, Box as BoxIcon, Globe } from 'lucide-react'
+import { getSession } from 'next-auth/react'
 
-// ─── CONFIGURATION ──────────────────────────────────────────────────────────
+// --- CONFIGURATION ---
 const LANDING_CTA_CONFIG = {
     mode: 'playground',
     authUrl: '/app/login',
     playgroundUrl: '/app/demo'
 };
 
-// ─── 3D HERO COMPONENT (NEON CNC MILLING HEAD) ──────────────────────────────
-function IsometricAssembly() {
-    const spindleRef = useRef<THREE.Group>(null);
-    const toolRef = useRef<THREE.Mesh>(null);
-    const wholeGroupRef = useRef<THREE.Group>(null);
-    
-    useFrame((state) => {
-        const time = state.clock.elapsedTime;
-        if (toolRef.current) toolRef.current.rotation.y += 0.8; 
-        if (spindleRef.current) {
-            spindleRef.current.position.x = Math.sin(time * 2) * 1.0;
-            spindleRef.current.position.z = Math.cos(time * 1.5) * 1.0;
-            spindleRef.current.position.y = 1.0 + Math.abs(Math.sin(time * 4)) * 0.15;
-        }
-        if (wholeGroupRef.current) wholeGroupRef.current.position.y = Math.sin(time * 2) * 0.1;
+function CadAssembly({ isHovered, compilingState }: { isHovered: boolean; compilingState: 'idle' | 'compiling' | 'success' }) {
+  const groupRef = useRef<THREE.Group>(null!)
+  
+  useFrame((state) => {
+    if (groupRef.current) {
+      let speed = 0.4
+      if (compilingState === 'compiling') {
+        speed = 4.5
+      } else if (isHovered) {
+        speed = 1.2
+      }
+      groupRef.current.rotation.y = state.clock.getElapsedTime() * speed
+      groupRef.current.rotation.x = Math.sin(state.clock.getElapsedTime() * 0.3) * (isHovered ? 0.35 : 0.2)
+      groupRef.current.rotation.z = Math.cos(state.clock.getElapsedTime() * 0.2) * 0.1
+    }
+  })
+
+  // Vibrant VS Code Dark Modern matching colors
+  const edgeColor = "#52525b"
+  const bodyColor = "#2d2d30"
+  
+  const materialProps = {
+    color: bodyColor,
+    metalness: 0.7,
+    roughness: 0.2,
+    clearcoat: 0.3,
+  }
+
+  const accentMaterialProps = {
+    color: "#007ACC",
+    metalness: 0.8,
+    roughness: 0.2,
+  }
+
+  return (
+    <Float speed={compilingState === 'compiling' ? 5 : 2} rotationIntensity={isHovered ? 0.8 : 0.5} floatIntensity={1}>
+      <group ref={groupRef} scale={1.25}>
+        {/* Central Hub */}
+        <Cylinder args={[0.6, 0.6, 1.2, 32]} rotation={[Math.PI / 2, 0, 0]}>
+          <meshStandardMaterial {...materialProps} />
+          <Edges scale={1.001} color={edgeColor} />
+        </Cylinder>
+
+        {/* Inner Shaft */}
+        <Cylinder args={[0.2, 0.2, 2.8, 32]} rotation={[Math.PI / 2, 0, 0]}>
+          <meshStandardMaterial {...accentMaterialProps} />
+        </Cylinder>
+
+        {/* Spoke 1 */}
+        <Box args={[2.2, 0.3, 0.3]}>
+          <meshStandardMaterial {...materialProps} />
+          <Edges scale={1.001} color={edgeColor} />
+        </Box>
+
+        {/* Spoke 2 */}
+        <Box args={[0.3, 2.2, 0.3]}>
+          <meshStandardMaterial {...materialProps} />
+          <Edges scale={1.001} color={edgeColor} />
+        </Box>
+
+        {/* Outer Ring */}
+        <Torus args={[1.1, 0.15, 16, 64]} rotation={[Math.PI / 2, 0, 0]}>
+          <meshStandardMaterial {...materialProps} />
+          <Edges scale={1.001} color={edgeColor} />
+        </Torus>
+        
+        {/* Secondary Ring */}
+        <Torus args={[1.4, 0.05, 16, 64]} rotation={[Math.PI / 2, 0, 0]}>
+          <meshStandardMaterial {...materialProps} />
+        </Torus>
+        
+        {/* Accent Caps */}
+        <Cylinder args={[0.3, 0.3, 0.2, 32]} rotation={[Math.PI / 2, 0, 0]} position={[0, 0, 0.65]}>
+          <meshStandardMaterial {...accentMaterialProps} />
+        </Cylinder>
+        <Cylinder args={[0.3, 0.3, 0.2, 32]} rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -0.65]}>
+          <meshStandardMaterial {...accentMaterialProps} />
+        </Cylinder>
+      </group>
+    </Float>
+  )
+}
+
+function Hero3D({ isHovered, compilingState }: { isHovered: boolean; compilingState: 'idle' | 'compiling' | 'success' }) {
+  return (
+    <div className="w-full h-full min-h-[400px] flex items-center justify-center">
+      <Canvas camera={{ position: [2.5, 1.8, 4.2], fov: 42 } as any}>
+        <ambientLight intensity={1.2} />
+        <directionalLight position={[10, 10, 10]} intensity={2.5} castShadow />
+        <directionalLight position={[-10, -10, -10]} intensity={1.5} color="#007ACC" />
+        <Environment preset="city" />
+        <CadAssembly isHovered={isHovered} compilingState={compilingState} />
+        <OrbitControls enableZoom={false} autoRotate={compilingState !== 'compiling'} autoRotateSpeed={isHovered ? 1.5 : 0.5} />
+      </Canvas>
+    </div>
+  )
+}
+
+
+function AnimatedSection({
+  children,
+  delay = 0,
+  direction = 'up',
+  duration = 0.8,
+  amount = 0.05,
+  className = ''
+}: {
+  children: React.ReactNode;
+  delay?: number;
+  direction?: 'up' | 'down' | 'left' | 'right';
+  duration?: number;
+  amount?: number;
+  className?: string;
+}) {
+  const [isVisible, setIsVisible] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) setIsVisible(true)
+    }, { threshold: 0.05 })
+    if (ref.current) observer.observe(ref.current)
+    return () => observer.disconnect()
+  }, [])
+
+  const getTranslate = () => {
+    if (!isVisible) {
+      const val = amount * 100
+      switch (direction) {
+        case 'up': return `translateY(${val}px)`
+        case 'down': return `translateY(-${val}px)`
+        case 'left': return `translateX(${val}px)`
+        case 'right': return `translateX(-${val}px)`
+      }
+    }
+    return 'none'
+  }
+
+  return (
+    <div 
+      ref={ref}
+      style={{
+        opacity: isVisible ? 1 : 0,
+        transform: getTranslate(),
+        transition: `opacity ${duration}s cubic-bezier(0.16, 1, 0.3, 1) ${delay}s, transform ${duration}s cubic-bezier(0.16, 1, 0.3, 1) ${delay}s`
+      }}
+      className={className}
+    >
+      {children}
+    </div>
+  )
+}
+
+function AnimatedCode() {
+  const [codeText, setCodeText] = useState('')
+  const fullCode = `// CADCopilot Generated Model
+$fn = 64;
+
+// Base dimensions
+outer_dia = 120.0;
+inner_dia = 15.0;
+thickness = 12.0;
+
+// Flange hub geometry
+difference() {
+  union() {
+    // Central Hub
+    cylinder(h=thickness, d=30, center=true);
+    // Outer Ring
+    rotate_extrude() 
+      translate([outer_dia/2 - 6, 0, 0]) 
+      circle(d=thickness);
+    // Radial Spokes
+    for(i=[0:4]) {
+      rotate([0, 0, i * 72])
+        translate([outer_dia/4, 0, 0])
+        cube([outer_dia/2, 6, 6], center=true);
+    }
+  }
+  // Shaft Hole
+  cylinder(h=thickness + 2, d=inner_dia, center=true);
+}`
+
+  useEffect(() => {
+    let index = 0
+    let timer: NodeJS.Timeout
+    const type = () => {
+      setCodeText(fullCode.slice(0, index))
+      index++
+      if (index <= fullCode.length) {
+        timer = setTimeout(type, 20)
+      } else {
+        timer = setTimeout(() => {
+          index = 0
+          type()
+        }, 8000)
+      }
+    }
+    type()
+    return () => clearTimeout(timer)
+  }, [])
+
+  const syntaxHighlight = (code: string) => {
+    const lines = code.split('\n');
+    return lines.map((line, i) => {
+      if (line.trim().startsWith('//')) {
+        return <div key={i} className="text-emerald-500">{line}</div>;
+      }
+      const tokens = line.split(/(\s+|\(|\)|\{|\}|;|=|,|\[|\])/);
+      return (
+        <div key={i} className="min-h-[14px]">
+          {tokens.map((token, j) => {
+            if (/^(difference|union|cylinder|rotate_extrude|translate|circle|rotate|for|cube)$/.test(token)) {
+              return <span key={j} className="text-blue-400 font-semibold">{token}</span>;
+            }
+            if (/^\d+(\.\d+)?$/.test(token)) {
+              return <span key={j} className="text-amber-400">{token}</span>;
+            }
+            if (/^(\$fn|outer_dia|inner_dia|thickness|i)$/.test(token)) {
+              return <span key={j} className="text-purple-400 font-medium">{token}</span>;
+            }
+            return <span key={j}>{token}</span>;
+          })}
+        </div>
+      );
     });
+  }
 
-    // Cyber-Brutalist Materials
-    const baseMat = new THREE.MeshStandardMaterial({ color: '#0A0026', roughness: 0.8 }); // Deep Purple
-    const cyanMat = new THREE.MeshStandardMaterial({ color: '#00F0FF', roughness: 0.4, emissive: '#00F0FF', emissiveIntensity: 0.2 }); 
-    const pinkMat = new THREE.MeshStandardMaterial({ color: '#FF0066', roughness: 0.5 });
-    const yellowMat = new THREE.MeshStandardMaterial({ color: '#CCFF00', roughness: 0.5 });
-
-    return (
-        <group ref={wholeGroupRef} rotation={[0, Math.PI / 4, 0]}>
-            {/* Raw Material Workpiece */}
-            <mesh position={[0, -0.5, 0]} material={baseMat}>
-                <boxGeometry args={[4, 1, 4]} />
-                <Edges scale={1.001} threshold={15} color="#00F0FF" />
-            </mesh>
-
-            {/* Fixture plate */}
-            <mesh position={[0, -1.2, 0]} material={baseMat}>
-                <boxGeometry args={[5, 0.4, 5]} />
-                <Edges scale={1.001} threshold={15} color="#FF0066" />
-            </mesh>
-            
-            {/* CNC Spindle Assembly */}
-            <group ref={spindleRef}>
-                <mesh position={[0, 2.2, 0]} material={cyanMat}>
-                    <boxGeometry args={[1.2, 1.0, 1.2]} />
-                    <Edges scale={1.001} threshold={15} color="#050014" />
-                </mesh>
-                <mesh position={[0, 1.0, 0]} material={pinkMat}>
-                    <cylinderGeometry args={[0.8, 0.8, 1.4, 16]} />
-                    <Edges scale={1.001} threshold={15} color="#050014" />
-                </mesh>
-                <mesh position={[0, 0.1, 0]} material={yellowMat}>
-                    <cylinderGeometry args={[0.5, 0.3, 0.6, 16]} />
-                    <Edges scale={1.001} threshold={15} color="#050014" />
-                </mesh>
-                <mesh ref={toolRef} position={[0, -0.4, 0]} material={cyanMat}>
-                    <cylinderGeometry args={[0.12, 0.12, 0.8, 6]} />
-                    <Edges scale={1.001} threshold={15} color="#050014" />
-                </mesh>
-            </group>
-        </group>
-    );
+  return (
+    <pre className="font-mono text-[9px] leading-normal text-zinc-300 overflow-x-auto whitespace-pre select-none h-full max-h-[350px] p-1">
+      <code>
+        {syntaxHighlight(codeText)}
+        <span className="animate-pulse text-blue-500 font-bold">|</span>
+      </code>
+    </pre>
+  )
 }
 
-// ─── ANIMATION WRAPPER ──────────────────────────────────────────────────────
-function FadeIn({ children, delay = 0, className = "" }: { children: React.ReactNode, delay?: number, className?: string }) {
-    const [isVisible, setIsVisible] = useState(false);
-    const ref = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        const observer = new IntersectionObserver(([entry]) => {
-            if (entry.isIntersecting) setIsVisible(true);
-        }, { threshold: 0.1 });
-        if (ref.current) observer.observe(ref.current);
-        return () => observer.disconnect();
-    }, []);
-
-    return (
-        <div 
-            ref={ref}
-            style={{ transitionDelay: `${delay}ms` }}
-            className={`transition-all duration-500 ease-out ${
-                isVisible ? 'opacity-100 translate-y-0 filter-none' : 'opacity-0 translate-y-12 blur-[2px]'
-            } ${className}`}
-        >
-            {children}
-        </div>
-    );
+function ParamsView() {
+  return (
+    <pre className="font-mono text-[9px] leading-relaxed text-zinc-300 overflow-x-auto whitespace-pre select-none h-full max-h-[350px] p-1">
+      <code>
+        {"{\n"}
+        {"  "}<span className="text-purple-400">"$fn"</span>: <span className="text-amber-400">64</span>,{"\n"}
+        {"  "}<span className="text-purple-400">"outer_dia"</span>: <span className="text-amber-400">120.0</span>,{"\n"}
+        {"  "}<span className="text-purple-400">"inner_dia"</span>: <span className="text-amber-400">15.0</span>,{"\n"}
+        {"  "}<span className="text-purple-400">"thickness"</span>: <span className="text-amber-400">12.0</span>,{"\n"}
+        {"  "}<span className="text-purple-400">"spoke_count"</span>: <span className="text-amber-400">5</span>{"\n"}
+        {"}"}
+      </code>
+    </pre>
+  )
 }
 
-// ─── DECORATIVE PATTERN ─────────────────────────────────────────────────────
-const GeometricPattern = ({ className }: { className?: string }) => {
-    const [mounted, setMounted] = useState(false);
-    useEffect(() => setMounted(true), []);
-    if (!mounted) return <div className={`w-48 ${className}`} />;
-
-    return (
-        <div className={`flex flex-wrap gap-2 text-[#00F0FF] w-48 opacity-30 ${className}`}>
-            {Array.from({ length: 24 }).map((_, i) => {
-                const icons = [<Square size={12} key="1"/>, <Circle size={12} key="2"/>, <Plus size={14} key="3"/>];
-                return <div key={i}>{icons[Math.floor(Math.random() * icons.length)]}</div>;
-            })}
-        </div>
-    );
-};
-
-// ─── MAIN LANDING PAGE ──────────────────────────────────────────────────────
 export default function LandingPage() {
-    const router = useRouter();
-    const [activeMatrixTab, setActiveMatrixTab] = useState<'step' | 'dxf' | 'stl'>('step');
-    const [activeIdeTab, setActiveIdeTab] = useState<'chat' | 'editor' | 'history'>('editor');
+  const router = useRouter()
+  const featuresRef = useRef<HTMLDivElement>(null)
+  const ctaRef = useRef<HTMLDivElement>(null)
+  const [ctaCanvasActive, setCtaCanvasActive] = useState(false)
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [activeTab, setActiveTab] = useState<'code' | 'params'>('code')
+  const [compilingState, setCompilingState] = useState<'idle' | 'compiling' | 'success'>('idle')
+  const [isHovered, setIsHovered] = useState(false)
+  const [toastMsg, setToastMsg] = useState<string | null>(null)
+  const [exportDropdownOpen, setExportDropdownOpen] = useState(false)
 
-    const handleCtaNavigation = (mode: string) => {
-        router.push(LANDING_CTA_CONFIG.mode === mode ? LANDING_CTA_CONFIG.playgroundUrl : LANDING_CTA_CONFIG.authUrl);
-    };
+  const handleCtaNavigation = (mode: string) => {
+    if (isLoggedIn) {
+      router.push('/app')
+    } else {
+      router.push(LANDING_CTA_CONFIG.mode === mode ? LANDING_CTA_CONFIG.playgroundUrl : LANDING_CTA_CONFIG.authUrl)
+    }
+  }
 
-    return (
-        // ── ULTRA DARK BACKGROUND: Deep Violet/Navy (#050014) ──
-        <div className="min-h-screen bg-[#050014] text-[#E0E7FF] font-sans selection:bg-[#FF0066] selection:text-white overflow-x-hidden">
-            
-            {/* ── HEADER ── */}
-            <header className="fixed top-0 z-50 w-full border-b-4 border-[#00F0FF] bg-[#050014] px-6 py-4 flex justify-between items-center">
-                <div className="font-sans text-xl font-black text-[#00F0FF] flex items-center gap-2">
-                    <div className="bg-[#00F0FF] text-[#050014] p-1">
-                        <Box size={20} strokeWidth={3} />
-                    </div>
-                    CAD_COPILOT
+  const scrollToFeatures = (e: React.MouseEvent) => {
+    e.preventDefault()
+    featuresRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const session = await getSession()
+        setIsLoggedIn(Boolean(session))
+      } catch (err) {
+        setIsLoggedIn(false)
+      }
+    }
+    checkSession()
+  }, [])
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(([entry]) => {
+      setCtaCanvasActive(entry.isIntersecting)
+    }, { threshold: 0.01 })
+    if (ctaRef.current) observer.observe(ctaRef.current)
+    return () => observer.disconnect()
+  }, [])
+
+  const triggerToast = (msg: string) => {
+    setToastMsg(msg)
+    setTimeout(() => {
+      setToastMsg(null)
+    }, 2500)
+  }
+
+  const handleCompile = () => {
+    if (compilingState === 'compiling') return;
+    setCompilingState('compiling');
+    setTimeout(() => {
+      setCompilingState('success');
+      triggerToast("Compilation successful!");
+      setTimeout(() => {
+        setCompilingState('idle');
+      }, 1500);
+    }, 1500);
+  }
+
+  const handleShare = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    triggerToast("Workspace share link copied to clipboard!")
+  }
+
+  const handleExportOption = (format: string) => {
+    setExportDropdownOpen(false)
+    triggerToast(`Exporting model as ${format.toUpperCase()}...`)
+  }
+
+  return (
+    <div className="min-h-screen bg-[#181818] text-[#D4D4D4] selection:bg-[#007ACC]/30 overflow-hidden relative font-sans">
+      {/* Background Glows matching the app environment */}
+      <div className="absolute inset-0 z-0 pointer-events-none">
+        <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-[#007ACC]/5 rounded-full blur-[120px]" />
+        <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] bg-blue-500/5 rounded-full blur-[120px]" />
+      </div>
+
+      {/* Navigation */}
+      <header className="sticky top-0 z-50 w-full border-b border-[#2d2d2d] bg-[#1e1e1e]/80 backdrop-blur-md">
+        <nav className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto">
+          <div className="flex items-center gap-3">
+            <div className="relative w-10 h-10 flex items-center justify-center">
+              <div className="absolute inset-0 bg-[#007ACC] rounded-lg transform rotate-45 opacity-20"></div>
+              <Cuboid className="w-6 h-6 text-[#007ACC] relative z-10" />
+            </div>
+            <span className="text-2xl font-bold tracking-[0.2em] bg-clip-text text-transparent bg-gradient-to-b from-white via-zinc-200 to-zinc-400 drop-shadow-sm select-none">
+              CADVΞX
+            </span>
+          </div>
+          <div className="flex items-center gap-6">
+            <button
+              onClick={() => handleCtaNavigation('auth')}
+              className="group relative inline-flex items-center justify-center px-6 py-2.5 text-sm font-semibold text-white transition-all duration-200 bg-[#007ACC] rounded-xl hover:bg-[#005999] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#007ACC] shadow-[0_0_20px_rgba(0,122,204,0.3)] hover:shadow-[0_0_30px_rgba(0,122,204,0.5)] cursor-pointer"
+            >
+              {isLoggedIn ? 'Go to Workspace' : 'Launch App'}
+              {isLoggedIn && <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />}
+            </button>
+          </div>
+        </nav>
+      </header>
+
+      {/* Hero Section */}
+      <main className="relative z-10 flex flex-col items-center justify-center px-6 pt-20 pb-16 text-center max-w-5xl mx-auto">
+        {/* Badge */}
+        <AnimatedSection delay={0} direction="down" duration={0.6}>
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#007ACC]/10 border border-[#007ACC]/20 text-[#007ACC] text-xs font-semibold tracking-wider uppercase mb-8 backdrop-blur-md shadow-[0_0_15px_rgba(0,122,204,0.1)] select-none">
+            <Zap className="w-3.5 h-3.5 text-orange-400 fill-orange-400" /> INTELLIGENT 3D EVOLUTION
+          </div>
+        </AnimatedSection>
+
+        {/* Headline */}
+        <AnimatedSection delay={0.1} direction="up" duration={0.8}>
+          <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-6">
+            <span className="block text-transparent bg-clip-text bg-gradient-to-b from-white via-zinc-200 to-zinc-450 mb-2">
+              Where 2D Evolves Into
+            </span>
+            <span className="block text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-[#007ACC] to-cyan-400 pb-2 drop-shadow-[0_0_25px_rgba(0,122,204,0.4)]">
+              Intelligent 3D
+            </span>
+          </h1>
+        </AnimatedSection>
+
+        {/* Subheadline */}
+        <AnimatedSection delay={0.2} direction="up" duration={0.8}>
+          <p className="mt-6 text-lg md:text-xl text-zinc-400 max-w-2xl mx-auto leading-relaxed">
+            The next generation AI-powered CAD copilot. Seamlessly transform your two-dimensional ideas into complex, intelligent three-dimensional models with unparalleled precision.
+          </p>
+        </AnimatedSection>
+
+        {/* CTA Buttons */}
+        <AnimatedSection delay={0.35} direction="up" duration={0.8}>
+          <div className="mt-12 flex flex-col sm:flex-row items-center gap-6 justify-center">
+            <button 
+              onClick={() => handleCtaNavigation('playground')}
+              className="group relative inline-flex items-center justify-center px-8 py-4 text-base font-bold text-white transition-all duration-200 bg-gradient-to-b from-blue-500 to-[#007ACC] border border-blue-400/30 rounded-2xl hover:from-blue-400 hover:to-[#005999] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#007ACC] shadow-[0_0_40px_rgba(0,122,204,0.3)] overflow-hidden cursor-pointer"
+            >
+              <div className="absolute inset-0 w-full h-full -ml-14 bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-[20deg] group-hover:animate-[shimmer_1.5s_infinite]" />
+              {isLoggedIn ? 'Open Workspace' : 'Try Workspace'}
+              <ArrowRight className="w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform" />
+            </button>
+
+            <button 
+              onClick={scrollToFeatures}
+              className="inline-flex items-center justify-center px-8 py-4 text-base font-bold text-zinc-300 transition-all duration-200 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 hover:text-white backdrop-blur-sm shadow-[0_4px_20px_rgba(0,0,0,0.3)] cursor-pointer"
+            >
+              Learn More
+            </button>
+          </div>
+        </AnimatedSection>
+      </main>
+
+      {/* Mockup / Visual — elegant, aligned width, outside the constrained main */}
+      <AnimatedSection delay={0.5} direction="up" duration={1.0} amount={0.05} className="relative z-10 w-full px-4 pb-20">
+        <div className="relative w-full max-w-5xl mx-auto h-[580px]" style={{ perspective: '2000px' }}>
+          <div className="absolute inset-0 bg-gradient-to-t from-[#181818] via-transparent to-transparent z-10 rounded-t-3xl pointer-events-none" />
+          
+          <div 
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => {
+              setIsHovered(false)
+              setExportDropdownOpen(false)
+            }}
+            className="relative w-full h-full rounded-t-3xl border-t border-l border-r border-[#2d2d2d] bg-[#1e1e1e] overflow-hidden shadow-[0_-20px_50px_rgba(0,122,204,0.15),0_0_1px_1px_rgba(255,255,255,0.05)_inset]"
+          >
+            {/* Mock Sonner Toast */}
+            {toastMsg && (
+              <div className="absolute top-16 right-4 z-40 bg-[#252526] border border-[#007ACC]/30 text-zinc-100 px-3.5 py-2.5 rounded-lg text-[10px] font-mono flex items-center gap-2 shadow-2xl animate-in fade-in slide-in-from-top-2 duration-300">
+                <Check className="w-3.5 h-3.5 text-[#007ACC]" />
+                <span>{toastMsg}</span>
+              </div>
+            )}
+
+            {/* Toolbar */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[#2d2d2d] bg-[#252526] absolute top-0 w-full z-20 select-none">
+              <div className="flex items-center gap-6">
+                {/* Window buttons */}
+                <div className="flex gap-2">
+                  <div className="w-3 h-3 rounded-full bg-red-500/80" />
+                  <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
+                  <div className="w-3 h-3 rounded-full bg-green-500/80" />
                 </div>
-                <button 
-                    onClick={() => handleCtaNavigation('auth')}
-                    className="px-6 py-2 bg-[#FF0066] text-white text-xs font-black uppercase tracking-widest border-2 border-[#FF0066] shadow-[4px_4px_0px_0px_#00F0FF] hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-[2px_2px_0px_0px_#00F0FF] active:translate-y-[4px] active:translate-x-[4px] active:shadow-none transition-all"
+                {/* Title */}
+                <span className="text-[11px] text-[#A6A6A6] font-mono flex items-center gap-1.5 font-medium">
+                  <Terminal className="w-3.5 h-3.5 text-[#007ACC]" />
+                  cadv3x_copilot_workspace/model.scad
+                </span>
+              </div>
+              
+              {/* Compiler Controls */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCompile}
+                  disabled={compilingState === 'compiling'}
+                  className="flex items-center gap-1.5 px-3 py-1 rounded bg-[#007ACC]/15 hover:bg-[#007ACC]/30 text-[#007ACC] border border-[#007ACC]/30 text-[10px] font-semibold transition-all active:scale-98 disabled:opacity-50"
                 >
-                    Launch App
+                  <Play className={`w-3 h-3 ${compilingState === 'compiling' ? 'animate-spin' : ''}`} />
+                  {compilingState === 'compiling' ? 'COMPILING...' : 'COMPILE'}
                 </button>
-            </header>
+              </div>
+            </div>
 
-            {/* ── HERO ── */}
-            <section className="relative pt-32 pb-20 lg:pt-40 lg:pb-32 px-6 max-w-7xl mx-auto flex flex-col lg:flex-row items-center gap-12 min-h-screen">
-                <GeometricPattern className="absolute top-32 left-6 hidden lg:flex" />
-                <GeometricPattern className="absolute bottom-10 right-6 hidden lg:flex justify-end" />
-
-                <div className="flex-1 relative z-10 space-y-8">
-                    <FadeIn>
-                        <div className="inline-flex border-2 border-[#CCFF00] bg-[#CCFF00]/10 px-3 py-1 font-bold text-xs uppercase tracking-widest shadow-[4px_4px_0px_0px_#CCFF00] text-[#CCFF00] mb-4">
-                            <Activity size={14} className="inline mr-2 text-[#CCFF00]" /> Live Engine V2
-                        </div>
-                        <h1 className="text-6xl lg:text-[6.5rem] font-black text-white leading-[0.9] tracking-tighter">
-                            Agentic <br />
-                            <span className="text-[#00F0FF] drop-shadow-[4px_4px_0px_#FF0066]">Modelling</span>
-                        </h1>
-                    </FadeIn>
-                    
-                    <FadeIn delay={150}>
-                        <p className="text-lg text-[#A5B4FC] max-w-lg leading-relaxed font-bold">
-                            Upload a PDF blueprint, chat with the geometry engine, and export mathematically perfect STEP, STL, and DXF files directly from your browser context.
-                        </p>
-                    </FadeIn>
-
-                    <FadeIn delay={300} className="flex gap-4 pt-4">
-                        <button 
-                            onClick={() => handleCtaNavigation('playground')}
-                            className="bg-[#00F0FF] text-[#050014] px-10 py-5 font-black text-sm uppercase tracking-widest flex items-center gap-3 border-4 border-[#00F0FF] shadow-[6px_6px_0px_0px_#FF0066] hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-[4px_4px_0px_0px_#FF0066] active:translate-y-[6px] active:translate-x-[6px] active:shadow-none transition-all"
-                        >
-                            Try Workspace <ArrowRight size={18} />
-                        </button>
-                    </FadeIn>
+            <div className="w-full h-full bg-[#181818] pt-12 relative overflow-hidden flex">
+              
+              {/* Left Mock Chat Panel (Matching HitlWorkspace) */}
+              <div className="hidden md:flex flex-col w-64 border-r border-[#2d2d2d] bg-[#1e1e1e] p-3 text-[11px] font-sans select-none">
+                {/* Model selector mock */}
+                <div className="flex items-center justify-between mb-3 pb-2 border-b border-[#2d2d2d]">
+                  <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-[#252526] border border-[#2d2d2d] text-[#D4D4D4] w-full text-[10px] font-medium">
+                    <Sparkles className="w-3.5 h-3.5 text-[#007ACC]" />
+                    <span>Gemini 3.5 Flash</span>
+                    <ChevronDown className="w-3.5 h-3.5 text-[#858585] ml-auto" />
+                  </div>
                 </div>
-
-                {/* ── LIVE ISOMETRIC CANVAS ── */}
-                <FadeIn delay={400} className="flex-1 w-full h-[500px] lg:h-[700px] relative">
-                    <div className="absolute inset-0 bg-[#0A0026] border-4 border-[#00F0FF] shadow-[12px_12px_0px_0px_#FF0066] rounded-xl overflow-hidden blueprint-grid">
-                        <style>{`
-                            .blueprint-grid {
-                                background-image: linear-gradient(to right, rgba(0, 240, 255, 0.1) 1px, transparent 1px), linear-gradient(to bottom, rgba(0, 240, 255, 0.1) 1px, transparent 1px);
-                                background-size: 32px 32px;
-                            }
-                        `}</style>
-                        
-                        <Canvas orthographic camera={{ position: [10, 10, 10], zoom: 60 }} className="w-full h-full">
-                            <ambientLight intensity={1.5} color="#4C1D95" />
-                            <directionalLight position={[10, 20, 5]} intensity={2.5} color="#00F0FF" />
-                            <directionalLight position={[-10, 10, -5]} intensity={1.5} color="#FF0066" />
-                            <IsometricAssembly />
-                            <ContactShadows position={[0, -2.5, 0]} opacity={0.8} scale={15} blur={1} far={4} color="#00F0FF" />
-                            <OrbitControls makeDefault enableZoom={false} enablePan={false} autoRotate={false} />
-                        </Canvas>
-
-                        <div className="absolute top-6 left-6 font-mono text-[10px] font-bold text-[#050014] border-2 border-[#00F0FF] px-2 py-1 bg-[#00F0FF] shadow-[2px_2px_0px_0px_#FF0066] uppercase">
-                            Kinematic_Solver
-                        </div>
-                        <div className="absolute bottom-6 right-6 font-mono text-[10px] font-bold text-[#050014] border-2 border-[#CCFF00] px-2 py-1 bg-[#CCFF00] shadow-[2px_2px_0px_0px_#FF0066] uppercase">
-                            Spindle: 4000 RPM
-                        </div>
-                    </div>
-                </FadeIn>
-            </section>
-
-            {/* ── JETBRAINS-STYLE IDE WORKSPACE SECTION ── */}
-            <section className="py-32 px-6 max-w-7xl mx-auto border-t-4 border-[#00F0FF] bg-[#130033]">
-                <FadeIn>
-                    <div className="flex flex-col md:flex-row justify-between items-end mb-12">
-                        <div>
-                            <h2 className="text-5xl lg:text-7xl font-black text-white tracking-tighter uppercase mb-4">
-                                The Integrated <br/> <span className="text-[#CCFF00]">Workspace.</span>
-                            </h2>
-                            <p className="font-bold text-[#A5B4FC] max-w-lg">A developer-first environment. Chat with the visual parser, edit the raw parametric syntax, and track every version in a powerful dark-mode IDE.</p>
-                        </div>
-                    </div>
-                </FadeIn>
-
-                <FadeIn delay={150}>
-                    {/* IDE Window Container */}
-                    <div className="w-full h-[650px] border-4 border-[#00F0FF] bg-[#000000] shadow-[16px_16px_0px_0px_#CCFF00] rounded-xl overflow-hidden flex flex-col font-sans">
-                        
-                        {/* IDE Header */}
-                        <div className="h-12 border-b-2 border-[#2D0066] bg-[#0A0026] flex items-center justify-between px-4">
-                            <div className="flex gap-1.5 group">
-                                <div className="size-3 rounded-full bg-[#FF0066] flex items-center justify-center cursor-pointer">
-                                    <X size={8} strokeWidth={4} className="text-black opacity-0 group-hover:opacity-100 transition-opacity" />
-                                </div>
-                                <div className="size-3 rounded-full bg-[#CCFF00] flex items-center justify-center cursor-pointer">
-                                    <Minus size={8} strokeWidth={4} className="text-black opacity-0 group-hover:opacity-100 transition-opacity" />
-                                </div>
-                                <div className="size-3 rounded-full bg-[#00F0FF] flex items-center justify-center cursor-pointer">
-                                    <Square size={8} strokeWidth={4} className="text-black opacity-0 group-hover:opacity-100 transition-opacity" />
-                                </div>
-                            </div>
-                            <div className="flex bg-[#130033] rounded-md p-1 border border-[#2D0066]">
-                                {(['editor', 'chat', 'history'] as const).map(tab => (
-                                    <button 
-                                        key={tab}
-                                        onClick={() => setActiveIdeTab(tab)}
-                                        className={`px-4 py-1 text-[10px] font-bold uppercase tracking-widest rounded ${activeIdeTab === tab ? 'bg-[#FF0066] text-white shadow-sm' : 'text-[#8B5CF6] hover:text-[#00F0FF]'}`}
-                                    >
-                                        {tab}
-                                    </button>
-                                ))}
-                            </div>
-                            <div className="text-[#00F0FF] flex gap-3">
-                                <Play size={14} className="fill-[#CCFF00] text-[#CCFF00]" />
-                                <TerminalSquare size={14} />
-                            </div>
-                        </div>
-
-                        {/* IDE Body */}
-                        <div className="flex-1 flex overflow-hidden">
-                            {/* Left Sidebar (Icons) */}
-                            <div className="w-12 border-r-2 border-[#2D0066] bg-[#0A0026] flex flex-col items-center py-4 gap-6 text-[#8B5CF6]">
-                                <Layers size={18} className={activeIdeTab === 'editor' ? 'text-[#00F0FF]' : 'hover:text-[#00F0FF]'} />
-                                <MessageSquare size={18} className={activeIdeTab === 'chat' ? 'text-[#00F0FF]' : 'hover:text-[#00F0FF]'} />
-                                <GitCommit size={18} className={activeIdeTab === 'history' ? 'text-[#00F0FF]' : 'hover:text-[#00F0FF]'} />
-                            </div>
-
-                            {/* Main Content Area */}
-                            <div className="flex-1 bg-[#000000] p-6 overflow-hidden relative">
-                                
-                                {/* 1. Editor View */}
-                                {activeIdeTab === 'editor' && (
-                                    <div className="flex h-full gap-6 animate-in fade-in duration-300">
-                                        <div className="flex-1 font-mono text-sm leading-loose">
-                                            <div className="text-[#8B5CF6] mb-4">// CAD_Copilot Generated OpenSCAD</div>
-                                            <div><span className="text-[#FF0066]">flange_d</span> <span className="text-[#00F0FF]">=</span> <span className="text-[#CCFF00]">42.0</span>;</div>
-                                            <div><span className="text-[#FF0066]">bore_d</span> <span className="text-[#00F0FF]">=</span> <span className="text-[#CCFF00]">12.5</span>;</div>
-                                            <div><span className="text-[#FF0066]">shaft_h</span> <span className="text-[#00F0FF]">=</span> <span className="text-[#CCFF00]">80.0</span>;</div>
-                                            <br/>
-                                            <div><span className="text-[#00F0FF]">module</span> <span className="text-[#E0E7FF]">main_assembly</span>() &#123;</div>
-                                            <div className="pl-6"><span className="text-[#00F0FF]">difference</span>() &#123;</div>
-                                            <div className="pl-12 text-[#A5B4FC]"><span className="text-[#FF0066]">cylinder</span>(d=flange_d, h=5, center=<span className="text-[#CCFF00]">true</span>);</div>
-                                            <div className="pl-12 text-[#A5B4FC]"><span className="text-[#FF0066]">cylinder</span>(d=bore_d, h=shaft_h, center=<span className="text-[#CCFF00]">true</span>);</div>
-                                            <div className="pl-6 text-[#A5B4FC]">&#125;</div>
-                                            <div className="text-[#A5B4FC]">&#125;</div>
-                                        </div>
-                                        {/* Param Inspector Sidebar */}
-                                        <div className="w-64 border-l-2 border-[#2D0066] pl-6 flex flex-col gap-4">
-                                            <div className="text-[10px] font-bold text-[#8B5CF6] uppercase tracking-widest mb-2">Live Parameters</div>
-                                            {[
-                                                { label: 'flange_d', val: '42.0' },
-                                                { label: 'bore_d', val: '12.5', active: true },
-                                                { label: 'shaft_h', val: '80.0' }
-                                            ].map(p => (
-                                                <div key={p.label} className={`p-3 rounded border-2 ${p.active ? 'border-[#00F0FF] bg-[#00F0FF]/10' : 'border-[#2D0066] bg-[#0A0026]'}`}>
-                                                    <div className="flex justify-between text-xs font-mono mb-2">
-                                                        <span className={p.active ? 'text-[#00F0FF]' : 'text-[#8B5CF6]'}>{p.label}</span>
-                                                        <span className="text-white">{p.val}</span>
-                                                    </div>
-                                                    <div className="h-1 bg-[#130033] rounded-full"><div className={`h-full ${p.active ? 'bg-[#00F0FF]' : 'bg-[#4C1D95]'}`} style={{width: '60%'}}/></div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 2. Chat View */}
-                                {activeIdeTab === 'chat' && (
-                                    <div className="flex flex-col h-full max-w-2xl mx-auto justify-end pb-8 animate-in fade-in duration-300 gap-6">
-                                        <div className="flex justify-end">
-                                            <div className="bg-[#FF0066] text-white text-sm p-4 rounded-xl rounded-tr-none border border-[#FF0066] max-w-[80%] shadow-[4px_4px_0px_0px_#00F0FF]">
-                                                Increase the bore diameter to 15mm and add a 2mm chamfer to the top edge of the flange.
-                                            </div>
-                                        </div>
-                                        <div className="flex justify-start">
-                                            <div className="bg-[#0A0026] border border-[#00F0FF] text-[#E0E7FF] text-sm p-4 rounded-xl rounded-tl-none max-w-[90%] shadow-[4px_4px_0px_0px_#CCFF00]">
-                                                <p className="font-bold mb-2 flex items-center gap-2 text-[#00F0FF]"><Cpu size={14}/> Engine Context Synced</p>
-                                                Done. I updated `bore_d` to 15.0 and appended a new boolean subtraction module to handle the 2mm chamfer on the top plane. 
-                                            </div>
-                                        </div>
-                                        <div className="mt-4 border-2 border-[#2D0066] rounded-lg p-2 flex items-center gap-3 bg-[#0A0026]">
-                                            <Upload size={16} className="text-[#00F0FF] ml-2" />
-                                            <div className="text-[#8B5CF6] text-sm font-mono flex-1">Type your intent or drop a blueprint...</div>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* 3. History View */}
-                                {activeIdeTab === 'history' && (
-                                    <div className="h-full animate-in fade-in duration-300 max-w-xl">
-                                        <div className="text-[10px] font-bold text-[#8B5CF6] uppercase tracking-widest mb-6">Version Control Timeline</div>
-                                        <div className="flex flex-col gap-0 relative">
-                                            <div className="absolute left-[11px] top-4 bottom-8 w-[2px] bg-[#2D0066]" />
-                                            {[
-                                                { id: 'v1.4', msg: 'Added 2mm chamfer to flange top', time: 'Just now', active: true },
-                                                { id: 'v1.3', msg: 'Adjusted bore_d from 12.5 to 15.0', time: '2 mins ago', active: false },
-                                                { id: 'v1.2', msg: 'Automated dimension extraction from PDF', time: '14 mins ago', active: false },
-                                                { id: 'v1.1', msg: 'Blueprint parsed (gear_housing_rev2.pdf)', time: '15 mins ago', active: false },
-                                            ].map((h, i) => (
-                                                <div key={h.id} className="flex gap-6 pb-8 relative z-10">
-                                                    <div className={`mt-1 size-6 rounded-full border-4 border-[#000000] flex items-center justify-center ${h.active ? 'bg-[#CCFF00]' : 'bg-[#4C1D95]'}`} />
-                                                    <div>
-                                                        <div className="flex items-center gap-3 mb-1">
-                                                            <span className="font-mono text-xs font-bold text-[#00F0FF]">{h.id}</span>
-                                                            <span className="text-sm font-bold text-white">{h.msg}</span>
-                                                        </div>
-                                                        <div className="text-xs text-[#8B5CF6] font-mono">{h.time}</div>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                            </div>
-                        </div>
-                    </div>
-                </FadeIn>
-            </section>
-
-            {/* ── EXPORT MATRIX ── */}
-            <section id="matrix" className="py-32 px-6 max-w-7xl mx-auto border-t-4 border-[#00F0FF] bg-[#050014]">
-                <FadeIn>
-                    <div className="flex flex-col md:flex-row md:items-end justify-between gap-8 mb-16">
-                        <div>
-                            <h2 className="text-5xl lg:text-7xl font-black text-white tracking-tighter uppercase">Export <br/> <span className="text-[#FF0066]">Formats.</span></h2>
-                        </div>
-                        <div className="flex bg-[#0A0026] border-4 border-[#FF0066] shadow-[6px_6px_0px_0px_#00F0FF]">
-                            {(['step', 'dxf', 'stl'] as const).map(tab => (
-                                <button
-                                    key={tab}
-                                    onClick={() => setActiveMatrixTab(tab)}
-                                    className={`px-8 py-4 text-base font-black uppercase tracking-widest border-r-4 border-[#FF0066] last:border-r-0 transition-colors ${
-                                        activeMatrixTab === tab ? 'bg-[#FF0066] text-white' : 'text-[#00F0FF] hover:bg-[#FF0066]/20'
-                                    }`}
-                                >
-                                    {tab}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                </FadeIn>
-
-                <div className="grid lg:grid-cols-2 gap-12 h-[450px]">
-                    <FadeIn className="h-full">
-                        <div className="h-full border-4 border-[#00F0FF] bg-[#000000] p-12 shadow-[8px_8px_0px_0px_#CCFF00] flex flex-col justify-center">
-                            {activeMatrixTab === 'step' && (
-                                <div>
-                                    <Box size={48} className="text-[#00F0FF] mb-8" strokeWidth={2.5} />
-                                    <h3 className="text-4xl font-black text-white mb-4 uppercase tracking-tight">STEP (B-Rep)</h3>
-                                    <p className="text-[#A5B4FC] font-bold text-lg leading-relaxed">Mathematically pure NURBS curves compiled headless via OpenCASCADE. Ready for industrial CNC machining workflows.</p>
-                                </div>
-                            )}
-                            {activeMatrixTab === 'dxf' && (
-                                <div>
-                                    <FileCode size={48} className="text-[#00F0FF] mb-8" strokeWidth={2.5} />
-                                    <h3 className="text-4xl font-black text-white mb-4 uppercase tracking-tight">DXF (2D Vector)</h3>
-                                    <p className="text-[#A5B4FC] font-bold text-lg leading-relaxed">Automated orthographic projections. Generates precise silhouettes, section cuts, and multipage blueprints natively.</p>
-                                </div>
-                            )}
-                            {activeMatrixTab === 'stl' && (
-                                <div>
-                                    <Cpu size={48} className="text-[#00F0FF] mb-8" strokeWidth={2.5} />
-                                    <h3 className="text-4xl font-black text-white mb-4 uppercase tracking-tight">STL (Mesh)</h3>
-                                    <p className="text-[#A5B4FC] font-bold text-lg leading-relaxed">Instantly rendered via local WebAssembly threads in the browser. Perfect for high-speed prototyping and 3D printing.</p>
-                                </div>
-                            )}
-                        </div>
-                    </FadeIn>
-                    
-                    <FadeIn delay={150} className="h-full border-4 border-[#FF0066] bg-[#0A0026] shadow-[8px_8px_0px_0px_#00F0FF] flex items-center justify-center relative overflow-hidden">
-                        <style>{`
-                            .bg-grid-small { background-image: radial-gradient(#00F0FF 1px, transparent 1px); background-size: 20px 20px; opacity: 0.15; }
-                        `}</style>
-                        <div className="absolute inset-0 bg-grid-small" />
-
-                        {activeMatrixTab === 'step' && (
-                            <div className="size-56 rounded-full border-4 border-[#CCFF00] flex items-center justify-center bg-[#050014] shadow-[8px_8px_0px_0px_#FF0066] relative z-10">
-                                <div className="font-sans font-black text-2xl text-[#00F0FF] uppercase tracking-tighter">Exact_Math</div>
-                            </div>
-                        )}
-                        {activeMatrixTab === 'dxf' && (
-                            <div className="w-72 h-56 border-4 border-[#00F0FF] bg-[#050014] shadow-[8px_8px_0px_0px_#CCFF00] relative flex flex-col justify-center items-center z-10">
-                                <div className="w-full border-t-4 border-dashed border-[#FF0066]" />
-                                <span className="mt-4 text-base font-black uppercase text-[#FF0066] bg-[#050014] px-2">A-A Slice Plane</span>
-                            </div>
-                        )}
-                        {activeMatrixTab === 'stl' && (
-                            <svg viewBox="0 0 100 100" className="size-64 stroke-[#00F0FF] fill-[#050014] drop-shadow-[8px_8px_0px_#FF0066] z-10" strokeWidth="2">
-                                <polygon points="50,5 95,25 95,75 50,95 5,75 5,25" />
-                                <line x1="5" y1="25" x2="50" y2="50" />
-                                <line x1="95" y1="25" x2="50" y2="50" />
-                                <line x1="50" y1="95" x2="50" y2="50" />
-                            </svg>
-                        )}
-                    </FadeIn>
-                </div>
-            </section>
-
-            {/* ── BOTTOM CTA ── */}
-            <section className="py-40 px-6 text-center border-t-4 border-[#00F0FF] bg-[#130033] relative overflow-hidden">
-                <GeometricPattern className="absolute top-10 left-10 hidden md:block" />
-                <GeometricPattern className="absolute bottom-10 right-10 hidden md:block" />
                 
-                <FadeIn className="relative z-10">
-                    <h2 className="text-7xl lg:text-9xl font-black text-white tracking-tighter mb-12 uppercase">
-                        Start <br/> Compiling.
-                    </h2>
-                    <button 
-                        onClick={() => handleCtaNavigation('auth')}
-                        className="bg-[#CCFF00] text-[#050014] px-16 py-8 font-black text-2xl uppercase tracking-widest transition-all inline-flex items-center gap-4 border-4 border-[#050014] shadow-[8px_8px_0px_0px_#FF0066] hover:translate-y-[4px] hover:translate-x-[4px] hover:shadow-[4px_4px_0px_0px_#FF0066] active:translate-y-[8px] active:translate-x-[8px] active:shadow-none"
-                    >
-                        Launch App <ArrowRight size={32} strokeWidth={3} />
+                {/* Messages History */}
+                <div className="flex-1 space-y-3 overflow-y-auto mb-3 pr-1 text-[10px]">
+                  <div className="flex flex-col gap-1">
+                    <div className="text-[9px] text-[#858585] font-mono">USER</div>
+                    <div className="px-2.5 py-2 rounded bg-[#252526] border border-[#2d2d2d] text-[#D4D4D4] leading-relaxed">
+                      Generate a spoked flange hub with an outer diameter of 120, thickness of 12 and 5 spokes.
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <div className="text-[9px] text-[#007ACC] font-mono flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-[#007ACC]" /> COPILOT
+                    </div>
+                    <div className="px-2.5 py-2 rounded bg-[#007ACC]/5 border border-[#007ACC]/20 text-[#D4D4D4] leading-relaxed">
+                      I've generated the OpenSCAD code for your request. You can adjust the parameters or edit the code directly on the right side.
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Chat Input Area */}
+                <div className="mt-auto">
+                  <div className="relative rounded-lg border border-[#2d2d2d] bg-[#252526] p-2 flex items-center gap-2">
+                    <span className="text-[#858585] hover:text-zinc-300 cursor-pointer">
+                      <Paperclip className="w-3.5 h-3.5" />
+                    </span>
+                    <input 
+                      type="text" 
+                      placeholder="Ask Copilot..." 
+                      disabled
+                      className="flex-1 bg-transparent border-none text-[10px] text-zinc-300 outline-none placeholder-[#858585] cursor-not-allowed"
+                    />
+                    <button className="flex size-5 items-center justify-center rounded bg-[#007ACC] text-white hover:bg-[#005999] opacity-80 cursor-not-allowed">
+                      <ArrowUp className="w-3 h-3" />
                     </button>
-                </FadeIn>
-            </section>
+                  </div>
+                </div>
+              </div>
 
-            {/* ── FOOTER ── */}
-            <footer className="border-t-4 border-[#00F0FF] bg-[#000000] px-6 py-12 flex flex-col md:flex-row justify-between items-center gap-6 font-sans font-bold text-sm uppercase tracking-widest text-[#8B5CF6]">
-                <div className="flex items-center gap-3 text-white">
-                    <Box size={20} className="text-[#00F0FF]" /> &copy; {new Date().getFullYear()} CAD_COPILOT | ALL RIGHTS RESERVED TO DATAVEX.AI
+              {/* Main Viewport Area */}
+              <div className="flex-1 relative flex items-center justify-center overflow-hidden bg-[#181818]">
+                <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff01_1px,transparent_1px),linear-gradient(to_bottom,#ffffff01_1px,transparent_1px)] bg-[size:24px_24px]"></div>
+                <div className="absolute inset-0 opacity-40 bg-[radial-gradient(circle_at_50%_50%,_rgba(0,122,204,0.12)_0%,_transparent_60%)] pointer-events-none" />
+
+                {/* Floating Viewport Title Overlay */}
+                <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#252526]/90 border border-[#2d2d2d] text-[9px] font-mono text-zinc-400 shadow-lg z-10 select-none">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>3D VIEWPORT</span>
                 </div>
-                <div className="flex gap-8">
-                    <a href="#" className="hover:text-[#00F0FF] transition-colors underline-offset-4">Docs</a>
-                    <a href={LANDING_CTA_CONFIG.playgroundUrl} className="hover:text-[#00F0FF] transition-colors underline-offset-4">Playground</a>
-                    <a href={LANDING_CTA_CONFIG.authUrl} className="text-[#FF0066] hover:text-white transition-colors underline-offset-4">Login</a>
+
+                {/* Action Buttons Overlay (Share Link & Export matching CADViewer) */}
+                <div className="absolute top-4 right-4 z-35 flex items-center gap-2 select-none">
+                  <button 
+                    onClick={handleShare}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#252526]/80 hover:bg-[#3c3c3c] border border-[#3c3c3c] shadow-lg backdrop-blur-md text-[11px] font-medium text-[#D4D4D4] transition-colors"
+                  >
+                    <Share2 size={13} className="text-[#007ACC]" />
+                    Share Link
+                  </button>
+
+                  <div className="relative">
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExportDropdownOpen(!exportDropdownOpen);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#252526]/80 hover:bg-[#3c3c3c] border border-[#3c3c3c] shadow-lg backdrop-blur-md text-[11px] font-medium text-[#D4D4D4] transition-colors"
+                    >
+                      <Download size={13} className="text-[#007ACC]" />
+                      Export
+                      <ChevronDown size={11} className="text-[#A6A6A6] ml-0.5" />
+                    </button>
+
+                    {/* Export Dropdown Mockup */}
+                    {exportDropdownOpen && (
+                      <div className="absolute top-9 right-0 w-44 border border-[#3c3c3c] bg-[#252526] p-1 shadow-2xl rounded-md z-50 text-[10px] font-sans text-[#D4D4D4] animate-in fade-in slide-in-from-top-1 duration-150">
+                        <div 
+                          onClick={() => handleExportOption('scad')}
+                          className="flex items-center gap-2 px-2.5 py-1.5 rounded hover:bg-[#007ACC] hover:text-white cursor-pointer"
+                        >
+                          <Layers size={11} className="text-zinc-400 group-hover:text-white" />
+                          <div className="flex flex-col">
+                            <span>OpenSCAD Script</span>
+                            <span className="text-[8px] opacity-60">.SCAD Text File</span>
+                          </div>
+                        </div>
+                        <div className="h-px bg-[#3c3c3c] my-1" />
+                        <div 
+                          onClick={() => handleExportOption('stl')}
+                          className="flex items-center gap-2 px-2.5 py-1.5 rounded hover:bg-[#007ACC] hover:text-white cursor-pointer"
+                        >
+                          <BoxIcon size={11} className="text-amber-500" />
+                          <div className="flex flex-col">
+                            <span>3D Printable Mesh</span>
+                            <span className="text-[8px] opacity-60">.STL Binary</span>
+                          </div>
+                        </div>
+                        <div 
+                          onClick={() => handleExportOption('step')}
+                          className="flex items-center gap-2 px-2.5 py-1.5 rounded hover:bg-[#007ACC] hover:text-white cursor-pointer"
+                        >
+                          <BoxIcon size={11} className="text-blue-500" />
+                          <div className="flex flex-col">
+                            <span>Parametric CAD Sheet</span>
+                            <span className="text-[8px] opacity-60">.STEP Model</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-            </footer>
+
+                <div className="w-full h-full relative z-0">
+                  <Hero3D isHovered={isHovered} compilingState={compilingState} />
+                </div>
+              </div>
+
+              {/* Code/Params Editor Sidebar */}
+              <div className="hidden lg:flex flex-col w-56 border-l border-[#2d2d2d] bg-[#1e1e1e] p-4 overflow-hidden">
+                {/* Editor tab bar */}
+                <div className="flex items-center justify-between mb-4 pb-3 border-b border-[#2d2d2d]">
+                  <div className="flex gap-1.5 select-none">
+                    <button 
+                      onClick={() => setActiveTab('code')}
+                      className={`px-2.5 py-1 rounded text-[9px] font-mono font-semibold flex items-center gap-1 transition-colors ${activeTab === 'code' ? 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-500' : 'text-zinc-500 hover:text-zinc-300'}`}
+                    >
+                      <FileCode className="w-3 h-3" /> model.scad
+                    </button>
+                    <button 
+                      onClick={() => setActiveTab('params')}
+                      className={`px-2.5 py-1 rounded text-[9px] font-mono font-semibold flex items-center gap-1 transition-colors ${activeTab === 'params' ? 'bg-purple-500/10 border border-purple-500/20 text-purple-500' : 'text-zinc-500 hover:text-zinc-300'}`}
+                    >
+                      <Sliders className="w-3 h-3" /> PARAMS
+                    </button>
+                  </div>
+                </div>
+
+                {/* Main Content Area */}
+                <div className="flex-1 overflow-auto">
+                  {activeTab === 'code' ? (
+                    <AnimatedCode />
+                  ) : (
+                    <ParamsView />
+                  )}
+                </div>
+
+                {/* Status Bar */}
+                <div className="mt-auto pt-3 border-t border-[#2d2d2d] flex flex-col gap-2 select-none">
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-2 w-2">
+                      {compilingState === 'compiling' ? (
+                        <>
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75" />
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-500" />
+                        </>
+                      ) : compilingState === 'success' ? (
+                        <>
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                        </>
+                      ) : (
+                        <>
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                        </>
+                      )}
+                    </span>
+                    <span className={`text-[9px] font-mono ${compilingState === 'compiling' ? 'text-yellow-500 font-semibold animate-pulse' : compilingState === 'success' ? 'text-emerald-500 font-semibold' : 'text-zinc-500'}`}>
+                      {compilingState === 'compiling' ? 'Compiling kernel...' : compilingState === 'success' ? 'Compile Success!' : 'Ready'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-    );
+      </AnimatedSection>
+
+      {/* Features Section */}
+      <section id="features" ref={featuresRef} className="relative z-10 py-32 bg-[#1b1b1c] border-t border-[#2d2d2d]">
+        <div className="max-w-7xl mx-auto px-6">
+          <AnimatedSection direction="up" duration={0.7}>
+            <div className="text-center mb-16">
+              <h2 className="text-3xl md:text-5xl font-bold mb-6 text-transparent bg-clip-text bg-gradient-to-b from-white to-zinc-400">
+                Powerful Features
+              </h2>
+              <p className="text-zinc-400 max-w-2xl mx-auto text-lg">
+                Everything you need to design, iterate, and export complex 3D models from simple 2D descriptions.
+              </p>
+            </div>
+          </AnimatedSection>
+
+          <div className="grid md:grid-cols-3 gap-8">
+            {/* Feature 1 */}
+            <AnimatedSection delay={0} direction="up" duration={0.7}>
+              <div className="p-8 rounded-3xl bg-[#1e1e1e] border border-[#2d2d2d] hover:border-[#007ACC]/55 transition-all duration-300 group hover:-translate-y-1 shadow-[0_4px_30px_rgba(0,0,0,0.4)]">
+                <div className="w-14 h-14 rounded-2xl bg-[#007ACC]/10 border border-[#007ACC]/20 flex items-center justify-center mb-6 group-hover:scale-110 group-hover:bg-[#007ACC]/20 transition-all duration-300">
+                  <Layers className="w-7 h-7 text-[#007ACC]" />
+                </div>
+                <h3 className="text-xl font-bold text-white mb-3">Seamless 2D to 3D</h3>
+                <p className="text-zinc-400 leading-relaxed">
+                  Upload your 2D sketches and let our AI engine instantly generate precise 3D models ready for engineering and rendering.
+                </p>
+              </div>
+            </AnimatedSection>
+
+            {/* Feature 2 */}
+            <AnimatedSection delay={0.15} direction="up" duration={0.7}>
+              <div className="p-8 rounded-3xl bg-[#1e1e1e] border border-[#2d2d2d] hover:border-[#007ACC]/55 transition-all duration-300 group hover:-translate-y-1 shadow-[0_4px_30px_rgba(0,0,0,0.4)]">
+                <div className="w-14 h-14 rounded-2xl bg-[#007ACC]/10 border border-[#007ACC]/20 flex items-center justify-center mb-6 group-hover:scale-110 group-hover:bg-[#007ACC]/20 transition-all duration-300">
+                  <Zap className="w-7 h-7 text-[#007ACC]" />
+                </div>
+                <h3 className="text-xl font-bold text-white mb-3">Real-time Generation</h3>
+                <p className="text-zinc-400 leading-relaxed">
+                  Experience lightning-fast model generation and adjustments. See your changes reflected instantly in the interactive viewport.
+                </p>
+              </div>
+            </AnimatedSection>
+
+            {/* Feature 3 */}
+            <AnimatedSection delay={0.3} direction="up" duration={0.7}>
+              <div className="p-8 rounded-3xl bg-[#1e1e1e] border border-[#2d2d2d] hover:border-[#007ACC]/55 transition-all duration-300 group hover:-translate-y-1 shadow-[0_4px_30px_rgba(0,0,0,0.4)]">
+                <div className="w-14 h-14 rounded-2xl bg-[#007ACC]/10 border border-[#007ACC]/20 flex items-center justify-center mb-6 group-hover:scale-110 group-hover:bg-[#007ACC]/20 transition-all duration-300">
+                  <Code2 className="w-7 h-7 text-[#007ACC]" />
+                </div>
+                <h3 className="text-xl font-bold text-white mb-3">Parametric Control</h3>
+                <p className="text-zinc-400 leading-relaxed">
+                  Retain full control over the generated models with deep parametric adjustments and intelligent constraints.
+                </p>
+              </div>
+            </AnimatedSection>
+          </div>
+        </div>
+      </section>
+
+      {/* CTA Section */}
+      <section className="relative z-10 py-32 border-t border-[#2d2d2d] overflow-hidden bg-[#181818] px-6">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom,#007ACC12_0%,transparent_50%)] pointer-events-none" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-[#007ACC]/5 rounded-full blur-[100px] pointer-events-none" />
+        
+        <AnimatedSection direction="up" duration={0.8} amount={0.15}>
+          <div className="max-w-5xl mx-auto rounded-3xl border border-[#2d2d2d] bg-gradient-to-br from-[#1e1e1e] to-[#252526]/30 p-10 md:p-14 relative z-10 overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5),0_0_1px_1px_rgba(255,255,255,0.05)_inset]">
+            {/* Ambient inner glow */}
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-80 h-40 bg-[#007ACC]/10 rounded-full blur-[60px] pointer-events-none" />
+
+            <div className="grid md:grid-cols-12 gap-10 items-center text-left">
+              {/* Left Column: Info & Actions */}
+              <div className="md:col-span-7 space-y-6">
+                {/* Sub-badge */}
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#007ACC]/10 border border-[#007ACC]/25 text-[#007ACC] text-[10px] font-semibold tracking-wider uppercase select-none">
+                  ✨ INSTANT ACCESS
+                </div>
+
+                <h2 className="text-3xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-white via-zinc-100 to-zinc-400 tracking-tight leading-tight">
+                  Ready to Evolve Your Design?
+                </h2>
+                
+                <p className="text-sm text-zinc-400 leading-relaxed max-w-xl">
+                  Step into the future of CAD workstations. Generate, compile, and manipulate precise mechanical structures with AI-assisted workflows in seconds.
+                </p>
+
+                {/* Features checklist */}
+                <div className="space-y-2.5 text-xs text-zinc-300">
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex w-5 h-5 items-center justify-center rounded-full bg-[#007ACC]/10 text-[#007ACC]">
+                      <Check className="w-3 h-3" />
+                    </div>
+                    <span><strong>Zero-Setup CAD</strong>: Compile models directly in your browser context.</span>
+                  </div>
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex w-5 h-5 items-center justify-center rounded-full bg-[#007ACC]/10 text-[#007ACC]">
+                      <Check className="w-3 h-3" />
+                    </div>
+                    <span><strong>Agentic Synthesis</strong>: Chat with Copilot to generate parametric code.</span>
+                  </div>
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex w-5 h-5 items-center justify-center rounded-full bg-[#007ACC]/10 text-[#007ACC]">
+                      <Check className="w-3 h-3" />
+                    </div>
+                    <span><strong>Lossless CAD Sheets</strong>: Download industry-standard STEP, STL or DXF.</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 pt-2">
+                  <button
+                    onClick={() => handleCtaNavigation('auth')}
+                    className="group relative inline-flex items-center justify-center px-8 py-3.5 text-sm font-bold text-white transition-all duration-200 bg-[#007ACC] hover:bg-[#005999] rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#007ACC] shadow-[0_4px_20px_rgba(0,122,204,0.35)] hover:shadow-[0_8px_30px_rgba(0,122,204,0.5)] hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+                  >
+                    {isLoggedIn ? 'Open Workspace' : 'Launch Workspace'}
+                    <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
+                  </button>
+                  <button
+                    onClick={scrollToFeatures}
+                    className="inline-flex items-center justify-center px-6 py-3.5 text-sm font-bold text-zinc-300 transition-all duration-200 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 hover:text-white text-center cursor-pointer"
+                  >
+                    Learn More
+                  </button>
+                </div>
+              </div>
+
+              {/* Right Column: ThreeD Interactive preview */}
+              <div className="md:col-span-5 relative w-full flex flex-col items-center" ref={ctaRef}>
+                <div className="w-full max-w-sm h-56 rounded-xl border border-[#2d2d2d] bg-[#181818]/60 relative overflow-hidden flex items-center justify-center shadow-inner">
+                  <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff01_1px,transparent_1px),linear-gradient(to_bottom,#ffffff01_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none"></div>
+                  
+                  {/* Floating Viewport Tag */}
+                  <div className="absolute top-2 left-2 rounded bg-[#252526]/80 px-2 py-0.5 border border-[#2d2d2d] text-[7px] font-mono text-zinc-400 select-none">
+                    KINETIC_RADAR
+                  </div>
+
+                  {ctaCanvasActive ? (
+                    <Canvas camera={{ position: [2.5, 1.8, 4.2], fov: 42 } as any}>
+                      <ambientLight intensity={1.4} />
+                      <directionalLight position={[10, 10, 10]} intensity={3.0} />
+                      <directionalLight position={[-10, -10, -10]} intensity={2.0} color="#007ACC" />
+                      <group scale={0.7}>
+                        <CadAssembly isHovered={true} compilingState="idle" />
+                      </group>
+                    </Canvas>
+                  ) : (
+                    <div className="text-zinc-600 text-[10px] font-mono select-none animate-pulse">Initializing viewport...</div>
+                  )}
+                  
+                  {/* Compiling solver log */}
+                  <div className="absolute bottom-2 left-2 right-2 rounded bg-black/90 p-2 font-mono text-[8px] text-[#A6A6A6] border border-white/5 space-y-0.5 select-none leading-relaxed text-left">
+                    <div className="text-blue-400 font-bold flex items-center justify-between">
+                      <span>cadv3x-wasm-kernel</span>
+                      <span className="text-[7px] px-1 bg-green-500/10 border border-green-500/20 text-green-500 rounded">OK</span>
+                    </div>
+                    <div className="text-[7px]">Initializing geometry builder threads...</div>
+                    <div className="text-[7px] text-[#CCFF00]">&gt; compiled in 0.038s</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </AnimatedSection>
+      </section>
+
+      {/* Footer */}
+      <footer className="relative z-10 border-t border-[#2d2d2d] bg-[#1e1e1e] pt-16 pb-8 px-6 text-[#A6A6A6] text-xs font-sans select-none">
+        <div className="max-w-7xl mx-auto grid grid-cols-2 md:grid-cols-5 gap-8 mb-12">
+          {/* Brand Info Column */}
+          <div className="col-span-2 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="relative w-9 h-9 flex items-center justify-center">
+                <div className="absolute inset-0 bg-[#007ACC] rounded-lg transform rotate-45 opacity-20"></div>
+                <Cuboid className="w-5.5 h-5.5 text-[#007ACC] relative z-10" />
+              </div>
+              <span className="text-lg font-bold tracking-widest text-white">CADVΞX</span>
+            </div>
+            <p className="text-zinc-400 leading-relaxed max-w-sm">
+              The next generation agentic CAD workstation. Elevating 2D engineering blueprints into production-ready 3D models with high-speed WebAssembly compilation.
+            </p>
+            <div className="flex items-center gap-3 pt-2">
+              <a href="https://datavex.in" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+                <Globe className="w-4 h-4" />
+              </a>
+            </div>
+          </div>
+
+          {/* Product Links */}
+          <div className="space-y-3">
+            <h4 className="font-semibold text-white uppercase tracking-wider text-[10px]">Product</h4>
+            <ul className="space-y-2">
+              <li>
+                <Link href="/app" className="hover:text-white transition-colors">Workspace</Link>
+              </li>
+              <li>
+                <button onClick={() => handleCtaNavigation('playground')} className="hover:text-white transition-colors text-left cursor-pointer">Interactive Demo</button>
+              </li>
+              <li>
+                <button onClick={scrollToFeatures} className="hover:text-white transition-colors text-left cursor-pointer">Key Features</button>
+              </li>
+            </ul>
+          </div>
+
+          {/* Resources Links */}
+          <div className="space-y-3">
+            <h4 className="font-semibold text-white uppercase tracking-wider text-[10px]">Resources</h4>
+            <ul className="space-y-2">
+              <li>
+                <a href="#" className="hover:text-white transition-colors">Documentation</a>
+              </li>
+              <li>
+                <a href="#" className="hover:text-white transition-colors">WASM Kernel</a>
+              </li>
+              <li>
+                <a href="#" className="hover:text-white transition-colors">API References</a>
+              </li>
+            </ul>
+          </div>
+
+          {/* Company Links */}
+          <div className="space-y-3">
+            <h4 className="font-semibold text-white uppercase tracking-wider text-[10px]">Organization</h4>
+            <ul className="space-y-2">
+              <li>
+                <a href="https://datavex.in/" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors flex items-center gap-1">
+                  Datavex.ai <Globe className="w-3 h-3 text-[#007ACC]" />
+                </a>
+              </li>
+              <li>
+                <a href="#" className="hover:text-white transition-colors">Privacy Policy</a>
+              </li>
+              <li>
+                <a href="#" className="hover:text-white transition-colors">Terms of Service</a>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="max-w-7xl mx-auto pt-8 border-t border-[#2d2d2d]/60 flex flex-col md:flex-row justify-between items-center gap-4 text-zinc-500 font-mono text-[10px]">
+          <div>
+            © {new Date().getFullYear()} CADVΞX. All rights reserved.
+          </div>
+          <div>
+            Powered by <a href="https://datavex.in/" target="_blank" rel="noopener noreferrer" className="text-[#007ACC] hover:text-[#005999] transition-colors font-bold font-sans">Datavex.ai</a>
+          </div>
+        </div>
+      </footer>
+
+      {/* Tailwind Custom Animations */}
+      <style dangerouslySetInnerHTML={{__html: `
+        @keyframes shimmer {
+          100% { transform: translateX(200%); }
+        }
+      `}} />
+    </div>
+  )
 }
