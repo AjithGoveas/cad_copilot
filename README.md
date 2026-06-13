@@ -66,21 +66,47 @@ graph TD
 
 ## 🚦 Getting Started
 
-### 1) Prerequisites
+### 1) Run Instantly with Docker (Recommended)
+
+You can run the entire workstation stack locally in development or production mode using multi-stage Docker configurations.
+
+#### Development Mode (With Hot Reloading)
+1. Configure your `.env` in the root or set environment variables:
+   ```bash
+   GOOGLE_API_KEY=your_key_here
+   ```
+2. Spin up the containers:
+   ```bash
+   docker compose up --build
+   ```
+3. Open `http://localhost:3000` to start editing. Code edits in `/backend` or `/frontend` will trigger live reloads.
+
+#### Production Mode (Optimized & Secure)
+1. Run the production-targeted orchestration:
+   ```bash
+   docker compose -f docker-compose.prod.yml up --build -d
+   ```
+This automatically runs database migrations (`db-migrate`) before spawning the optimized standalone Next.js client (`frontend`) and the production-ready FastAPI backend (`backend`).
+
+---
+
+### 2) Run Manually (Local Host)
+
+#### Prerequisites
 - **Node.js 20+**
 - **Python 3.11+**
-- **Docker Desktop** (For local PostgreSQL persistence)
+- **Docker Desktop** (For PostgreSQL database container)
 
-### 2) Database Setup
-Start the PostgreSQL container from the root directory:
+#### Step 1: Database Setup
+Start the local PostgreSQL container from the root directory:
 ```bash
-docker compose up -d
+docker compose up postgres -d
 ```
 
-### 3) FastAPI AI Engine Setup
-Configure your Google Gemini API key and dependencies:
+#### Step 2: FastAPI AI Backend Setup
+Configure the environment and dependencies:
 ```bash
-cd ai-engine
+cd backend
 cp .env.example .env  # Add GOOGLE_API_KEY=your_key
 python -m venv .venv
 # Activate venv:
@@ -90,10 +116,10 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-### 4) Web UI Setup
-Initialize database schemas and run Next.js:
+#### Step 3: Next.js Frontend Setup
+Initialize database schemas and start the development server:
 ```bash
-cd ../web-ui
+cd ../frontend
 cp .env.example .env
 npm install
 npm run prisma:generate
