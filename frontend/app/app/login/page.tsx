@@ -73,7 +73,7 @@ export default function LoginPage() {
             <ShieldCheck className="h-4 w-4" />
           </div>
           <span className="font-mono text-xs font-black uppercase tracking-[0.2em] text-[#00C8FF]">
-            CAD Copilot
+            CADVΞX
           </span>
         </Link>
       </header>
@@ -157,7 +157,7 @@ export default function LoginPage() {
 
           <div className="mt-7 border-t border-[#3C3C3C]/80 pt-6 text-center">
             <p className="text-xs text-[#868A91]">
-              New to CAD Copilot?{" "}
+              New to CADVEX?{" "}
               <Link
                 id="signup-link"
                 href="/app/signup"

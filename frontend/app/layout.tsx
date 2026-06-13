@@ -16,7 +16,7 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-	title: 'CAD Copilot — Docs-to-CAD Workstation',
+	title: 'CADVΞX — Docs-to-CAD Workstation',
 	description: 'AI-powered CAD generation from technical blueprints using Gemini and OpenSCAD-WASM.',
 };
 

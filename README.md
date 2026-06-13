@@ -1,12 +1,11 @@
-# 📐 CAD Copilot
+# 📐 CADVΞX
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.136.0-009688.svg?style=flat&logo=FastAPI)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-15.0-black.svg?style=flat&logo=next.js)](https://nextjs.org)
 [![Three.js](https://img.shields.io/badge/Three.js-0.184-black.svg?style=flat&logo=three.js)](https://threejs.org)
 [![Gemini](https://img.shields.io/badge/Gemini_API-3.5_Flash-4F5B93.svg?style=flat&logo=google)](https://ai.google.dev)
 
-CAD Copilot is a state-of-the-art, AI-assisted CAD workstation designed to bridge the gap between natural language/drawings and parameterized 3D design models. By pairing **Google's Gemini multimodal LLM engine** with a **client-side WebAssembly OpenSCAD compilation kernel**, CAD Copilot allows engineers to generate, visualize, and surgically edit CAD code in real time without heavy server dependencies.
+CADVEX is a state-of-the-art, AI-assisted CAD workstation designed to bridge the gap between natural language/drawings and parameterized 3D design models. By pairing **Google's Gemini multimodal LLM engine** with a **client-side WebAssembly OpenSCAD compilation kernel**, CADVEX allows engineers to generate, visualize, and surgically edit CAD code in real time without heavy server dependencies.
 
 ![CAD Workstation Landing Mockup](https://images.unsplash.com/photo-1581092160607-ee22621dd758?auto=format&fit=crop&w=1200&q=80) *(For visualization purposes only)*
 
@@ -14,13 +13,13 @@ CAD Copilot is a state-of-the-art, AI-assisted CAD workstation designed to bridg
 
 ## ⚡ Core Philosophy & Capabilities
 
-Traditional CAD workflows require intensive manual drafting, while standard text-to-3D generators output un-editable, dense triangle meshes. CAD Copilot approaches 3D modeling as **Parametric Code Synthesis**. It generates human-readable, mathematically exact, and easily adjustable code.
+Traditional CAD workflows require intensive manual drafting, while standard text-to-3D generators output un-editable, dense triangle meshes. CADVEX approaches 3D modeling as **Parametric Code Synthesis**. It generates human-readable, mathematically exact, and easily adjustable code.
 
 ### 🔍 1. Multimodal Blueprint Audit
 Upload an engineering drawing, blueprint (PDF/PNG/JPEG), or a hand-drawn sketch. The AI Engine performs a multi-view visual analysis, extracting exact dimensions, coordinate alignments, feature hierarchies, and stacking references into a structured design matrix.
 
 ### 🌐 2. Browser-Local WASM Kernel
-All 3D rendering happens directly on the client. Enforcing a global singleton WebAssembly worker instance (compiled from OpenSCAD), CAD Copilot processes changes and returns 3D STL geometry instantly in the browser. This setup eliminates rendering roundtrips, scales without server cost, and operates sandboxed.
+All 3D rendering happens directly on the client. Enforcing a global singleton WebAssembly worker instance (compiled from OpenSCAD), CADVEX processes changes and returns 3D STL geometry instantly in the browser. This setup eliminates rendering roundtrips, scales without server cost, and operates sandboxed.
 
 ### 📐 3. Proximity-Based "Quick Edit"
 Click directly on cylindrical walls, circular holes, or planar faces of the 3D mesh. The viewport runs a spatial proximity algorithm matching the click coordinate to parameter ranges:
@@ -38,7 +37,7 @@ Convert 3D assemblies into 2D vector drawings (DXF). The app implements safety p
 
 ## 🏗️ System Architecture
 
-CAD Copilot split roles cleanly between backend AI intelligence and client-side execution:
+CADVEX split roles cleanly between backend AI intelligence and client-side execution:
 
 ```mermaid
 graph TD
@@ -107,7 +106,7 @@ Navigate to `http://localhost:3000` to start editing.
 
 ## 🚀 Future Roadmap
 
-We are expanding CAD Copilot into a comprehensive, production-grade engineering platform. The following features are currently planned:
+We are expanding CADVEX into a comprehensive, production-grade engineering platform. The following features are currently planned:
 
 * **[ ] Native STEP Export**: Integrate python-based OpenCASCADE / FreeCAD rendering pipelines on the backend to allow downloading exact B-Rep STEP models alongside standard STL meshes.
 * **[ ] Slicing & G-Code Integration**: Direct client-side integration of lightweight slicing algorithms to allow generating 3D printing paths (G-code) directly from the parametric canvas.

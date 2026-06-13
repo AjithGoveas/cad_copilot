@@ -1,5 +1,5 @@
 """
-CAD Copilot V2 - LLM Code Generation Service.
+CADVEX V2 - LLM Code Generation Service.
 
 Two-stage pipeline:
   Stage 1 (Audit)   - Extract a feature-map JSON from the blueprint image/PDF.
@@ -368,4 +368,4 @@ class LLMCodegenService:
             )
 
         raw = self._call_with_retry(_call, "edit")
-        return self._normalize_script(raw)
+        return self._normalize_script(raw)

@@ -70,8 +70,9 @@ export default function SignupPage() {
             <ShieldCheck className="h-4 w-4" />
           </div>
           <span className="font-mono text-xs font-black uppercase tracking-[0.2em] text-[#00C8FF]">
-            CAD Copilot
+            CADVΞX
           </span>
+
         </Link>
       </header>
 

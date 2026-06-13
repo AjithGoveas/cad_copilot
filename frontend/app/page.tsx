@@ -171,7 +171,7 @@ function AnimatedSection({
 
 function AnimatedCode() {
   const [codeText, setCodeText] = useState('')
-  const fullCode = `// CADCopilot Generated Model
+  const fullCode = `// CADVEX Generated Model
 $fn = 64;
 
 // Base dimensions
@@ -400,7 +400,7 @@ export default function LandingPage() {
         {/* Subheadline */}
         <AnimatedSection delay={0.2} direction="up" duration={0.8}>
           <p className="mt-6 text-lg md:text-xl text-zinc-400 max-w-2xl mx-auto leading-relaxed">
-            The next generation AI-powered CAD copilot. Seamlessly transform your two-dimensional ideas into complex, intelligent three-dimensional models with unparalleled precision.
+            The next generation AI-powered CAD workstation. Seamlessly transform your two-dimensional ideas into complex, intelligent three-dimensional models with unparalleled precision.
           </p>
         </AnimatedSection>
 
@@ -459,7 +459,7 @@ export default function LandingPage() {
                 {/* Title */}
                 <span className="text-[11px] text-[#A6A6A6] font-mono flex items-center gap-1.5 font-medium">
                   <Terminal className="w-3.5 h-3.5 text-[#007ACC]" />
-                  cadv3x_copilot_workspace/model.scad
+                  cadvex_workspace/model.scad
                 </span>
               </div>
               
@@ -499,7 +499,7 @@ export default function LandingPage() {
                   </div>
                   <div className="flex flex-col gap-1">
                     <div className="text-[9px] text-[#007ACC] font-mono flex items-center gap-1">
-                      <Sparkles className="w-3 h-3 text-[#007ACC]" /> COPILOT
+                      <Sparkles className="w-3 h-3 text-[#007ACC]" /> CADVEX
                     </div>
                     <div className="px-2.5 py-2 rounded bg-[#007ACC]/5 border border-[#007ACC]/20 text-[#D4D4D4] leading-relaxed">
                       I've generated the OpenSCAD code for your request. You can adjust the parameters or edit the code directly on the right side.
@@ -515,7 +515,7 @@ export default function LandingPage() {
                     </span>
                     <input 
                       type="text" 
-                      placeholder="Ask Copilot..." 
+                      placeholder="Ask CADVEX..." 
                       disabled
                       className="flex-1 bg-transparent border-none text-[10px] text-zinc-300 outline-none placeholder-[#858585] cursor-not-allowed"
                     />
@@ -760,7 +760,7 @@ export default function LandingPage() {
                     <div className="flex w-5 h-5 items-center justify-center rounded-full bg-[#007ACC]/10 text-[#007ACC]">
                       <Check className="w-3 h-3" />
                     </div>
-                    <span><strong>Agentic Synthesis</strong>: Chat with Copilot to generate parametric code.</span>
+                    <span><strong>Agentic Synthesis</strong>: Chat with CADVEX to generate parametric code.</span>
                   </div>
                   <div className="flex items-center gap-2.5">
                     <div className="flex w-5 h-5 items-center justify-center rounded-full bg-[#007ACC]/10 text-[#007ACC]">

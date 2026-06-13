@@ -1,6 +1,6 @@
-# ⚙️ CAD Copilot AI Engine (FastAPI Backend)
+# ⚙️ CADVEX AI Engine (FastAPI Backend)
 
-The Python FastAPI backend service that orchestrates the machine-intelligence layer of CAD Copilot. It converts natural language prompts, hand-drawn sketches, and blueprint drawings (PDF/images) into clean, parameterized OpenSCAD CAD scripts utilizing the **Google Gemini API**.
+The Python FastAPI backend service that orchestrates the machine-intelligence layer of CADVEX. It converts natural language prompts, hand-drawn sketches, and blueprint drawings (PDF/images) into clean, parameterized OpenSCAD CAD scripts utilizing the **Google Gemini API**.
 
 ---
 

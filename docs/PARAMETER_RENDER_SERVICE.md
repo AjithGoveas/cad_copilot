@@ -8,7 +8,7 @@ The python-based subprocess renderer was replaced by a **browser-local WebAssemb
 
 Spawning multiple WebAssembly threads simultaneously can lead to browser memory fragmentation and lockups. The application implements a global singleton worker:
 
-* **Location**: [cad-worker.ts](file:///c:/Users/ajith/Videos/nano_test/cad_project/cad_copilot/web-ui/workers/cad-worker.ts).
+* **Location**: [cad-worker.ts](../frontend/workers/cad-worker.ts).
 * **Singleton Lifecycle**:
   ```typescript
   let globalWorker: Worker | null = null;

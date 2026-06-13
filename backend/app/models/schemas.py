@@ -1,4 +1,4 @@
-"""Pydantic schemas for the CAD Copilot API."""
+"""Pydantic schemas for the CADVEX API."""
 from __future__ import annotations
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator

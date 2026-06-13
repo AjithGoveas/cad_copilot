@@ -1,6 +1,5 @@
 """
-CAD Copilot — Feature-Driven CAM Kernel v2
-Audit: Senior CNC Manufacturing Engineer / Python Systems Architect
+CADVEX — Feature-Driven CAM Kernel v2
 Fixes applied: BUG-01 through BUG-07 + CAMPlanner sequencing + schema compliance.
 """
 
@@ -306,7 +305,7 @@ class BasePostProcessor:
         unit_label = "mm" if units.lower() == "metric" else "inches"
         return [
             "%",
-            "O0001 (CAD COPILOT GENERATED CNC PROGRAM)",
+            "O0001 (CADVEX GENERATED CNC PROGRAM)",
             f"; Source File: {filename}",
             f"G17 {g_unit} G40 G49 G80 G90 G94 ; XY plane, {unit_label}, cancel comp/offsets, absolute, feed/min",
         ]
@@ -424,7 +423,7 @@ class SiemensPostProcessor(BasePostProcessor):
         g_unit = "G71" if units.lower() == "metric" else "G70"
         unit_label = "Metric" if units.lower() == "metric" else "Imperial"
         return [
-            "; CAD COPILOT - SIEMENS SINUMERIK",
+            "; CADVEX - SIEMENS SINUMERIK",
             f"; Source File: {filename}",
             f"G17 {g_unit} G40 G90 G94 ; XY plane, {unit_label}, cancel comp, absolute, feed/min",
         ]
@@ -1528,7 +1527,7 @@ class GCodeGenerator:
 
         gcode_lines = [
             "%",
-            "O0002 (CAD COPILOT GENERATED TURNING PROGRAM)",
+            "O0002 (CADVEX GENERATED TURNING PROGRAM)",
             f"; Source File: {filename}",
             "G18 G21 G40 G80 G90 G99 ; ZX plane, metric, cancel compensation, absolute mode, feed/rev",
         ]

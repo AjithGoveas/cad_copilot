@@ -1,8 +1,8 @@
-# 💻 CAD Copilot Web UI
+# 💻 CADVΞX Web UI
 
-The frontend for CAD Copilot is a browser-based, high-performance parametric CAD workstation built using **Next.js 15 (React 19)**, **React Three Fiber (Three.js)**, and a **client-side WebAssembly OpenSCAD compilation engine**.
+The frontend for CADVEX is a browser-based, high-performance parametric CAD workstation built using **Next.js 15 (React 19)**, **React Three Fiber (Three.js)**, and a **client-side WebAssembly OpenSCAD compilation engine**.
 
-It provides an interactive IDE-like workspace featuring a real-time 3D canvas viewport, a parameter inspector drawer, a Monaco code editor, and an integrated AI Copilot chat panel.
+It provides an interactive IDE-like workspace featuring a real-time 3D canvas viewport, a parameter inspector drawer, a Monaco code editor, and an integrated AI chat panel.
 
 ---
 

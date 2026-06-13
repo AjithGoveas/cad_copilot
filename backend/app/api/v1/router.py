@@ -1,4 +1,4 @@
-"""CAD Copilot V2 - /api/v1 router."""
+"""CADVEX V2 - /api/v1 router."""
 from __future__ import annotations
 
 import asyncio

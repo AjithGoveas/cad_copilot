@@ -1,4 +1,4 @@
-# CAD Copilot AI Engine - Backend Architecture
+# CADVEX AI Engine - Backend Architecture
 
 ## Overview
 
@@ -11,7 +11,7 @@ The ai-engine backend processes engineering drawings (PDF/image) and generates p
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        User / Web UI                             │
-│                   (Next.js - web-ui)                            │
+│                   (Next.js - frontend)                            │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ HTTP/HTTPS
                            ▼

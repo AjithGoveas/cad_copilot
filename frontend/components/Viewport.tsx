@@ -164,7 +164,7 @@ export const Viewport = memo(function Viewport({
                     <div className="text-center animate-in fade-in slide-in-from-bottom-4 duration-1000 delay-150">
                         <h3 className="font-sans text-sm font-medium tracking-wide text-zinc-300">Awaiting Geometry</h3>
                         <p className="mt-2 font-sans text-[13px] text-zinc-500 max-w-[250px] leading-relaxed">
-                            Upload a blueprint or describe a shape in the copilot to begin generating.
+                            Upload a blueprint or describe a shape in CADVΞX to begin generating.
                         </p>
                     </div>
                 </div>

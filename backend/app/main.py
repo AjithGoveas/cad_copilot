@@ -1,4 +1,4 @@
-"""CAD Copilot V2 — FastAPI entry point."""
+"""CADVEX V2 — FastAPI entry point."""
 from pathlib import Path
 
 # Load .env before importing anything that needs it
@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from app.api.v1.router import router as v1_router
 
 app = FastAPI(
-    title="CAD Copilot V2",
+    title="CADVEX V2",
     version="2.0.0",
     docs_url="/docs",
     redoc_url=None,

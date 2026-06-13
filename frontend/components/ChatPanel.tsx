@@ -68,7 +68,7 @@ export function ChatPanel({
                             <Box size={16} />
                         </div>
                         <span className="font-sans text-[14px] font-semibold tracking-wide text-zinc-100">
-                            CAD Copilot
+                            CADVΞX
                         </span>
                     </div>
                     <div className="flex items-center gap-3">
@@ -154,7 +154,7 @@ export function ChatPanel({
                                 onChange={(e) => setPrompt(e.target.value)}
                                 onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSubmit(e as any); }}
                                 rows={Math.min(Math.max(prompt.split('\n').length, 1), 8)}
-                                placeholder="Message CAD Copilot..."
+                                placeholder="Message CADVEX..."
                                 className="w-full resize-none bg-transparent px-4 py-3 font-sans text-[14px] leading-relaxed text-zinc-100 placeholder:text-zinc-500 focus:outline-none custom-scrollbar"
                                 style={{ minHeight: '52px', maxHeight: '200px' }}
                             />
@@ -186,7 +186,7 @@ export function ChatPanel({
                         
                         <div className="text-center px-4">
                             <span className="text-[11px] text-zinc-500 font-sans tracking-wide">
-                                CAD Copilot can make mistakes. Verify critical dimensions.
+                                CADVEX can make mistakes. Verify critical dimensions.
                             </span>
                         </div>
                     </div>

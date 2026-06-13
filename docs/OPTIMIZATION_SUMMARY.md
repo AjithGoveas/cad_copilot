@@ -1,6 +1,6 @@
-# CAD Copilot Optimization Summary
+# CADVEX Optimization Summary
 
-This document summarizes the optimization techniques implemented in CAD Copilot to achieve low latency, stable renders, and high accuracy.
+This document summarizes the optimization techniques implemented in CADVEX to achieve low latency, stable renders, and high accuracy.
 
 ---
 

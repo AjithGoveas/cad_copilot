@@ -1,12 +1,12 @@
-# CAD Copilot - Future Development Plan
+# CADVΞX - Future Development Plan
 
-This document outlines the successful implementation details of the CAD Copilot and maps out the future development phases.
+This document outlines the successful implementation details of CADVEX and maps out the future development phases.
 
 ---
 
 ## 1. Current System Milestones
 
-We have successfully migrated the CAD Copilot to a highly stable, low-latency stack:
+We have successfully migrated CADVEX to a highly stable, low-latency stack:
 1. **Decoupled AI Pipelines**: Created `/generate` and `/edit` routes on the FastAPI backend to separate model creation from surgical code refinement, preventing prompt dilution.
 2. **Local WASM Rendering**: Spawns a global singleton Web Worker compiling OpenSCAD locally inside the browser. This prevents RAM fragmentation, increases performance, and removes server render costs.
 3. **Proximity Parameter Editing**: Raycasting in the Three.js viewport checks spatial coordinates against cylinder axes (diameter/chamfer) and planes (height/extrusion) to open auto-focusing parameter inputs.

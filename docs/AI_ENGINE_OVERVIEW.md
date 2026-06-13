@@ -1,4 +1,4 @@
-# CAD Copilot AI Engine Overview
+# CADVEX AI Engine Overview
 
 The `ai-engine` is a FastAPI-powered Python microservice responsible for blueprint image audits, text-to-CAD synthesis, and spatial code editing using the Google Gemini API.
 

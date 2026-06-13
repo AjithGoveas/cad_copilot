@@ -47,7 +47,7 @@ export default function ViewerClient({ prompt, scadCode, parametersJson }: Viewe
 						<Box size={12} />
 					</div>
 					<span className="font-mono text-[10px] font-black uppercase tracking-[0.25em] text-[#007ACC]">
-						CAD Copilot
+						CADVΞX
 					</span>
 					<span className="text-[10px] text-[#3C3C3C]">/</span>
 					<span className="font-mono text-[10px] tracking-widest text-[#A6A6A6] truncate max-w-[200px] md:max-w-[400px]" title={prompt}>
@@ -104,7 +104,7 @@ export default function ViewerClient({ prompt, scadCode, parametersJson }: Viewe
 
 				<div className="mt-4 pt-4 border-t border-[#3C3C3C] flex flex-col gap-2 shrink-0">
 					<p className="font-mono text-[9px] text-[#A6A6A6] uppercase tracking-widest text-center">
-						Shared via CAD Copilot Workbench | ALL RIGHTS RESERVED TO DATAVEX.AI
+						Shared via CADVEX Workbench | ALL RIGHTS RESERVED TO DATAVEX.AI
 					</p>
 				</div>
 			</div>

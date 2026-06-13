@@ -1,6 +1,6 @@
-# CAD Copilot - Project Overview
+# CADVΞX - Project Overview
 
-CAD Copilot is an AI-assisted parametric CAD workstation that translates prompt requests, sketches, and 2D engineering drawings into human-editable 3D CAD files. 
+CADVEX is an AI-assisted parametric CAD workstation that translates prompt requests, sketches, and 2D engineering drawings into human-editable 3D CAD files. 
 
 By pairing **Google's Gemini multimodal AI backend** for layout reasoning with a **client-side WebAssembly kernel** for instant geometry compiles, the workstation combines the accessibility of AI generation with the precision of traditional CAD software.
 
@@ -11,7 +11,7 @@ By pairing **Google's Gemini multimodal AI backend** for layout reasoning with a
 * **Frontend Framework**: Next.js 15 (React 19) + TypeScript + TailwindCSS.
 * **3D Viewport Rendering**: Three.js + React Three Fiber (R3F) + `@react-three/drei`. Handles loaded STL mesh geometries, custom lighting stages, and edge outlines.
 * **Database & Persistence**: PostgreSQL + Prisma ORM for storing user accounts, project parameters, and sharing tokens.
-* **AI Copilot Backend**: Python 3.11+ + FastAPI + Uvicorn ASGI server.
+* **AI Workstation Backend**: Python 3.11+ + FastAPI + Uvicorn ASGI server.
 * **Generative Models**: Google Gemini 3.1 & 3.5 models (interfaced via `google-genai` SDK).
 * **CAD Kernel**: Browser-local **OpenSCAD WebAssembly (WASM)**. Geometry is compiled directly on the user's thread inside a Web Worker.
 
@@ -20,7 +20,7 @@ By pairing **Google's Gemini multimodal AI backend** for layout reasoning with a
 ## 2. Directory Structure
 
 ```text
-cad_copilot/
+cadvex/
 ├── docker-compose.yml           # Runs PostgreSQL database instance
 ├── ai-engine/                   # 🐍 Python FastAPI Backend (AI Logic)
 │   ├── app/
