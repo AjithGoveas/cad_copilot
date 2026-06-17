@@ -1758,28 +1758,64 @@ def _evaluate_node_impl(node: ASTNode) -> Any:
 
     elif name == 'multmatrix':
         matrix = (node.pos_args[0] if node.pos_args else node.attrs.get('m', node.attrs.get('matrix')))
+        
+        sx, sy, sz = 1.0, 1.0, 1.0
+        loc = Location((0, 0, 0))
+        
         if matrix and len(matrix) >= 3 and all(len(row) >= 4 for row in matrix[:3]):
             try:
+                import math
+                # Extract columns of linear part
+                c0 = [float(matrix[0][0]), float(matrix[1][0]), float(matrix[2][0])]
+                c1 = [float(matrix[0][1]), float(matrix[1][1]), float(matrix[2][1])]
+                c2 = [float(matrix[0][2]), float(matrix[1][2]), float(matrix[2][2])]
+                
+                # Compute scaling factors (norms of columns)
+                sx = math.sqrt(c0[0]**2 + c0[1]**2 + c0[2]**2)
+                sy = math.sqrt(c1[0]**2 + c1[1]**2 + c1[2]**2)
+                sz = math.sqrt(c2[0]**2 + c2[1]**2 + c2[2]**2)
+                
+                # Prevent division by zero
+                nsx = max(sx, 1e-9)
+                nsy = max(sy, 1e-9)
+                nsz = max(sz, 1e-9)
+                
+                # Normalize columns to form a rigid rotation/reflection matrix
+                r00, r10, r20 = c0[0]/nsx, c0[1]/nsx, c0[2]/nsx
+                r01, r11, r21 = c1[0]/nsy, c1[1]/nsy, c1[2]/nsy
+                r02, r12, r22 = c2[0]/nsz, c2[1]/nsz, c2[2]/nsz
+                
+                tx = float(matrix[0][3])
+                ty = float(matrix[1][3])
+                tz = float(matrix[2][3])
+                
                 from OCP.gp import gp_Trsf
                 trsf = gp_Trsf()
                 trsf.SetValues(
-                    float(matrix[0][0]), float(matrix[0][1]), float(matrix[0][2]), float(matrix[0][3]),
-                    float(matrix[1][0]), float(matrix[1][1]), float(matrix[1][2]), float(matrix[1][3]),
-                    float(matrix[2][0]), float(matrix[2][1]), float(matrix[2][2]), float(matrix[2][3]),
+                    r00, r01, r02, tx,
+                    r10, r11, r12, ty,
+                    r20, r21, r22, tz,
                 )
                 loc = Location(trsf)
-            except Exception:
+            except Exception as e:
+                print(f"[csg_parser] multmatrix decomposition failed: {e}")
                 try:
                     loc = Location((float(matrix[0][3]), float(matrix[1][3]), float(matrix[2][3])))
                 except Exception:
                     loc = Location((0, 0, 0))
-        else:
-            loc = Location((0, 0, 0))
-
+        
         child_shapes = [s for s in (evaluate_node(c) for c in node.children) if s is not None]
         if not child_shapes:
             return None
         combined = child_shapes[0] if len(child_shapes) == 1 else make_compound_safe(child_shapes)
+        
+        # Apply scaling if scaling factor is not 1.0
+        if abs(sx - 1.0) > 1e-4 or abs(sy - 1.0) > 1e-4 or abs(sz - 1.0) > 1e-4:
+            try:
+                combined = _non_uniform_scale(combined, sx, sy, sz)
+            except Exception as e:
+                print(f"[csg_parser] multmatrix scaling failed: {e}")
+                
         return loc * combined
 
     elif name == 'intersection_for':
