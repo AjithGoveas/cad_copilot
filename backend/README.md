@@ -39,8 +39,8 @@ The service acts as a stateless, high-performance API endpoint that isolates hea
 
 ### 1. Two-Stage Generation Pipeline (`/generate`)
 To ensure high accuracy when translating raw files (sketches/PDF blueprints) to 3D code, the engine divides generation into two logical LLM calls:
-- **Stage 1: Blueprint Audit**: The image is analyzed using Gemini Vision with `AUDIT_INSTRUCTION`. It extracts a normalized JSON feature-map detailing dimensions, coordinate systems, stack order, and references, checking confidence ratings.
-- **Stage 2: Script Synthesis**: The feature-map is combined with the user's prompt and fed into Gemini Text with `SYSTEM_INSTRUCTION`. The LLM synthesizes a clean, standard OpenSCAD script conforming to parameter blocks.
+- **Stage 1: Blueprint Audit**: The drawing file (PDF/Image) is uploaded via the **Gemini Files API** and analyzed using Gemini Vision with `AUDIT_INSTRUCTION`. It extracts a normalized JSON feature-map detailing dimensions, coordinate systems, stack order, and references, checking confidence ratings. Both the uploaded file reference and audit output are cached in an **MD5-keyed cache** (`_BLUEPRINT_CACHE`) to bypass redundant visual audits.
+- **Stage 2: Script Synthesis**: The feature-map is combined with the user's prompt and fed into Gemini Text with `SYSTEM_INSTRUCTION`. The LLM synthesizes a clean, standard OpenSCAD script conforming to parameter blocks, reusing the cached Gemini file reference.
 
 ### 2. Isolated Surgical Refinement (`/edit`)
 Editing existing code presents different context requirements than creating a model from scratch. To prevent prompt dilution, editing is decoupled:
@@ -58,7 +58,7 @@ LLM-generated code can occasionally contain syntax errors or unstable boolean ge
 ## 📂 Directory Layout
 
 ```text
-ai-engine/
+backend/
 ├── app/
 │   ├── api/
 │   │   └── v1/
@@ -181,7 +181,7 @@ Test the setup by curling `http://127.0.0.1:8000/health`.
 
 Future backend features currently planned:
 
-- **[ ] OpenCASCADE STEP conversion service**: A FastAPI service routing compiled CSG nodes to STEP file configurations.
-- **[ ] Local G-Code compilation**: Lightweight parser transforming OpenSCAD coordinates to sliced extrusion lines.
+- **[x] OpenCASCADE STEP conversion service**: A FastAPI service routing compiled CSG nodes to STEP file configurations.
+- **[/] Local G-Code compilation**: Lightweight parser transforming OpenSCAD coordinates to sliced extrusion lines.
 - **[ ] Offline LLM / Ollama Connector**: Integration of local models (e.g. Qwen-Coder-32B) for offline blueprint auditing.
 - **[ ] Multi-Part Assembly Parser**: Engine capability to coordinate multiple separate files under a parent assembly manifest.

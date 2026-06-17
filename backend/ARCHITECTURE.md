@@ -2,7 +2,7 @@
 
 ## Overview
 
-The ai-engine backend processes engineering drawings (PDF/image) and generates precise 3D CAD models using the `build123d` Python library via Google's Gemini AI.
+The backend processes engineering drawings (PDF/image) and generates precise 3D CAD models using the `build123d` Python library via Google's Gemini AI.
 
 ---
 

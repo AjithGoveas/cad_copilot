@@ -1,6 +1,6 @@
 # CADVEX AI Engine Overview
 
-The `ai-engine` is a FastAPI-powered Python microservice responsible for blueprint image audits, text-to-CAD synthesis, and spatial code editing using the Google Gemini API.
+The `backend` is a FastAPI-powered Python microservice responsible for blueprint image audits, text-to-CAD synthesis, and spatial code editing using the Google Gemini API.
 
 ---
 
@@ -37,11 +37,21 @@ Defines the payload returned by both endpoints:
 ### 3.1 LLMCodegenService (`app/services/llm_codegen.py`)
 Encapsulates Google GenAI SDK calls. It maintains three main pipelines:
 
-#### `audit_blueprint(image_bytes, mime_type)`
-* Sends the drawing file (JPEG/PNG/PDF) to Gemini Vision.
-* Extracts a structured JSON feature-map defining envelopes, datum lines, pocket depths, hole PCD patterns, and surface finishes.
+#### `upload_file_to_gemini(file_bytes, mime_type, filename)`
+* Writes uploaded drawing bytes to a temporary file on the host.
+* Uploads the file via the Gemini Files API (`client.files.upload`).
+* Polls until the file status transitions from `PROCESSING` to `ACTIVE`.
 
-#### `generate_script(prompt, image_bytes, mime_type, feature_map, base_code, selection_context)`
+#### `audit_blueprint(image_bytes, mime_type, filename)`
+* Checks the in-memory cache using the file's MD5 hash. If a cached feature map is found, returns it immediately.
+* If a cache miss occurs:
+  1. Uploads the blueprint drawing file (JPEG/PNG/PDF) to Gemini Files API.
+  2. Submits the file reference to Gemini Vision.
+* Extracts a structured JSON feature-map defining envelopes, datum lines, pocket depths, hole PCD patterns, and surface finishes.
+* Caches the output feature-map and file object.
+
+#### `generate_script(prompt, image_bytes, mime_type, feature_map, base_code, selection_context, filename)`
+* Reuses the cached Gemini file reference if available.
 * Takes the feature-map and user prompts.
 * Prompts Gemini to write a parameterized OpenSCAD script, formatting variables under `// PARAMETERS_START/END` comments.
 

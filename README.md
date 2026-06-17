@@ -16,16 +16,17 @@ CADVEX is a state-of-the-art, AI-assisted CAD workstation designed to bridge the
 Traditional CAD workflows require intensive manual drafting, while standard text-to-3D generators output un-editable, dense triangle meshes. CADVEX approaches 3D modeling as **Parametric Code Synthesis**. It generates human-readable, mathematically exact, and easily adjustable code.
 
 ### 🔍 1. Multimodal Blueprint Audit
-Upload an engineering drawing, blueprint (PDF/PNG/JPEG), or a hand-drawn sketch. The AI Engine performs a multi-view visual analysis, extracting exact dimensions, coordinate alignments, feature hierarchies, and stacking references into a structured design matrix.
+Upload an engineering drawing, drawing blueprint (multi-page PDF/PNG/JPEG), or a hand-drawn sketch. The backend uploads drawing files via the **Gemini Files API** and parses feature structures using an **MD5-keyed caching database**. This caches Stage 1 vision audits, speeding up subsequent edits and generations by ~10 seconds.
 
 ### 🌐 2. Browser-Local WASM Kernel
 All 3D rendering happens directly on the client. Enforcing a global singleton WebAssembly worker instance (compiled from OpenSCAD), CADVEX processes changes and returns 3D STL geometry instantly in the browser. This setup eliminates rendering roundtrips, scales without server cost, and operates sandboxed.
 
 ### 📐 3. Proximity-Based "Quick Edit"
 Click directly on cylindrical walls, circular holes, or planar faces of the 3D mesh. The viewport runs a spatial proximity algorithm matching the click coordinate to parameter ranges:
-* **Diameters / Cylinders**: Shorts distance from selection to the infinite central axis line minus the feature's radius.
+* **Hierarchical Matrix Parsing**: An in-browser sequential tokenizer and `Matrix4` stack parser walks the OpenSCAD syntax to resolve nested rotations and translations. This guarantees that dimension overlays (such as diameter rings and height lines) map perfectly to physical CAD features, even on rotated branches (like in a T-pipe).
+* **Diameters / Cylinders**: Shortest distance from selection to the infinite central axis line minus the feature's radius.
 * **Heights / Extrusions**: Point-to-plane distance along the extrusion direction to the top or bottom flat faces.
-Matches spawn an in-canvas, auto-focusing interactive overlay, letting you instantly change numeric parameters.
+Matches spawn a premium, glassmorphic in-canvas overlay showing all parameters concurrently, transitioning to a detailed auto-focused label upon hover or select.
 
 ### 📍 4. Spatial Target Context Injection
 Drop a glowing visual crosshair marker anywhere on the empty 3D model surface. The coordinate coordinates are added as a spatial target attachment chip in the chat composer. When you send a message (e.g. *"add a screw boss here"*), these absolute `[x, y, z]` coordinates are silently sent as system context, positioning the AI's edit right at the clicked spot.
@@ -134,14 +135,9 @@ Navigate to `http://localhost:3000` to start editing.
 
 We are expanding CADVEX into a comprehensive, production-grade engineering platform. The following features are currently planned:
 
-* **[ ] Native STEP Export**: Integrate python-based OpenCASCADE / FreeCAD rendering pipelines on the backend to allow downloading exact B-Rep STEP models alongside standard STL meshes.
-* **[ ] Slicing & G-Code Integration**: Direct client-side integration of lightweight slicing algorithms to allow generating 3D printing paths (G-code) directly from the parametric canvas.
+* **[x] Native STEP Export**: Integrate python-based OpenCASCADE / FreeCAD rendering pipelines on the backend to allow downloading exact B-Rep STEP models alongside standard STL meshes.
+* **[/] Slicing & G-Code Integration**: Direct client-side integration of lightweight slicing algorithms to allow generating 3D printing paths (G-code) directly from the parametric canvas.
 * **[ ] CNC Toolpath Previews**: Output post-processed G-code optimized for 3-axis CNC milling operations directly from the subtractive metadata.
 * **[ ] Offline LLM Support**: Support running local code models (e.g. Qwen-Coder or Llama-3-Coder) via Ollama, enabling offline CAD generation and secure parameter processing.
 * **[ ] Hierarchical Assembly Constraints**: Bind multiple generated parts together using rigid joints, cylindrical constraints, and mechanical mates inside the 3D viewport.
 * **[ ] Automated Tolerance Auditing**: AI checks matching parts for tolerances, interference fits, and mechanical clearances.
-
----
-
-## 📄 License
-This project is licensed under the MIT License - see the LICENSE file for details.

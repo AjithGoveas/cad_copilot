@@ -55,11 +55,12 @@ When a user clicks on the 3D mesh, the viewport performs standard raycasting. In
 
 ### 📐 Dimension Overlay (`DimensionOverlay.tsx`)
 
+- **Concurrent Visualization**: Renders all model parameters concurrently as subtle gray annotations to let users see all editable constraints at once.
+- **Glassmorphic Billboards**: Custom 3D labels use Drei's `<Html />` billboards. Inactive dimensions display in a compact, subtle state (showing numeric values only) and transition with smooth scaling animations to full detailed parameter tags on hover or click.
 - **Type-Aware Visual Markers**:
   - _Heights_: Generates custom lines with cone tips indicating dimension bounds.
   - _Diameters_: Renders concentric circular rings and thin crosshair guides overlayed on top of the geometry face.
   - _Chamfers_: Renders custom emerald-green toruses highlighting edge modifications.
-- **Glassmorphic Billboards**: Custom 3D labels use Drei's `<Html />` billboards which pivot to face the camera, rendering text values clearly.
 
 ### 📍 Visual Target Selection
 
@@ -76,7 +77,7 @@ When a user clicks on the 3D mesh, the viewport performs standard raycasting. In
 ## 📂 Directory Layout
 
 ```text
-web-ui/
+frontend/
 ├── app/
 │   ├── actions/                # Server Actions
 │   ├── api/                    # BFF Route Handlers
@@ -113,7 +114,7 @@ web-ui/
 ├── lib/
 │   ├── auth.ts                 # NextAuth configurations (credentials provider)
 │   ├── prisma.ts               # Global PostgreSQL database connection singleton
-│   ├── openscadParameters.ts   # Regex-based OpenSCAD parser, parameter injector & math matrices
+│   ├── openscadParameters.ts   # Hierarchical stack-based OpenSCAD parser, parameter injector & math matrices
 │   └── utils.ts                # Class merger tailwind helper utilities
 ├── prisma/
 │   └── schema.prisma           # Prisma DB schema mapping tables
@@ -133,7 +134,7 @@ npm install
 
 ### 2. Configure Environment variables
 
-Create a `.env` file in the root of the `web-ui` directory:
+Create a `.env` file in the root of the `frontend` directory:
 
 ```env
 # fastapi endpoint

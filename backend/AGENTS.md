@@ -18,7 +18,7 @@
 - **Prompt Engineering**: Maintain strict system instructions for LLM codegen. Enforce the "Epsilon Protocol" (e.g., `eps = 0.01`) for CAD stability and manifold geometry.
 
 ### 4. Communication Protocol
-- **Contract Adherence**: Do not alter the response schema of an existing API endpoint without confirming that the `web-ui` agent/context is prepared for the change.
+- **Contract Adherence**: Do not alter the response schema of an existing API endpoint without confirming that the `frontend` agent/context is prepared for the change.
 - **Extensibility**: When extending capabilities (e.g., adding a new file export format), ensure the pipeline cascades smoothly from the router down to the specific conversion service.
 
 ### 5. Security & Safety

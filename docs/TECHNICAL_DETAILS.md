@@ -6,12 +6,12 @@ Detailed technical specifications, request flows, and internal mechanisms of CAD
 
 ## 1. System Boundaries & Communication
 
-### 1.1 `web-ui` (Next.js Application)
+### 1.1 `frontend` (Next.js Application)
 * **Client Workspace**: Renders the Monaco editor, property inputs, chat dialogue, and Three.js canvas.
 * **OpenSCAD Web Worker**: Evaluates OpenSCAD scripts inside a background thread singleton, returning STL models as ArrayBuffers.
 * **BFF (Backend-For-Frontend)**: Provides proxy endpoints mapping client JSON requests to python FastAPI schemas and handles prisma database persistence.
 
-### 1.2 `ai-engine` (FastAPI Application)
+### 1.2 `backend` (FastAPI Application)
 * **LLM Service**: Connects to the Google GenAI SDK.
 * **Blueprint Auditor**: Stage 1 Vision parser compiling dimensions into feature-maps.
 * **Codegen Engine**: Stage 2 Script creator compiling structured code.
@@ -22,13 +22,16 @@ Detailed technical specifications, request flows, and internal mechanisms of CAD
 ## 2. API Endpoints & Proxies
 
 ### 2.1 Generation Flow (`POST /api/v1/generate`)
-1. User uploads a file and description in the UI.
+1. User uploads a file (PDF/Image) and description in the UI.
 2. Next.js proxy route `/api/v1/generate` logs a `Project` entry in PostgreSQL via Prisma.
-3. Next.js forwards the `FormData` to the FastAPI backend's `/api/v1/generate` endpoint.
-4. FastAPI calls the Gemini Vision + Gemini Text pipeline, parsing the blueprint and generating OpenSCAD code.
-5. FastAPI returns the OpenSCAD script and parsed top-level parameters to Next.js.
-6. Next.js updates the database record with the generated script and returns the payload to the browser.
-7. The browser registers the script and compiles the geometry locally using the Web Worker.
+3. Next.js forwards the `FormData` to the FastAPI backend's `/api/v1/generate` endpoint, **preserving the original filename** (to ensure correct mime detection by FastAPI/Gemini uploader).
+4. FastAPI checks the MD5-keyed global `_BLUEPRINT_CACHE`:
+   - **Cache Hit**: Returns the pre-audited Stage 1 feature map instantly.
+   - **Cache Miss**: Uploads the file via the Gemini Files API, waits until it is `ACTIVE`, runs the Stage 1 visual analysis, and caches the resulting feature map.
+5. FastAPI calls Gemini Codegen to generate OpenSCAD code (reusing the uploaded file reference).
+6. FastAPI returns the OpenSCAD script and parsed top-level parameters to Next.js.
+7. Next.js updates the database record with the generated script and returns the payload to the browser.
+8. The browser registers the script and compiles the geometry locally using the Web Worker.
 
 ### 2.2 Refinement Flow (`POST /api/v1/edit`)
 1. The user types a modification prompt in the workspace chat (e.g. *"drill a slot on this face"*).
@@ -78,11 +81,31 @@ If the resulting `distance` is within the `5.0` threshold, the parameter is sele
 
 ---
 
-## 4. WASM Engine Web Worker Singleton
+## 4. Hierarchical Matrix Transformation Stack Parser
+
+Extracting annotations from nested OpenSCAD scripts is handled by [inferAnnotations](file:///c:/Users/ajith/Videos/nano_test/cad_project/cad_copilot/frontend/lib/openscadParameters.ts#L339) using a stack-based matrix transformation parser:
+
+1. **Tokenizer**: Tokenizes the module body to parse structure `translate(...)`, `rotate(...)`, `cylinder(...)`, `cube(...)`, `{`, `}`, and `;` in strict sequential order.
+2. **Current and Pending Frames**:
+   - `currentTransform`: Holds the current scope matrix.
+   - `pendingTransform`: Composes upcoming inline modifiers.
+3. **Control Actions**:
+   - On `{`: Pushes the current scope to a `Matrix4` stack. Compiles pending modifiers into the new scope frame: `currentTransform = currentTransform * pendingTransform`, and resets `pendingTransform` to identity.
+   - On `}`: Pops the state from the stack, restoring scope.
+   - On `;`: Resets inline modifiers (`pendingTransform = identity`).
+   - On `translate(...)` / `rotate(...)`: Multiplies the translation/rotation matrix directly into `pendingTransform`.
+4. **Coordinate Mapping**:
+   - On primitives (`cylinder`/`cube`), the final world matrix is compiled: `totalTransform = currentTransform * pendingTransform`.
+   - The matrix is decomposed (`totalTransform.decompose(position, quaternion, scale)`) to retrieve exact translations and orientations.
+   - Cylinder centers and height bounds are projected along the world-space axis, resolving rotated branches perfectly.
+
+---
+
+## 5. WASM Engine Web Worker Singleton
 
 The background compilation system is managed in [useCADEngine.ts](file:///c:/Users/ajith/Videos/nano_test/cad_project/cad_copilot/frontend/hooks/useCADEngine.ts) and [cad-worker.ts](file:///c:/Users/ajith/Videos/nano_test/cad_project/cad_copilot/frontend/workers/cad-worker.ts):
 
-* **Singleton Thread**: Spawns a single `Worker` instances globally. Mounting/unmounting hooks subscribe and unsubscribe listeners to a shared message hub rather than starting new worker processes, preventing RAM leakage.
+* **Singleton Thread**: Spawns a single `Worker` instance globally. Mounting/unmounting hooks subscribe and unsubscribe listeners to a shared message hub rather than starting new worker processes, preventing RAM leakage.
 * **Transient Blobs**: The compiled STL ArrayBuffer is converted to a browser Blob:
   ```typescript
   const blob = new Blob([buffer], { type: 'model/stl' });

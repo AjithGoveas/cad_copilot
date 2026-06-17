@@ -22,7 +22,7 @@ By pairing **Google's Gemini multimodal AI backend** for layout reasoning with a
 ```text
 cadvex/
 ├── docker-compose.yml           # Runs PostgreSQL database instance
-├── ai-engine/                   # 🐍 Python FastAPI Backend (AI Logic)
+├── backend/                     # 🐍 Python FastAPI Backend (AI Logic)
 │   ├── app/
 │   │   ├── main.py              # Server configuration and CORS setup
 │   │   ├── api/v1/router.py     # Endpoints: POST /generate and POST /edit
@@ -31,14 +31,18 @@ cadvex/
 │   │       └── llm_codegen.py   # Gemini API client, prompts, and normalization
 │   ├── requirements.txt
 │   └── .env
-└── web-ui/                      # ⚛️ Next.js Web Workspace
+└── frontend/                    # ⚛️ Next.js Web Workspace
     ├── app/
     │   ├── api/                 # BFF Gateway proxy routes
     │   │   ├── auth/            # NextAuth endpoints
     │   │   └── v1/
     │   │       ├── generate/    # Proxies new blueprint generations
     │   │       └── edit/        # Proxies surgical code modifications
-    │   ├── app/                 # Login, signup, share, and sandbox sub-routes
+    │   ├── app/
+    │   │   ├── demo/                # Demo-restricted sandbox workstation
+    │   │   ├── login/               # Workstation login route
+    │   │   ├── signup/              # Signup interface
+    │   │   └── view/                # Shared model views
     │   ├── globals.css
     │   ├── layout.tsx
     │   └── page.tsx             # Main Workstation workspace page

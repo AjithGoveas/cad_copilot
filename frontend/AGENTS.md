@@ -18,7 +18,7 @@
 - **File Structure**: Keep components in the `components/` directory, hooks in `hooks/`, and utility functions (like parsers) in `lib/`.
 
 ### 4. Communication Protocol
-- **Cross-boundary coordination**: If a requested feature requires an API change in the Python backend (`ai-engine`), immediately flag it to the `ai-engine` context or request coordination before modifying frontend fetches.
+- **Cross-boundary coordination**: If a requested feature requires an API change in the Python backend (`backend`), immediately flag it to the `backend` context or request coordination before modifying frontend fetches.
 - **Error Handling**: Surface backend errors gracefully to the user via toast notifications (`sonner`) rather than silent console errors.
 
 ### 5. Security & Safety
