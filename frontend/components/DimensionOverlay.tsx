@@ -54,37 +54,41 @@ const getAlignmentQuaternion = (dir: Vector3) => {
 
 // --- Shared UI Components ---
 const DimensionLabel = ({ label, value, unit, icon: Icon, isActive, hasAnyActive, color, onClick }: any) => {
-    const opacity = isActive ? 1 : hasAnyActive ? 0.2 : 0.85;
+    const opacity = isActive ? 1 : hasAnyActive ? 0.15 : 0.55;
     
     return (
         <div
             onClick={(e) => { e.stopPropagation(); onClick?.(); }}
             className="group"
             style={{
-                background: isActive ? 'rgba(24, 24, 27, 0.95)' : 'rgba(24, 24, 27, 0.65)',
-                border: `1px solid ${isActive ? color : 'rgba(63, 63, 70, 0.4)'}`,
-                borderRadius: '8px',
-                padding: '6px 10px',
+                background: isActive ? 'rgba(24, 24, 27, 0.95)' : 'rgba(24, 24, 27, 0.45)',
+                border: `1px solid ${isActive ? color : 'rgba(63, 63, 70, 0.2)'}`,
+                borderRadius: isActive ? '8px' : '6px',
+                padding: isActive ? '6px 10px' : '4px 6px',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
-                backdropFilter: 'blur(8px)',
-                boxShadow: isActive ? `0 0 20px ${color}40, 0 4px 12px rgba(0,0,0,0.5)` : '0 4px 12px rgba(0,0,0,0.3)',
-                transform: isActive ? 'translate(-50%, -50%) scale(1.05)' : 'translate(-50%, -50%) scale(1)',
-                transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+                gap: isActive ? '8px' : '4px',
+                backdropFilter: 'blur(4px)',
+                boxShadow: isActive ? `0 0 20px ${color}40, 0 4px 12px rgba(0,0,0,0.5)` : '0 2px 6px rgba(0,0,0,0.2)',
+                transform: isActive ? 'translate(-50%, -50%) scale(1.05)' : 'translate(-50%, -50%) scale(0.85)',
+                transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
                 whiteSpace: 'nowrap',
                 cursor: 'pointer',
                 pointerEvents: 'auto',
                 opacity: opacity,
             }}
         >
-            <Icon size={12} color={isActive ? color : '#a1a1aa'} />
-            <span style={{ color: isActive ? color : '#a1a1aa', fontSize: '11px', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', fontFamily: 'system-ui, sans-serif' }}>
-                {label.replace(/_/g, ' ')}
-            </span>
-            <div style={{ width: '1px', height: '12px', background: 'rgba(82, 82, 91, 0.6)' }} />
-            <span style={{ color: '#f4f4f5', fontSize: '12px', fontWeight: 700, fontFamily: 'monospace' }}>
-                {value} <span style={{ color: '#a1a1aa', fontSize: '10px' }}>{unit}</span>
+            <Icon size={isActive ? 12 : 10} color={isActive ? color : '#71717a'} />
+            {isActive && (
+                <>
+                    <span style={{ color: color, fontSize: '11px', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', fontFamily: 'system-ui, sans-serif' }}>
+                        {label.replace(/_/g, ' ')}
+                    </span>
+                    <div style={{ width: '1px', height: '12px', background: 'rgba(82, 82, 91, 0.6)' }} />
+                </>
+            )}
+            <span style={{ color: isActive ? '#f4f4f5' : '#d4d4d8', fontSize: isActive ? '12px' : '10px', fontWeight: isActive ? 700 : 500, fontFamily: 'monospace' }}>
+                {value} <span style={{ color: '#71717a', fontSize: isActive ? '10px' : '8px' }}>{unit}</span>
             </span>
         </div>
     );
@@ -93,7 +97,6 @@ const DimensionLabel = ({ label, value, unit, icon: Icon, isActive, hasAnyActive
 // --- 3D Dimension Components ---
 
 function HeightDimension({ label, annotation, scale, center, isActive, hasAnyActive, onClick, onHover }: DimensionProps) {
-    if (!isActive) return null;
     const p1 = annotation.p1 || [0, 0, 0];
     const p2 = annotation.p2 || [0, 0, 0];
 
@@ -112,9 +115,9 @@ function HeightDimension({ label, annotation, scale, center, isActive, hasAnyAct
         return { transformedP1: tP1, transformedP2: tP2, midpoint: mid, realDistance: dist, dir: direction, quatP1: qP1, quatP2: qP2 };
     }, [p1, p2, center, scale]);
 
-    const color = isActive ? '#60a5fa' : '#3b82f6';
-    const opacity = isActive ? 1 : hasAnyActive ? 0.15 : 0.6;
-    const arrowSize = isActive ? 0.08 : 0.05;
+    const color = isActive ? '#60a5fa' : '#71717a';
+    const opacity = isActive ? 0.95 : hasAnyActive ? 0.1 : 0.35;
+    const arrowSize = isActive ? 0.08 : 0.04;
 
     return (
         <group>
@@ -151,7 +154,6 @@ function HeightDimension({ label, annotation, scale, center, isActive, hasAnyAct
 }
 
 function DiameterDimension({ label, annotation, scale, center, isActive, hasAnyActive, onClick, onHover }: DimensionProps) {
-    if (!isActive) return null;
     const c = annotation.center || [0, 0, 0];
     const axis = annotation.axis || [0, 0, 1];
     const value = annotation.value || (annotation.radius ? annotation.radius * 2 : 10.0);
@@ -183,8 +185,8 @@ function DiameterDimension({ label, annotation, scale, center, isActive, hasAnyA
         return { circlePoints: points, crosshairs: cross, quat: getAlignmentQuaternion(dir) };
     }, [transformedCenter, axis, radius]);
 
-    const color = isActive ? '#a78bfa' : '#8b5cf6'; // Purple for diameters
-    const opacity = isActive ? 1 : hasAnyActive ? 0.15 : 0.6;
+    const color = isActive ? '#a78bfa' : '#71717a'; // Purple for diameters, gray for inactive
+    const opacity = isActive ? 0.95 : hasAnyActive ? 0.1 : 0.35;
 
     return (
         <group>
@@ -192,8 +194,12 @@ function DiameterDimension({ label, annotation, scale, center, isActive, hasAnyA
             <Line points={circlePoints} color={color} lineWidth={isActive ? 3 : 1.5} transparent opacity={opacity} depthTest={false} />
             
             {/* Center Crosshairs */}
-            <Line points={crosshairs[0]} color={color} lineWidth={1} transparent opacity={opacity * 0.7} depthTest={false} />
-            <Line points={crosshairs[1]} color={color} lineWidth={1} transparent opacity={opacity * 0.7} depthTest={false} />
+            {isActive && (
+                <>
+                    <Line points={crosshairs[0]} color={color} lineWidth={1} transparent opacity={opacity * 0.7} depthTest={false} />
+                    <Line points={crosshairs[1]} color={color} lineWidth={1} transparent opacity={opacity * 0.7} depthTest={false} />
+                </>
+            )}
 
             {/* Interaction Mesh */}
             <mesh 
@@ -216,7 +222,6 @@ function DiameterDimension({ label, annotation, scale, center, isActive, hasAnyA
 }
 
 function ChamferDimension({ label, annotation, scale, center, isActive, hasAnyActive, onClick, onHover }: DimensionProps) {
-    if (!isActive) return null;
     const c = annotation.center || [0, 0, 0];
     const axis = annotation.axis || [0, 0, 1];
     const radius = (annotation.radius || 10.0) * scale;
@@ -228,8 +233,8 @@ function ChamferDimension({ label, annotation, scale, center, isActive, hasAnyAc
         return new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), dir);
     }, [axis]);
 
-    const color = isActive ? '#34d399' : '#10b981'; // Emerald for Edge modifiers
-    const opacity = isActive ? 1 : hasAnyActive ? 0.15 : 0.6;
+    const color = isActive ? '#34d399' : '#71717a'; // Emerald for active, gray for inactive
+    const opacity = isActive ? 0.95 : hasAnyActive ? 0.1 : 0.35;
 
     return (
         <group>
@@ -253,7 +258,7 @@ function ChamferDimension({ label, annotation, scale, center, isActive, hasAnyAc
 }
 
 export function DimensionOverlay({ annotations, activeParameter, geometryScale, geometryCenter, onSelectParameter, onHoverParameter }: DimensionOverlayProps) {
-    if (!annotations || !activeParameter) return null;
+    if (!annotations) return null;
     const hasAnyActive = activeParameter !== null;
 
     return (

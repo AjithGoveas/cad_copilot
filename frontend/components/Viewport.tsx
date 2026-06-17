@@ -71,7 +71,7 @@ export const Viewport = memo(function Viewport({
                 <PerspectiveCamera makeDefault position={[5, 5, 5]} fov={40} />
 
                 <Suspense fallback={null}>
-                    <Stage intensity={0.6} environment="city" adjustCamera={false} shadows="contact" preset="rembrandt">
+                    <Stage intensity={0.6} environment="city" adjustCamera={false} shadows="contact" preset="rembrandt" center={{ disable: true }}>
                         <Center
                             onCentered={({ center, width, height, depth }) => handleGeometryLoaded(
                                 [center.x, center.y, center.z], [width, height, depth], 1.0

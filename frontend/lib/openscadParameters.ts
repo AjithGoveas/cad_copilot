@@ -1,3 +1,5 @@
+import { Vector3, Line3, Matrix4, Euler, Quaternion } from 'three';
+
 export type OpenScadParameters = Record<string, unknown>;
 
 export type AnnotationEntry = {
@@ -55,6 +57,356 @@ export function extractStructuredAnnotations(script: string): OpenScadAnnotation
 	}
 }
 
+function stripComments(script: string): string {
+	let result = '';
+	let i = 0;
+	while (i < script.length) {
+		if (script[i] === '"') {
+			result += script[i];
+			i++;
+			while (i < script.length && script[i] !== '"') {
+				if (script[i] === '\\') {
+					result += script[i];
+					i++;
+				}
+				result += script[i];
+				i++;
+			}
+			if (i < script.length) {
+				result += script[i];
+				i++;
+			}
+		} else if (script[i] === '/' && script[i + 1] === '/') {
+			i += 2;
+			while (i < script.length && script[i] !== '\n') {
+				i++;
+			}
+		} else if (script[i] === '/' && script[i + 1] === '*') {
+			i += 2;
+			while (i < script.length && !(script[i] === '*' && script[i + 1] === '/')) {
+				i++;
+			}
+			i += 2;
+		} else {
+			result += script[i];
+			i++;
+		}
+	}
+	return result;
+}
+
+type ModuleDef = {
+	name: string;
+	body: string;
+};
+
+function extractModules(cleanScript: string): ModuleDef[] {
+	const modules: ModuleDef[] = [];
+	const moduleRegex = /\bmodule\s+(\w+)\s*\(/g;
+	let match;
+	while ((match = moduleRegex.exec(cleanScript)) !== null) {
+		const name = match[1];
+		let idx = moduleRegex.lastIndex;
+		// Skip parameters by matching parentheses
+		let parenCount = 1;
+		while (idx < cleanScript.length && parenCount > 0) {
+			if (cleanScript[idx] === '(') parenCount++;
+			else if (cleanScript[idx] === ')') parenCount--;
+			idx++;
+		}
+		// Find opening brace '{'
+		while (idx < cleanScript.length && cleanScript[idx] !== '{') {
+			idx++;
+		}
+		if (idx >= cleanScript.length) continue;
+		
+		// Match braces to find module body
+		const startBodyIdx = idx + 1;
+		let braceCount = 1;
+		idx++;
+		while (idx < cleanScript.length && braceCount > 0) {
+			if (cleanScript[idx] === '{') braceCount++;
+			else if (cleanScript[idx] === '}') braceCount--;
+			idx++;
+		}
+		const body = cleanScript.substring(startBodyIdx, idx - 1);
+		modules.push({ name, body });
+	}
+	return modules;
+}
+
+type Token = 
+	| { type: '{' }
+	| { type: '}' }
+	| { type: ';' }
+	| { type: 'translate'; values: [string, string, string] }
+	| { type: 'rotate'; values: [string, string, string] }
+	| { type: 'cylinder'; params: string }
+	| { type: 'cube'; params: string };
+
+function splitParams(str: string): string[] {
+	const res: string[] = [];
+	let current = '';
+	let parenCount = 0;
+	let bracketCount = 0;
+	for (let j = 0; j < str.length; j++) {
+		const c = str[j];
+		if (c === '(') parenCount++;
+		else if (c === ')') parenCount--;
+		else if (c === '[') bracketCount++;
+		else if (c === ']') bracketCount--;
+		
+		if (c === ',' && parenCount === 0 && bracketCount === 0) {
+			res.push(current);
+			current = '';
+		} else {
+			current += c;
+		}
+	}
+	if (current) {
+		res.push(current);
+	}
+	return res;
+}
+
+function tokenizeBody(body: string): Token[] {
+	const tokens: Token[] = [];
+	let i = 0;
+
+	while (i < body.length) {
+		const char = body[i];
+		
+		if (/\s/.test(char)) {
+			i++;
+			continue;
+		}
+		
+		if (char === '{') {
+			tokens.push({ type: '{' });
+			i++;
+			continue;
+		}
+		if (char === '}') {
+			tokens.push({ type: '}' });
+			i++;
+			continue;
+		}
+		if (char === ';') {
+			tokens.push({ type: ';' });
+			i++;
+			continue;
+		}
+		
+		// Check for translate
+		if (body.startsWith('translate', i)) {
+			let idx = i + 'translate'.length;
+			while (idx < body.length && /\s/.test(body[idx])) idx++;
+			if (body[idx] === '(') {
+				let pCount = 1;
+				let startP = idx + 1;
+				idx++;
+				while (idx < body.length && pCount > 0) {
+					if (body[idx] === '(') pCount++;
+					else if (body[idx] === ')') pCount--;
+					idx++;
+				}
+				const content = body.substring(startP, idx - 1).trim();
+				let inner = content;
+				if (inner.startsWith('[') && inner.endsWith(']')) {
+					inner = inner.substring(1, inner.length - 1);
+				}
+				const parts = splitParams(inner);
+				if (parts.length === 3) {
+					tokens.push({ 
+						type: 'translate', 
+						values: [parts[0].trim(), parts[1].trim(), parts[2].trim()] 
+					});
+				}
+				i = idx;
+				continue;
+			}
+		}
+		
+		// Check for rotate
+		if (body.startsWith('rotate', i)) {
+			let idx = i + 'rotate'.length;
+			while (idx < body.length && /\s/.test(body[idx])) idx++;
+			if (body[idx] === '(') {
+				let pCount = 1;
+				let startP = idx + 1;
+				idx++;
+				while (idx < body.length && pCount > 0) {
+					if (body[idx] === '(') pCount++;
+					else if (body[idx] === ')') pCount--;
+					idx++;
+				}
+				const content = body.substring(startP, idx - 1).trim();
+				let inner = content;
+				if (inner.startsWith('[') && inner.endsWith(']')) {
+					inner = inner.substring(1, inner.length - 1);
+				}
+				const parts = splitParams(inner);
+				if (parts.length === 3) {
+					tokens.push({ 
+						type: 'rotate', 
+						values: [parts[0].trim(), parts[1].trim(), parts[2].trim()] 
+					});
+				}
+				i = idx;
+				continue;
+			}
+		}
+		
+		// Check for cylinder
+		if (body.startsWith('cylinder', i)) {
+			let idx = i + 'cylinder'.length;
+			while (idx < body.length && /\s/.test(body[idx])) idx++;
+			if (body[idx] === '(') {
+				let pCount = 1;
+				let startP = idx + 1;
+				idx++;
+				while (idx < body.length && pCount > 0) {
+					if (body[idx] === '(') pCount++;
+					else if (body[idx] === ')') pCount--;
+					idx++;
+				}
+				const content = body.substring(startP, idx - 1).trim();
+				tokens.push({ type: 'cylinder', params: content });
+				i = idx;
+				continue;
+			}
+		}
+		
+		// Check for cube
+		if (body.startsWith('cube', i)) {
+			let idx = i + 'cube'.length;
+			while (idx < body.length && /\s/.test(body[idx])) idx++;
+			if (body[idx] === '(') {
+				let pCount = 1;
+				let startP = idx + 1;
+				idx++;
+				while (idx < body.length && pCount > 0) {
+					if (body[idx] === '(') pCount++;
+					else if (body[idx] === ')') pCount--;
+					idx++;
+				}
+				const content = body.substring(startP, idx - 1).trim();
+				tokens.push({ type: 'cube', params: content });
+				i = idx;
+				continue;
+			}
+		}
+		
+		i++;
+	}
+	return tokens;
+}
+
+function parseCubeParams(paramsStr: string, evaluate: (expr: string) => number): { 
+	xVal: number; 
+	yVal: number; 
+	zVal: number; 
+	xExpr: string; 
+	yExpr: string; 
+	zExpr: string; 
+	isCentered: boolean; 
+} {
+	let sizeStr = '';
+	let centerStr = '';
+	
+	const parts = splitParams(paramsStr);
+	for (const part of parts) {
+		const trimmed = part.trim();
+		if (trimmed.startsWith('size')) {
+			const eqIdx = trimmed.indexOf('=');
+			sizeStr = trimmed.substring(eqIdx + 1).trim();
+		} else if (trimmed.startsWith('center')) {
+			const eqIdx = trimmed.indexOf('=');
+			centerStr = trimmed.substring(eqIdx + 1).trim();
+		} else {
+			if (trimmed.startsWith('[')) {
+				sizeStr = trimmed;
+			} else if (trimmed === 'true' || trimmed === 'false') {
+				centerStr = trimmed;
+			} else if (!sizeStr) {
+				sizeStr = trimmed;
+			}
+		}
+	}
+	
+	let xExpr = '0', yExpr = '0', zExpr = '0';
+	let isCentered = centerStr === 'true';
+	
+	if (sizeStr.startsWith('[') && sizeStr.endsWith(']')) {
+		const inner = sizeStr.substring(1, sizeStr.length - 1);
+		const subParts = splitParams(inner);
+		if (subParts.length === 3) {
+			xExpr = subParts[0].trim();
+			yExpr = subParts[1].trim();
+			zExpr = subParts[2].trim();
+		}
+	} else if (sizeStr) {
+		xExpr = sizeStr;
+		yExpr = sizeStr;
+		zExpr = sizeStr;
+	}
+	
+	return {
+		xVal: evaluate(xExpr),
+		yVal: evaluate(yExpr),
+		zVal: evaluate(zExpr),
+		xExpr,
+		yExpr,
+		zExpr,
+		isCentered
+	};
+}
+
+function parseCylinderParams(paramsStr: string, evaluate: (expr: string) => number): {
+	hVal: number;
+	hExpr: string;
+	dExpr: string;
+	rExpr: string;
+	isCentered: boolean;
+} {
+	let hExpr = '0';
+	let dExpr = '';
+	let rExpr = '';
+	let isCentered = false;
+	
+	const parts = splitParams(paramsStr);
+	let positionalIdx = 0;
+	for (const part of parts) {
+		const trimmed = part.trim();
+		if (trimmed.includes('=')) {
+			const eqIdx = trimmed.indexOf('=');
+			const key = trimmed.substring(0, eqIdx).trim();
+			const val = trimmed.substring(eqIdx + 1).trim();
+			if (key === 'h') hExpr = val;
+			else if (key === 'd' || key === 'd1') dExpr = val;
+			else if (key === 'r' || key === 'r1') rExpr = val;
+			else if (key === 'center') isCentered = (val === 'true');
+		} else {
+			if (positionalIdx === 0) {
+				hExpr = trimmed;
+			} else if (positionalIdx === 1) {
+				rExpr = trimmed;
+			} else if (positionalIdx === 3) {
+				isCentered = (trimmed === 'true');
+			}
+			positionalIdx++;
+		}
+	}
+	
+	return {
+		hVal: evaluate(hExpr),
+		hExpr,
+		dExpr,
+		rExpr,
+		isCentered
+	};
+}
+
 export function inferAnnotations(script: string, params: Record<string, number>): OpenScadAnnotations {
 	const annotations: OpenScadAnnotations = {};
 
@@ -72,162 +424,139 @@ export function inferAnnotations(script: string, params: Record<string, number>)
 		}
 	}
 
-	function rotateVector(v: [number, number, number], r: [number, number, number]): [number, number, number] {
-		const rx = (r[0] * Math.PI) / 180;
-		const ry = (r[1] * Math.PI) / 180;
-		const rz = (r[2] * Math.PI) / 180;
+	const cleanScript = stripComments(script);
+	const modules = extractModules(cleanScript);
 
-		let x = v[0], y = v[1], z = v[2];
-		if (rx !== 0) {
-			const cos = Math.cos(rx), sin = Math.sin(rx);
-			const yNew = y * cos - z * sin;
-			const zNew = y * sin + z * cos;
-			y = yNew; z = zNew;
-		}
-		if (ry !== 0) {
-			const cos = Math.cos(ry), sin = Math.sin(ry);
-			const xNew = x * cos + z * sin;
-			const zNew = -x * sin + z * cos;
-			x = xNew; z = zNew;
-		}
-		if (rz !== 0) {
-			const cos = Math.cos(rz), sin = Math.sin(rz);
-			const xNew = x * cos - y * sin;
-			const yNew = x * sin + y * cos;
-			x = xNew; y = yNew;
-		}
-		return [x, y, z];
-	}
+	for (const mod of modules) {
+		const tokens = tokenizeBody(mod.body);
+		
+		let currentTransform = new Matrix4();
+		let pendingTransform = new Matrix4();
+		const stack: { currentTransform: Matrix4; pendingTransform: Matrix4 }[] = [];
 
-	const moduleRegex = /module\s+(\w+)\s*\([^)]*\)\s*\{([\s\S]*?)\}/g;
-	let match;
-
-	while ((match = moduleRegex.exec(script)) !== null) {
-		const moduleBody = match[2];
-
-		let tx = 0, ty = 0, tz = 0;
-		const translateRegex = /translate\(\s*\[\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^\]]+)\s*\]\s*\)/g;
-		let tMatch;
-		while ((tMatch = translateRegex.exec(moduleBody)) !== null) {
-			tx += evaluateExpression(tMatch[1]);
-			ty += evaluateExpression(tMatch[2]);
-			tz += evaluateExpression(tMatch[3]);
-		}
-
-		let rx = 0, ry = 0, rz = 0;
-		const rotateRegex = /rotate\(\s*\[\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^\]]+)\s*\]\s*\)/g;
-		let rMatch;
-		while ((rMatch = rotateRegex.exec(moduleBody)) !== null) {
-			rx += evaluateExpression(rMatch[1]);
-			ry += evaluateExpression(rMatch[2]);
-			rz += evaluateExpression(rMatch[3]);
-		}
-
-		const cylinderRegex = /cylinder\s*\(\s*([^)]+)\s*\)/g;
-		let cylMatch;
-		while ((cylMatch = cylinderRegex.exec(moduleBody)) !== null) {
-			const cylParams = cylMatch[1];
-			
-			const dMatch = /\bd\s*=\s*([a-zA-Z_]\w*)/.exec(cylParams);
-			const rMatch = /\br\s*=\s*([a-zA-Z_]\w*)/.exec(cylParams);
-			const hMatch = /\bh\s*=\s*([a-zA-Z_]\w*(?:\s*[-+]\s*[a-zA-Z0-9_]+)*)/.exec(cylParams);
-			const centerMatch = /\bcenter\s*=\s*(true|false)/.exec(cylParams);
-			const isCentered = centerMatch ? centerMatch[1] === 'true' : false;
-
-			let hVal = 0;
-			if (hMatch) {
-				hVal = evaluateExpression(hMatch[1]);
-			}
-
-			const baseAxis: [number, number, number] = [0, 0, 1];
-			const worldAxis = rotateVector(baseAxis, [rx, ry, rz]);
-
-			if (dMatch || rMatch) {
-				const paramName = dMatch ? dMatch[1] : rMatch![1];
-				if (params[paramName] !== undefined) {
-					const localCenter: [number, number, number] = isCentered ? [0, 0, 0] : [0, 0, hVal / 2];
-					const rotatedCenter = rotateVector(localCenter, [rx, ry, rz]);
-					const worldCenter: [number, number, number] = [
-						tx + rotatedCenter[0],
-						ty + rotatedCenter[1],
-						tz + rotatedCenter[2],
-					];
-
-					annotations[paramName] = {
-						type: 'diameter',
-						center: worldCenter,
-						axis: worldAxis,
-						value: dMatch ? params[paramName] : (params[paramName] as number) * 2,
-					};
+		for (const token of tokens) {
+			if (token.type === '{') {
+				stack.push({
+					currentTransform: currentTransform.clone(),
+					pendingTransform: pendingTransform.clone()
+				});
+				currentTransform.multiply(pendingTransform);
+				pendingTransform.identity();
+			} else if (token.type === '}') {
+				if (stack.length > 0) {
+					const popped = stack.pop()!;
+					currentTransform.copy(popped.currentTransform);
+					pendingTransform.copy(popped.pendingTransform);
 				}
-			}
+			} else if (token.type === ';') {
+				pendingTransform.identity();
+			} else if (token.type === 'translate') {
+				const tx = evaluateExpression(token.values[0]);
+				const ty = evaluateExpression(token.values[1]);
+				const tz = evaluateExpression(token.values[2]);
+				const m = new Matrix4().makeTranslation(tx, ty, tz);
+				pendingTransform.multiply(m);
+			} else if (token.type === 'rotate') {
+				const rx = (evaluateExpression(token.values[0]) * Math.PI) / 180;
+				const ry = (evaluateExpression(token.values[1]) * Math.PI) / 180;
+				const rz = (evaluateExpression(token.values[2]) * Math.PI) / 180;
+				const m = new Matrix4().makeRotationFromEuler(new Euler(rx, ry, rz, 'XYZ'));
+				pendingTransform.multiply(m);
+			} else if (token.type === 'cylinder') {
+				const cyl = parseCylinderParams(token.params, evaluateExpression);
+				const totalTransform = currentTransform.clone().multiply(pendingTransform);
+				
+				const position = new Vector3();
+				const quaternion = new Quaternion();
+				const scaleVec = new Vector3();
+				totalTransform.decompose(position, quaternion, scaleVec);
 
-			if (hMatch) {
-				for (const paramName of Object.keys(params)) {
-					const re = new RegExp(`\\b${paramName}\\b`);
-					if (re.test(hMatch[1])) {
-						const localP1: [number, number, number] = isCentered ? [0, 0, -hVal / 2] : [0, 0, 0];
-						const localP2: [number, number, number] = isCentered ? [0, 0, hVal / 2] : [0, 0, hVal];
+				const worldAxisVec = new Vector3(0, 0, 1).applyQuaternion(quaternion).normalize();
+				const worldAxis: [number, number, number] = [worldAxisVec.x, worldAxisVec.y, worldAxisVec.z];
 
-						const rotP1 = rotateVector(localP1, [rx, ry, rz]);
-						const rotP2 = rotateVector(localP2, [rx, ry, rz]);
+				const isCentered = cyl.isCentered;
+				const hVal = cyl.hVal;
+
+				// Diameter annotation
+				if (cyl.dExpr || cyl.rExpr) {
+					const paramName = cyl.dExpr || cyl.rExpr;
+					if (params[paramName] !== undefined) {
+						const localCenter = isCentered ? new Vector3(0, 0, 0) : new Vector3(0, 0, hVal / 2);
+						const worldCenterVec = localCenter.clone().applyMatrix4(totalTransform);
+						const worldCenter: [number, number, number] = [worldCenterVec.x, worldCenterVec.y, worldCenterVec.z];
 
 						annotations[paramName] = {
-							type: 'height',
-							p1: [tx + rotP1[0], ty + rotP1[1], tz + rotP1[2]],
-							p2: [tx + rotP2[0], ty + rotP2[1], tz + rotP2[2]],
-							value: params[paramName] as number,
+							type: 'diameter',
+							center: worldCenter,
+							axis: worldAxis,
+							value: cyl.dExpr ? params[paramName] : (params[paramName] as number) * 2,
 						};
-						break;
 					}
 				}
-			}
-		}
 
-		const cubeRegex = /cube\s*\(\s*\[\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^\]]+)\s*\]\s*(?:,\s*center\s*=\s*(true|false))?\s*\)/g;
-		let cubeMatch;
-		while ((cubeMatch = cubeRegex.exec(moduleBody)) !== null) {
-			const xExpr = cubeMatch[1];
-			const yExpr = cubeMatch[2];
-			const zExpr = cubeMatch[3];
-			const isCentered = cubeMatch[4] === 'true';
+				// Height annotation
+				if (cyl.hExpr) {
+					for (const paramName of Object.keys(params)) {
+						const re = new RegExp(`\\b${paramName}\\b`);
+						if (re.test(cyl.hExpr)) {
+							const localP1 = isCentered ? new Vector3(0, 0, -hVal / 2) : new Vector3(0, 0, 0);
+							const localP2 = isCentered ? new Vector3(0, 0, hVal / 2) : new Vector3(0, 0, hVal);
 
-			const xVal = evaluateExpression(xExpr);
-			const yVal = evaluateExpression(yExpr);
-			const zVal = evaluateExpression(zExpr);
+							const worldP1Vec = localP1.clone().applyMatrix4(totalTransform);
+							const worldP2Vec = localP2.clone().applyMatrix4(totalTransform);
 
-			const expressions = [xExpr, yExpr, zExpr];
-			const values = [xVal, yVal, zVal];
-
-			for (let i = 0; i < 3; i++) {
-				for (const paramName of Object.keys(params)) {
-					const re = new RegExp(`\\b${paramName}\\b`);
-					if (re.test(expressions[i])) {
-						const lengthVal = values[i];
-						
-						let localP1: [number, number, number] = [0, 0, 0];
-						let localP2: [number, number, number] = [0, 0, 0];
-
-						if (isCentered) {
-							localP1[i] = -lengthVal / 2;
-							localP2[i] = lengthVal / 2;
-						} else {
-							localP1[i] = 0;
-							localP2[i] = lengthVal;
+							annotations[paramName] = {
+								type: 'height',
+								p1: [worldP1Vec.x, worldP1Vec.y, worldP1Vec.z],
+								p2: [worldP2Vec.x, worldP2Vec.y, worldP2Vec.z],
+								value: params[paramName] as number,
+							};
+							break;
 						}
-
-						const rotP1 = rotateVector(localP1, [rx, ry, rz]);
-						const rotP2 = rotateVector(localP2, [rx, ry, rz]);
-
-						annotations[paramName] = {
-							type: 'height',
-							p1: [tx + rotP1[0], ty + rotP1[1], tz + rotP1[2]],
-							p2: [tx + rotP2[0], ty + rotP2[1], tz + rotP2[2]],
-							value: params[paramName] as number,
-						};
-						break;
 					}
 				}
+				
+				pendingTransform.identity();
+
+			} else if (token.type === 'cube') {
+				const cube = parseCubeParams(token.params, evaluateExpression);
+				const totalTransform = currentTransform.clone().multiply(pendingTransform);
+
+				const expressions = [cube.xExpr, cube.yExpr, cube.zExpr];
+				const values = [cube.xVal, cube.yVal, cube.zVal];
+
+				for (let i = 0; i < 3; i++) {
+					for (const paramName of Object.keys(params)) {
+						const re = new RegExp(`\\b${paramName}\\b`);
+						if (re.test(expressions[i])) {
+							const lengthVal = values[i];
+							
+							const localP1 = new Vector3();
+							const localP2 = new Vector3();
+
+							if (cube.isCentered) {
+								localP1.setComponent(i, -lengthVal / 2);
+								localP2.setComponent(i, lengthVal / 2);
+							} else {
+								localP1.setComponent(i, 0);
+								localP2.setComponent(i, lengthVal);
+							}
+
+							const worldP1Vec = localP1.clone().applyMatrix4(totalTransform);
+							const worldP2Vec = localP2.clone().applyMatrix4(totalTransform);
+
+							annotations[paramName] = {
+								type: 'height',
+								p1: [worldP1Vec.x, worldP1Vec.y, worldP1Vec.z],
+								p2: [worldP2Vec.x, worldP2Vec.y, worldP2Vec.z],
+								value: params[paramName] as number,
+							};
+							break;
+						}
+					}
+				}
+				
+				pendingTransform.identity();
 			}
 		}
 	}
@@ -354,8 +683,6 @@ function formatValue(v: unknown): string {
 function escapeRE(s: string) {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
-
-import { Vector3, Line3 } from 'three';
 
 export function findNearestParameter(
     clickPoint: [number, number, number], 
