@@ -769,19 +769,19 @@ export default function CamConfigModal({
                                                         <line x1="25" y1="71" x2="20" y2="79" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
                                                         <line x1="60" y1="86" x2="55" y2="94" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
                                                         {/* X Dimension Line (Bottom Left Edge) with arrows */}
-                                                        <path d="M 22 76 L 53 89" stroke="#ffffff" strokeWidth="0.75" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+                                                        <path d="M 22 76 L 53 89" stroke="#ffffff" strokeWidth="0.75" markerStart="url(#arrow)" markerEnd="url(#arrow)" />
 
                                                         {/* Y Dimension extension lines */}
                                                         <line x1="95" y1="71" x2="100" y2="79" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
                                                         <line x1="60" y1="86" x2="65" y2="94" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
                                                         {/* Y Dimension Line (Bottom Right Edge) with arrows */}
-                                                        <path d="M 67 89 L 98 76" stroke="#ffffff" strokeWidth="0.75" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+                                                        <path d="M 67 89 L 98 76" stroke="#ffffff" strokeWidth="0.75" markerStart="url(#arrow)" markerEnd="url(#arrow)" />
 
                                                         {/* Z Dimension extension lines */}
                                                         <line x1="24" y1="35" x2="10" y2="35" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
                                                         <line x1="24" y1="70" x2="10" y2="70" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
                                                         {/* Z Dimension Line (Left Side) with arrows */}
-                                                        <path d="M 12 37 L 12 68" stroke="#ffffff" strokeWidth="0.75" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+                                                        <path d="M 12 37 L 12 68" stroke="#ffffff" strokeWidth="0.75" markerStart="url(#arrow)" markerEnd="url(#arrow)" />
 
                                                         {/* Thin Clean White Labels with custom letter spacing */}
                                                         <text x="32" y="96" fill="#ffffff" fontSize="9" fontFamily="sans-serif" style={{ fontWeight: 300, letterSpacing: '0.06em' }} textAnchor="middle">
@@ -837,14 +837,14 @@ export default function CamConfigModal({
                                                         <line x1="30" y1="24" x2="30" y2="10" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
                                                         <line x1="90" y1="24" x2="90" y2="10" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
                                                         {/* OD Dimension line with arrows */}
-                                                        <path d="M 32 12 L 88 12" stroke="#ffffff" strokeWidth="0.75" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+                                                        <path d="M 32 12 L 88 12" stroke="#ffffff" strokeWidth="0.75" markerStart="url(#arrow)" markerEnd="url(#arrow)" />
 
                                                         {/* ID Dimension line if ID > 0 with arrows */}
                                                         {stockInnerDiameter !== null && stockInnerDiameter > 0 && (
                                                             <>
                                                                 <line x1="48" y1="25" x2="48" y2="38" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
                                                                 <line x1="72" y1="25" x2="72" y2="38" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
-                                                                <path d="M 50 35 L 70 35" stroke="#f59e0b" strokeWidth="0.75" marker-start="url(#arrow-amber)" marker-end="url(#arrow-amber)" />
+                                                                <path d="M 50 35 L 70 35" stroke="#f59e0b" strokeWidth="0.75" markerStart="url(#arrow-amber)" markerEnd="url(#arrow-amber)" />
                                                             </>
                                                         )}
 
@@ -852,7 +852,7 @@ export default function CamConfigModal({
                                                         <line x1="28" y1="25" x2="14" y2="25" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
                                                         <line x1="28" y1="75" x2="14" y2="75" stroke="#64748b" strokeWidth="0.5" strokeDasharray="1,1" />
                                                         {/* Height/Length Dimension line with arrows */}
-                                                        <path d="M 16 27 L 16 73" stroke="#ffffff" strokeWidth="0.75" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+                                                        <path d="M 16 27 L 16 73" stroke="#ffffff" strokeWidth="0.75" markerStart="url(#arrow)" markerEnd="url(#arrow)" />
 
                                                         {/* Thin Clean White Labels with custom letter spacing */}
                                                         <text x="60" y="6" fill="#ffffff" fontSize="9" fontFamily="sans-serif" style={{ fontWeight: 300, letterSpacing: '0.06em' }} textAnchor="middle">
