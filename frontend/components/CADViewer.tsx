@@ -6,7 +6,7 @@ import { useCADEngine } from '@/hooks/useCADEngine';
 import CamConfigModal, { CamConfig } from './CamConfigModal';
 import { toast } from 'sonner';
 import { AlertCircle, Share2, Download, ChevronDown, Layers, Box, Loader2, Cpu } from 'lucide-react';
-import { extractStructuredAnnotations } from '@/lib/openscadParameters';
+import { extractStructuredAnnotations, OpenScadAnnotations } from '@/lib/openscadParameters';
 import {
     DropdownMenu,
     DropdownMenuTrigger,
@@ -44,8 +44,12 @@ type CADViewerProps = {
 // --- DXF Safety Wrapper Logic ---
 // This safely converts a 3D script into a 2D projection script
 const generateDxfWrapper = (originalCode: string, mode: 'silhouette' | 'section' | 'blueprint') => {
-    // 1. Comment out the original execution call so it doesn't render the 3D part alongside the 2D projection
-    const cleanCode = originalCode.replace(/part_root\(\)\s*;/g, '// part_root(); // Disabled for DXF projection');
+    // 1. Wrap the entire input script within a controlled module namespace
+    const cleanCode = `
+module target_blueprint() {
+    ${originalCode}
+}
+`;
 
     // 2. Force a lower resolution to prevent CGAL mesh flattening crashes
     const safeHeader = `\n/* --- DXF EXPORT INJECTION --- */\n$fn = 32; // Overridden for DXF stability\n\n`;
@@ -57,15 +61,15 @@ const generateDxfWrapper = (originalCode: string, mode: 'silhouette' | 'section'
         projectionWrapper = `
 // SILHOUETTE: Full top-down shadow
 projection(cut = false) {
-    render() { part_root(); }
+    render() { target_blueprint(); }
 }`;
     } else if (mode === 'section') {
-        // SECTION: Cut slightly below Z=0.01 to avoid perfectly coplanar math crashes
+        // SECTION: Cross-section slice with epsilon offset
         projectionWrapper = `
 // SECTION: Cross-section slice with epsilon offset
 projection(cut = true) {
     translate([0, 0, -0.01]) {
-        render() { part_root(); }
+        render() { target_blueprint(); }
     }
 }`;
     } else if (mode === 'blueprint') {
@@ -77,7 +81,7 @@ offset_dist = 120; // Distance between views
 union() {
     // 1. Top View (Top Left)
     projection(cut = false) {
-        render() { part_root(); }
+        render() { target_blueprint(); }
     }
     
     // 2. Isometric View (Top Right)
@@ -85,7 +89,7 @@ union() {
         projection(cut = false) {
             // Magic isometric rotation math
             rotate([54.7356, 0, 45]) {
-                render() { part_root(); }
+                render() { target_blueprint(); }
             }
         }
     }
@@ -94,7 +98,7 @@ union() {
     translate([0, -offset_dist, 0]) {
         projection(cut = false) {
             rotate([90, 0, 0]) {
-                render() { part_root(); }
+                render() { target_blueprint(); }
             }
         }
     }
@@ -103,7 +107,7 @@ union() {
     translate([offset_dist, -offset_dist, 0]) {
         projection(cut = false) {
             rotate([90, 0, 90]) {
-                render() { part_root(); }
+                render() { target_blueprint(); }
             }
         }
     }
@@ -158,9 +162,13 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         respawn,
     }));
 
-    // Extract annotations from scad code
-    const annotations = useMemo(() => {
-        return extractStructuredAnnotations(code);
+    // Extract annotations from scad code (debounced to avoid main-thread freeze)
+    const [annotations, setAnnotations] = useState<OpenScadAnnotations>({});
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setAnnotations(extractStructuredAnnotations(code));
+        }, 500);
+        return () => clearTimeout(timer);
     }, [code]);
 
     const statusCallbackRef = useRef(onStatusChange);
@@ -181,9 +189,8 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
             if (!code) return;
             const label = format.toUpperCase();
             const modeLabel = dxfMode ? ` (${dxfMode})` : '';
-            toast.info(`Exporting ${label}${modeLabel}…`, { description: `Preparing ${label} geometry kernel…` });
 
-            try {
+            const promise = (async () => {
                 let exportScript = code;
 
                 // If requesting a DXF, apply the safety wrapper
@@ -192,7 +199,6 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                 }
 
                 // Pass the overridden script to the engine
-                // Make sure your useCADEngine's exportModel function uses this third parameter!
                 const buffer = await exportModel(format, dxfMode, exportScript);
                 const blob = new Blob([buffer], { type: 'application/octet-stream' });
                 const url = URL.createObjectURL(blob);
@@ -207,12 +213,14 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
-                URL.revokeObjectURL(url);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            })();
 
-                toast.success(`${label} Exported Successfully`);
-            } catch (err) {
-                toast.error(`${label} Export Failed`, { description: String(err) });
-            }
+            toast.promise(promise, {
+                loading: `Exporting ${label}${modeLabel}…`,
+                success: `${label} Exported Successfully`,
+                error: (err) => `${label} Export Failed: ${err.message || err}`,
+            });
         },
         [code, exportModel]
     );
@@ -227,17 +235,15 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
         toast.success('SCAD File Downloaded');
     }, [code]);
 
     const handleExportStep = useCallback(async () => {
         if (!code) return;
-        toast.info("Exporting STEP…", { description: "Compiling CSG tree in browser…" });
 
-        try {
+        const promise = (async () => {
             const csgTree = await compileCsgTree();
-            toast.info("CSG compiled successfully", { description: "Requesting STEP generation from backend…" });
 
             const res = await fetch('/api/v1/export/step', {
                 method: 'POST',
@@ -252,7 +258,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
 
             if (!res.ok) {
                 const errText = await res.text();
-                throw new Error(`STEP service failed: ${errText}`);
+                throw new Error(errText || 'STEP service failed');
             }
 
             const buffer = await res.arrayBuffer();
@@ -265,12 +271,14 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        })();
 
-            toast.success("STEP Exported Successfully");
-        } catch (err) {
-            toast.error("STEP Export Failed", { description: String(err) });
-        }
+        toast.promise(promise, {
+            loading: 'Exporting STEP model…',
+            success: 'STEP Exported Successfully',
+            error: (err) => `STEP Export Failed: ${err.message || err}`,
+        });
     }, [code, compileCsgTree, isDemoMode]);
 
     const handleOpenCamModal = useCallback((controller: string) => {
@@ -282,11 +290,9 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         if (!code) return;
         setIsGeneratingGCode(true);
         const controllerLabel = config.controller.toUpperCase();
-        toast.info(`Generating ${controllerLabel} G-code…`, { description: "Compiling CSG tree in browser…" });
 
-        try {
+        const promise = (async () => {
             const csgTree = await compileCsgTree();
-            toast.info("CSG compiled successfully", { description: `Requesting ${controllerLabel} G-code from backend…` });
 
             const res = await fetch('/api/v1/export/gcode', {
                 method: 'POST',
@@ -327,12 +333,20 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        })();
 
-            toast.success(`${controllerLabel} G-code Generated Successfully`);
+        toast.promise(promise, {
+            loading: `Generating ${controllerLabel} G-code…`,
+            success: `${controllerLabel} G-code Generated Successfully`,
+            error: (err) => `G-code Export Failed: ${err.message || err}`,
+        });
+
+        try {
+            await promise;
             setIsCamModalOpen(false);
         } catch (err) {
-            toast.error("G-code Export Failed", { description: String(err) });
+            // Already handled by toast.promise
         } finally {
             setIsGeneratingGCode(false);
         }

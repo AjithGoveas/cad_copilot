@@ -285,9 +285,8 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
         }
         if (!cadScript) return;
         const label = format.toUpperCase();
-        toast.info(`Exporting ${label}…`, { description: `Preparing ${label} geometry kernel…` });
         
-        try {
+        const promise = (async () => {
             const buffer = await viewerRef.current?.exportModel(format, dxfMode);
             if (!buffer) throw new Error('No export buffer generated');
             const blob = new Blob([buffer], { type: 'application/octet-stream' });
@@ -300,11 +299,14 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            toast.success(`${label} Exported Successfully`);
-        } catch (err) {
-            toast.error(`${label} Export Failed`, { description: String(err) });
-        }
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        })();
+
+        toast.promise(promise, {
+            loading: `Exporting ${label}…`,
+            success: `${label} Exported Successfully`,
+            error: (err) => `${label} Export Failed: ${err.message || err}`,
+        });
     }, [cadScript, isDemoMode]);
 
     const handleDownloadScad = useCallback(() => {

@@ -11,6 +11,7 @@ from typing import Any
 import uuid
 import io
 import gc
+import concurrent.futures
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, BackgroundTasks, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from app.models.schemas import GenerateResponse, EditRequest, StepRequest, GCodeRequest, GCodeResponse, CAMJobRequest
@@ -252,16 +253,20 @@ def _cleanup_file(path: Path):
 #         )
 
 
+def _process_export_step(csg_tree: str) -> bytes:
+    from app.services.csg_parser import CSGParser
+    from app.services.export_utils import build123d_to_step_bytes
+    shape = CSGParser.parse(csg_tree)
+    return build123d_to_step_bytes(shape)
+
 @router.post("/export-step")
 async def export_step_stream(request: StepRequest) -> StreamingResponse:
     """
     Convert flat CSG tree into a parametric STEP model and stream in-memory.
     """
-    from app.services.export_utils import build123d_to_step_bytes
-    
     try:
-        shape = CSGParser.parse(request.csg_tree)
-        step_bytes = build123d_to_step_bytes(shape)
+        step_bytes = await asyncio.to_thread(_process_export_step, request.csg_tree)
+
         
         bio = io.BytesIO(step_bytes)
         return StreamingResponse(
@@ -287,6 +292,36 @@ async def export_step_stream(request: StepRequest) -> StreamingResponse:
         gc.collect()
 
 
+def _process_gcode(cam_request_dict: dict, step_file_path: str | None, temp_path_str: str | None) -> dict:
+    from app.models.schemas import CAMJobRequest
+    from app.services.gcode_generator import GCodeGenerator
+    from app.services.csg_parser import CSGParser, export_to_step
+    
+    cam_request = CAMJobRequest(**cam_request_dict)
+    
+    if not cam_request.csg_tree and step_file_path:
+        generator = GCodeGenerator(
+            controller=cam_request.machine_configuration.controller,
+            safe_z=cam_request.machine_configuration.safe_z,
+            resolution=cam_request.machine_configuration.resolution
+        )
+        return generator.generate(cam_request, step_path=step_file_path)
+    
+    if not cam_request.csg_tree:
+        raise ValueError("Either 'csg_tree' or 'step_file_path' must be provided.")
+        
+    shape = CSGParser.parse(cam_request.csg_tree)
+    if temp_path_str:
+        export_to_step(shape, temp_path_str)
+        
+    generator = GCodeGenerator(
+        controller=cam_request.machine_configuration.controller,
+        safe_z=cam_request.machine_configuration.safe_z,
+        resolution=cam_request.machine_configuration.resolution
+    )
+    return generator.generate(cam_request, step_path=temp_path_str)
+
+
 @router.post("/gcode", response_model=GCodeResponse)
 async def generate_gcode(
     request: Request,
@@ -299,7 +334,6 @@ async def generate_gcode(
     """
     import tempfile
     import pathlib
-    from app.services.gcode_generator import GCodeGenerator
     
     content_type = request.headers.get("content-type", "")
     temp_path = None
@@ -367,38 +401,25 @@ async def generate_gcode(
     print("=========================================\n")
     
     try:
-        # Check if we should use step_file_path directly or compile CSG tree
+        # If tempfile wasn't created by multipart handler, create one for the CSG-to-STEP compile
         if not cam_request.csg_tree and cam_request.step_file_path:
-            generator = GCodeGenerator(
-                controller=cam_request.machine_configuration.controller,
-                safe_z=cam_request.machine_configuration.safe_z,
-                resolution=cam_request.machine_configuration.resolution
-            )
-            result = generator.generate(cam_request, step_path=cam_request.step_file_path)
+            pass # We already have the step path
         else:
             if not cam_request.csg_tree:
                 raise HTTPException(
                     status_code=400,
                     detail={"error": {"message": "Either 'csg_tree' or 'step_file_path' must be provided."}}
                 )
-            
-            # Generate the shape from the CSG tree
-            shape = CSGParser.parse(cam_request.csg_tree)
-            
-            # If tempfile wasn't created by multipart handler, create one for the CSG-to-STEP compile
             if not temp_path:
                 with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as tf:
                     temp_path = pathlib.Path(tf.name)
-                
-            export_to_step(shape, str(temp_path))
-            
-            # Run GCodeGenerator on the temporary file
-            generator = GCodeGenerator(
-                controller=cam_request.machine_configuration.controller,
-                safe_z=cam_request.machine_configuration.safe_z,
-                resolution=cam_request.machine_configuration.resolution
-            )
-            result = generator.generate(cam_request, step_path=temp_path)
+
+        result = await asyncio.to_thread(
+            _process_gcode,
+            cam_request.model_dump(),
+            cam_request.step_file_path,
+            str(temp_path) if temp_path else None
+        )
         
         # Check if the result has errors
         gcode_content = result.get("gcode", "")

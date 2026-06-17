@@ -208,6 +208,9 @@ export function useCADEngine({
         customScript?: string
     ): Promise<ArrayBuffer> => {
         
+        // Terminate any existing dirty worker to force clean state
+        terminateWorker();
+
         // Use custom script if provided by a wrapper (like generateDxfWrapper), otherwise fallback to base script
         const codeToProcess = customScript || script;
         if (!codeToProcess) throw new Error('No script available to export');
@@ -235,9 +238,12 @@ export function useCADEngine({
         } finally {
             setIsExporting(false);
         }
-    }, [script, getWorker]);
+    }, [script, getWorker, terminateWorker]);
 
     const compileCsgTree = useCallback(async (customScript?: string): Promise<string> => {
+        // Terminate any existing dirty worker to force clean state
+        terminateWorker();
+
         const codeToProcess = customScript || script;
         if (!codeToProcess) throw new Error('No script available to compile CSG');
 
@@ -262,7 +268,7 @@ export function useCADEngine({
         } finally {
             setIsExporting(false);
         }
-    }, [script, getWorker]);
+    }, [script, getWorker, terminateWorker]);
 
     const rebuild = useCallback(() => {
         if (!script) return;

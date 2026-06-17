@@ -1273,17 +1273,24 @@ def _hull_from_shapes(shapes: List[Any]) -> Any:
     pts: List[Tuple[float, float, float]] = []
     for shape in shapes:
         try:
-            for edge in shape.edges():
-                for t in np.linspace(0, 1, 24, endpoint=False):
+            edges = list(shape.edges())
+        except Exception:
+            continue
+        for edge in edges:
+            for t in np.linspace(0, 1, 24, endpoint=False):
+                try:
                     v = edge.position_at(t)
                     pts.append((v.X, v.Y, v.Z))
-        except Exception:
-            pass
+                except Exception:
+                    break
 
     if len(pts) < 4:
         return make_compound_safe(shapes)
 
     arr = np.array(pts)
+    arr = np.unique(arr, axis=0)
+    if len(arr) > 2000:
+        arr = arr[::(len(arr)//1000 + 1)]
     z_range = arr[:, 2].max() - arr[:, 2].min()
     
     if z_range < 1e-6:

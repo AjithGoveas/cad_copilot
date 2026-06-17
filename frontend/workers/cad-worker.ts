@@ -226,8 +226,9 @@ async function exportToFile(
     const outputPath = `/output.${format}`;
 
     try {
-        // Pass `true` here to force a fresh WebAssembly instance every single time.
-        const engine   = await ensureEngine(true); 
+        // Use a persistent WebAssembly instance. Reusing the engine avoids ~500ms setup 
+        // overhead and memory reallocation spikes per compilation.
+        const engine   = await ensureEngine(false); 
         
         const instance = engine.getInstance();
         fs       = instance.FS;
@@ -242,7 +243,7 @@ async function exportToFile(
         // Write the script (already correctly wrapped by CADViewer.tsx) to the virtual FS
         fs.writeFile(INPUT_PATH, script);
 
-        const exitCode = instance.callMain(['-o', outputPath, INPUT_PATH]);
+        const exitCode = instance.callMain(['--enable=manifold', '--enable=fast-csg', '-o', outputPath, INPUT_PATH]);
 
         if (exitCode !== 0 || !fs.analyzePath(outputPath).exists) {
             const details = stderrCapture.join('\n');
@@ -315,6 +316,8 @@ async function compileCsg(
     const OUTPUT_PATH = '/output.csg';
 
     try {
+        // Force reload the engine to get a completely clean WASM instance for CSG compilation.
+        // This avoids re-entrancy crashes when switching formats on the same OpenSCAD instance.
         const engine = await ensureEngine(true);
         const instance = engine.getInstance();
         fs = instance.FS;
@@ -327,7 +330,7 @@ async function compileCsg(
         console.log('[CAD-Worker] Compiling CSG...');
         fs.writeFile(INPUT_PATH, script);
 
-        const exitCode = instance.callMain(['-o', OUTPUT_PATH, INPUT_PATH]);
+        const exitCode = instance.callMain(['--enable=manifold', '--enable=fast-csg', '-o', OUTPUT_PATH, INPUT_PATH]);
 
         if (exitCode !== 0 || !fs.analyzePath(OUTPUT_PATH).exists) {
             const details = stderrCapture.join('\n');
@@ -343,6 +346,8 @@ async function compileCsg(
     } catch (err: unknown) {
         throw normaliseThrown(err);
     } finally {
+        // Reset the engine instance cache so any subsequent rendering/export compiles start fresh.
+        enginePromise = null;
         if (fs) {
             const filesToCleanup = [
                 INPUT_PATH,
@@ -434,6 +439,11 @@ function handleWorkerError(err: unknown, id?: number) {
     const message   = e.message ?? 'Unknown worker error';
     const details   = e.details  ?? stderrCapture.join('\n');
     const errorType = e.classified ?? classifyError(message, details);
+
+    if (errorType === 'CompileFailure' && (message.includes('CGAL') || message.includes('pointer:'))) {
+        console.warn('[CAD-Worker] Fatal WASM engine crash detected. Resetting engine instance to auto-recover...');
+        enginePromise = null;
+    }
 
     workerScope.postMessage({
         type: 'error',

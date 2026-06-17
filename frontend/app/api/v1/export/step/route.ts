@@ -34,9 +34,9 @@ export async function POST(req: NextRequest) {
             throw new Error(`AI Engine failed: ${errorText}`);
         }
 
-        const buffer = await backendRes.arrayBuffer();
-
-        return new Response(buffer, {
+        // Directly stream the python backend's response body to the client
+        // This prevents the Next.js API route from OOM crashing when buffering huge STEP files
+        return new Response(backendRes.body, {
             status: 200,
             headers: {
                 'Content-Type': 'application/step',
