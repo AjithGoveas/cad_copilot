@@ -144,7 +144,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
                 const formData = new FormData();
                 formData.append('prompt', prompt);
                 formData.append('model', selectedModel);
-                if (selectedFile) formData.append('image', selectedFile);
+                if (selectedFile) formData.append('image', selectedFile, selectedFile.name);
                 if (isDemoMode) formData.append('demoMode', 'true');
 
                 res = await fetch('/api/v1/generate', {
@@ -224,7 +224,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
             const formData = new FormData();
             formData.append('prompt', targetMessage.content);
             formData.append('model', selectedModel);
-            if (file) formData.append('image', file);
+            if (file) formData.append('image', file, file.name);
             if (isDemoMode) formData.append('demoMode', 'true');
 
             const res = await fetch('/api/v1/generate', {

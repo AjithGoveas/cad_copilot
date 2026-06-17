@@ -38,6 +38,8 @@ function extractParameters(code: string): Record<string, any> {
     return params;
 }
 
+export const maxDuration = 300;
+
 export async function POST(req: NextRequest) {
     try {
         const formData = await req.formData();
@@ -64,7 +66,7 @@ export async function POST(req: NextRequest) {
         backendFormData.append('prompt', prompt);
         backendFormData.append('model', model);
         if (image) {
-            backendFormData.append('image', image);
+            backendFormData.append('image', image, image.name);
         }
 
         const backendRes = await fetch(`${PYTHON_BACKEND_URL}/generate`, {

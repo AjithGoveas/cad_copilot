@@ -11,6 +11,7 @@ import json
 import os
 import re
 import time
+import hashlib
 from pathlib import Path
 from typing import Any, Callable
 
@@ -199,6 +200,30 @@ _CODE_START_RE = re.compile(
 )
 
 
+# Global cache to speed up blueprint uploads and analysis
+# Keys are the MD5 hash of the uploaded file bytes
+# Value: {
+#     "feature_map": dict[str, Any],
+#     "gemini_file": Any,
+#     "mime_type": str
+# }
+_BLUEPRINT_CACHE: dict[str, dict[str, Any]] = {}
+_BLUEPRINT_CACHE_KEYS: list[str] = []
+_MAX_CACHE_SIZE = 50
+
+def _cache_blueprint(file_hash: str, data: dict[str, Any]) -> None:
+    if file_hash in _BLUEPRINT_CACHE:
+        _BLUEPRINT_CACHE[file_hash].update(data)
+        return
+        
+    if len(_BLUEPRINT_CACHE_KEYS) >= _MAX_CACHE_SIZE:
+        oldest_key = _BLUEPRINT_CACHE_KEYS.pop(0)
+        _BLUEPRINT_CACHE.pop(oldest_key, None)
+        
+    _BLUEPRINT_CACHE[file_hash] = data
+    _BLUEPRINT_CACHE_KEYS.append(file_hash)
+
+
 # -- Service -------------------------------------------------------------------
 
 class LLMCodegenService:
@@ -217,6 +242,47 @@ class LLMCodegenService:
 
         self.client = genai.Client(api_key=api_key)
         self.model  = model or os.getenv("GENAI_MODEL", "gemini-3.1-flash-lite-preview")
+
+    def upload_file_to_gemini(self, file_bytes: bytes, mime_type: str, filename: str) -> Any:
+        """Upload file bytes to Gemini Files API using a temporary file and return the file object."""
+        import tempfile
+        from pathlib import Path
+        
+        suffix = Path(filename).suffix or ".pdf"
+        if not suffix.startswith("."):
+            suffix = "." + suffix
+            
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+            
+        try:
+            uploaded_file = self.client.files.upload(
+                file=tmp_path,
+                config=types.UploadFileConfig(
+                    mime_type=mime_type
+                )
+            )
+            
+            # Poll if state is PROCESSING
+            import time
+            state = getattr(uploaded_file, "state", None)
+            if state and state.name == "PROCESSING":
+                for _ in range(30):
+                    time.sleep(1)
+                    uploaded_file = self.client.files.get(name=uploaded_file.name)
+                    if uploaded_file.state.name != "PROCESSING":
+                        break
+                        
+            if uploaded_file.state.name == "FAILED":
+                raise RuntimeError("Gemini file processing failed")
+                
+            return uploaded_file
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
     # -- Private helpers -------------------------------------------------------
 
@@ -267,17 +333,35 @@ class LLMCodegenService:
         self,
         image_bytes: bytes,
         mime_type: str,
+        filename: str = "blueprint.pdf",
     ) -> dict[str, Any]:
         """
         Stage 1 - Analyse a blueprint image/PDF and return a structured
         feature-map dictionary.
         """
+        file_hash = hashlib.md5(image_bytes).hexdigest()
+        
+        if file_hash in _BLUEPRINT_CACHE and "feature_map" in _BLUEPRINT_CACHE[file_hash]:
+            print(f"[audit] Cache hit for file hash {file_hash}")
+            return _BLUEPRINT_CACHE[file_hash]["feature_map"]
+            
+        uploaded_file = None
+        if file_hash in _BLUEPRINT_CACHE and "gemini_file" in _BLUEPRINT_CACHE[file_hash]:
+            uploaded_file = _BLUEPRINT_CACHE[file_hash]["gemini_file"]
+        else:
+            print(f"[audit] Cache miss. Uploading {filename} to Gemini Files API...")
+            uploaded_file = self.upload_file_to_gemini(image_bytes, mime_type, filename)
+            _cache_blueprint(file_hash, {
+                "gemini_file": uploaded_file,
+                "mime_type": mime_type,
+            })
+            
         def _call() -> Any:
             return self.client.models.generate_content(
                 model=self.model,
                 contents=[
                     types.Part.from_text(text=AUDIT_INSTRUCTION),
-                    types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                    uploaded_file,
                 ],
                 config=types.GenerateContentConfig(
                     temperature=0.0,
@@ -289,7 +373,9 @@ class LLMCodegenService:
 
         try:
             cleaned = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-            return json.loads(cleaned)
+            feature_map = json.loads(cleaned)
+            _cache_blueprint(file_hash, {"feature_map": feature_map})
+            return feature_map
         except Exception:
             return {}
 
@@ -301,6 +387,7 @@ class LLMCodegenService:
         feature_map: dict[str, Any] | None = None,
         base_code: str | None = None,
         selection_context: str | None = None,
+        filename: str = "blueprint.pdf",
     ) -> str:
         """
         Stage 2 - Synthesise or refine an OpenSCAD script.
@@ -323,10 +410,24 @@ class LLMCodegenService:
 
         user_text = "\n\n".join(parts)
 
+        # Retrieve or upload file reference
+        uploaded_file = None
+        if image_bytes and mime_type:
+            file_hash = hashlib.md5(image_bytes).hexdigest()
+            if file_hash in _BLUEPRINT_CACHE and "gemini_file" in _BLUEPRINT_CACHE[file_hash]:
+                uploaded_file = _BLUEPRINT_CACHE[file_hash]["gemini_file"]
+            else:
+                print(f"[codegen] Cache miss. Uploading {filename} to Gemini Files API...")
+                uploaded_file = self.upload_file_to_gemini(image_bytes, mime_type, filename)
+                _cache_blueprint(file_hash, {
+                    "gemini_file": uploaded_file,
+                    "mime_type": mime_type,
+                })
+
         # Assemble multimodal contents
         contents: list[Any] = [types.Part.from_text(text=SYSTEM_INSTRUCTION)]
-        if image_bytes and mime_type:
-            contents.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
+        if uploaded_file:
+            contents.append(uploaded_file)
         contents.append(types.Part.from_text(text=user_text))
 
         def _call() -> Any:

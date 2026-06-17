@@ -1,7 +1,7 @@
 'use client';
 
 import { type FormEvent, useEffect, useRef } from 'react';
-import { Upload, X, Loader2, Sparkles, Binary, LogOut, ChevronLeft, ChevronRight, Box, ArrowUp, Paperclip, Target } from 'lucide-react';
+import { Upload, X, Loader2, Sparkles, Binary, LogOut, ChevronLeft, ChevronRight, Box, ArrowUp, Paperclip, Target, FileText, Image } from 'lucide-react';
 import { ChatBubble } from './ChatBubble';
 import { signOut } from 'next-auth/react';
 import type { Message } from './HitlWorkspace';
@@ -117,7 +117,13 @@ export function ChatPanel({
                                 <div className="flex flex-wrap gap-2 px-3 pt-3 pb-1">
                                     {selectedFile && (
                                         <div className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-1.5 shadow-sm">
-                                            <Binary size={12} className="text-blue-400" />
+                                            {selectedFile.name.toLowerCase().endsWith('.pdf') ? (
+                                                <FileText size={12} className="text-red-400" />
+                                            ) : selectedFile.type.startsWith('image/') || /\.(png|jpe?g|webp|heic|heif)$/i.test(selectedFile.name) ? (
+                                                <Image size={12} className="text-blue-400" />
+                                            ) : (
+                                                <Binary size={12} className="text-zinc-400" />
+                                            )}
                                             <span className="max-w-[200px] truncate font-sans text-[12px] font-medium text-zinc-200">
                                                 {selectedFile.name}
                                             </span>

@@ -144,10 +144,10 @@ async def generate(
 
     # ── Stage 1: Blueprint Audit (skip if no image) ──────────────────────────
     feature_map: dict[str, Any] = {}
-    if image_bytes and mime_type:
+    if image_bytes and mime_type and image:
         try:
             feature_map = await asyncio.to_thread(
-                svc.audit_blueprint, image_bytes, mime_type
+                svc.audit_blueprint, image_bytes, mime_type, image.filename
             )
         except Exception as exc:
             # Non-fatal: proceed with empty feature map
@@ -163,6 +163,7 @@ async def generate(
             feature_map=feature_map,
             base_code=base_code,
             selection_context=selection_context,
+            filename=image.filename if image else "blueprint.pdf",
         )
     except Exception as exc:
         raise HTTPException(

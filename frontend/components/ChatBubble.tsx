@@ -2,7 +2,7 @@
 
 import { useState, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Sparkles, Copy, Check, FileText, ChevronDown, Upload, Trash2, Plus, Binary } from 'lucide-react';
+import { Sparkles, Copy, Check, FileText, ChevronDown, Upload, Trash2, Plus, Binary, Image } from 'lucide-react';
 import { toast } from 'sonner';
 
 type Props = {
@@ -50,7 +50,13 @@ export function ChatBubble({ role, content, attachment, uploadedFiles = [], onUp
                         <div className="flex items-center gap-2 mb-1">
                             {attachment ? (
                                 <div className="relative flex items-center gap-2 rounded-xl border border-zinc-700/60 bg-zinc-800/40 px-3 py-1.5 shadow-sm transition-hover hover:bg-zinc-800/80">
-                                    <FileText size={13} className="text-blue-400" />
+                                    {attachment.name.toLowerCase().endsWith('.pdf') ? (
+                                        <FileText size={13} className="text-red-400" />
+                                    ) : /\.(png|jpe?g|webp|heic|heif)$/i.test(attachment.name) ? (
+                                        <Image size={13} className="text-blue-400" />
+                                    ) : (
+                                        <Binary size={13} className="text-zinc-400" />
+                                    )}
                                     <span className="font-medium font-sans text-[12px] text-zinc-300 truncate max-w-[150px]" title={attachment.name}>
                                         {attachment.name}
                                     </span>
