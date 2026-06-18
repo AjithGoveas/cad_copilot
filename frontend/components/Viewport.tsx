@@ -1,9 +1,9 @@
 'use client';
 
-import { Suspense, useState, useMemo, memo, useCallback } from 'react';
+import { Suspense, useState, useMemo, memo, useCallback, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Stage, ContactShadows, Center } from '@react-three/drei';
-import { Loader2, MousePointer2, Cuboid } from 'lucide-react';
+import { Loader2, MousePointer2, Cuboid, Upload } from 'lucide-react';
 import { StlMesh } from './StlMesh';
 import { DimensionOverlay } from './DimensionOverlay';
 import { CameraRig } from './CameraRig';
@@ -19,17 +19,31 @@ type Props = {
     onSelectParameter?: (key: string | null) => void; onHoverParameter?: (key: string | null) => void;
     onParameterUpdate?: (key: string, value: number) => void;
     targetPoint?: [number, number, number] | null;
+    onImportStep?: (file: File) => Promise<void>;
 };
 
 export const Viewport = memo(function Viewport({ 
     stlUrls, statusText, isCompiling, selection, onMeshClick,
     annotations = {}, activeFeatureId = null, onSelectParameter, onHoverParameter, onParameterUpdate,
-    targetPoint = null,
+    targetPoint = null, onImportStep,
 }: Props) {
     const [geometryCenter, setGeometryCenter] = useState<[number, number, number]>([0, 0, 0]);
     const [geometryScale, setGeometryScale] = useState<number>(1.0);
     const [geometrySize, setGeometrySize] = useState<[number, number, number]>([10, 10, 10]);
     const [quickEdit, setQuickEdit] = useState<{ key: string; point: [number, number, number] } | null>(null);
+
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const handleImportClick = useCallback(() => {
+        fileInputRef.current?.click();
+    }, []);
+
+    const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            onImportStep?.(file);
+        }
+    }, [onImportStep]);
 
     const handleGeometryLoaded = useCallback((center: [number, number, number], size: [number, number, number], scale: number) => {
         setGeometryCenter(prev => prev[0] === center[0] && prev[1] === center[1] && prev[2] === center[2] ? prev : center);
@@ -161,11 +175,27 @@ export const Viewport = memo(function Viewport({
                         <div className="absolute inset-0 rounded-3xl bg-blue-500/5 animate-pulse" />
                         <Cuboid size={32} strokeWidth={1.5} className="text-zinc-600" />
                     </div>
-                    <div className="text-center animate-in fade-in slide-in-from-bottom-4 duration-1000 delay-150">
+                    <div className="text-center flex flex-col items-center animate-in fade-in slide-in-from-bottom-4 duration-1000 delay-150">
                         <h3 className="font-sans text-sm font-medium tracking-wide text-zinc-300">Awaiting Geometry</h3>
-                        <p className="mt-2 font-sans text-[13px] text-zinc-500 max-w-[250px] leading-relaxed">
+                        <p className="mt-2 font-sans text-[13px] text-zinc-500 max-w-[250px] leading-relaxed mb-4">
                             Upload a blueprint or describe a shape in CADVΞX to begin generating.
                         </p>
+                        <input
+                            type="file"
+                            ref={fileInputRef}
+                            onChange={handleFileChange}
+                            accept=".step,.stp"
+                            className="hidden"
+                        />
+                        {onImportStep && (
+                            <button
+                                onClick={handleImportClick}
+                                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-600 text-[11px] font-semibold text-zinc-200 transition-all shadow-xl active:scale-95 pointer-events-auto cursor-pointer"
+                            >
+                                <Upload size={13} className="text-blue-500" />
+                                Import STEP File
+                            </button>
+                        )}
                     </div>
                 </div>
             )}

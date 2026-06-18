@@ -20,7 +20,7 @@ type Selection = {
 export default function ViewerClient({ prompt, scadCode, parametersJson }: ViewerClientProps) {
 	const [activeFeatureId, setActiveFeatureId] = useState<string | null>(null);
 	const [selection, setSelection] = useState<Selection | null>(null);
-	const [engineStatus, setEngineStatus] = useState({ isCompiling: false, isExporting: false });
+	const [engineStatus, setEngineStatus] = useState({ isCompiling: false, isExporting: false, isImported: false });
 
 	const parameters = useMemo(() => {
 		if (parametersJson && typeof parametersJson === 'object' && Object.keys(parametersJson).length > 0) {
@@ -73,7 +73,11 @@ export default function ViewerClient({ prompt, scadCode, parametersJson }: Viewe
 					onHoverParameter={setActiveFeatureId}
 					isGenerating={false}
 					showExport={false}
-					onStatusChange={(status) => setEngineStatus(status)}
+					onStatusChange={(status) => setEngineStatus({
+						isCompiling: status.isCompiling,
+						isExporting: status.isExporting,
+						isImported: !!status.isImported
+					})}
 				/>
 			</div>
 

@@ -26,12 +26,13 @@ type Props = {
     onExport?: (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => void;
     onDownloadScad?: () => void; onShare?: () => void;
     children?: ReactNode; isDemoMode?: boolean;
+    isImported?: boolean;
 };
 
 export const EditorDrawer = memo(function EditorDrawer({
     isOpen, setIsOpen, activeTab, setActiveTab, cadScript, onScriptChange,
     onRebuild, isCompiling, isExporting, hasScript, onLoadSession, onExport, onDownloadScad, onShare,
-    children, isDemoMode,
+    children, isDemoMode, isImported = false,
 }: Props) {
     const [isCopied, setIsCopied] = useState(false);
     const { data: historySessions, isLoading: isLoadingHistory } = useSWR<any[]>(
@@ -96,15 +97,21 @@ export const EditorDrawer = memo(function EditorDrawer({
                                         </button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end" className="w-40 border-[#3C3C3C] bg-[#252526] p-1 shadow-xl rounded-md">
-                                        <DropdownMenuItem onClick={onDownloadScad} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer"><div className="size-2 rounded-full bg-[#007ACC] mr-2.5 shadow-sm" /> .SCAD</DropdownMenuItem>
-                                        <DropdownMenuItem onClick={() => onExport?.('stl')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer"><div className="size-2 rounded-full bg-amber-500 mr-2.5 shadow-sm" /> .STL</DropdownMenuItem>
+                                        {!isImported && (
+                                            <DropdownMenuItem onClick={onDownloadScad} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+                                                <div className="size-2 rounded-full bg-[#007ACC] mr-2.5 shadow-sm" /> .SCAD
+                                            </DropdownMenuItem>
+                                        )}
+                                        <DropdownMenuItem onClick={() => onExport?.('stl')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+                                            <div className="size-2 rounded-full bg-amber-500 mr-2.5 shadow-sm" /> .STL
+                                        </DropdownMenuItem>
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             </div>
                             <Editor
                                 height="100%" language="cpp" theme="vs-dark" value={cadScript}
                                 onChange={(v: string | undefined) => onScriptChange(v ?? '')}
-                                options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', wordWrap: 'on', padding: { top: 16 }, scrollBeyondLastLine: false, fontFamily: "'JetBrains Mono', 'Fira Code', monospace", renderLineHighlight: 'all' }}
+                                options={{ readOnly: isImported, minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', wordWrap: 'on', padding: { top: 16 }, scrollBeyondLastLine: false, fontFamily: "'JetBrains Mono', 'Fira Code', monospace", renderLineHighlight: 'all' }}
                             />
                         </div>
                     )}
@@ -123,7 +130,7 @@ export const EditorDrawer = memo(function EditorDrawer({
                         </div>
                     )}
                 </div>
-
+ 
                 {/* ── Sticky Footer (Safety & Rebuild) ── */}
                 <div className="shrink-0 flex flex-col p-4 border-t border-[#3C3C3C] bg-[#252526] gap-3 shadow-[0_-4px_12px_rgba(0,0,0,0.1)]">
                     <div className="flex items-start gap-2">
@@ -132,7 +139,7 @@ export const EditorDrawer = memo(function EditorDrawer({
                     </div>
                     <button
                         onClick={onRebuild}
-                        disabled={isCompiling || !hasScript}
+                        disabled={isCompiling || !hasScript || isImported}
                         className="flex w-full items-center justify-center gap-2 rounded-md bg-[#007ACC] py-2.5 text-[12px] font-semibold text-white transition-all duration-300 hover:bg-[#007ACC]/90 hover:shadow-[0_0_12px_rgba(0,122,204,0.4)] active:scale-[0.98] disabled:bg-[#3C3C3C] disabled:text-[#A6A6A6] disabled:shadow-none"
                     >
                         {isCompiling ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} className="fill-current" />}

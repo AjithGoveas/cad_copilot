@@ -7,7 +7,7 @@ const PYTHON_BACKEND_URL = process.env.FASTAPI_URL;
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { csgTree, demoMode } = body;
+        const { csgTree, dxfMode, demoMode } = body;
         const isDemoMode = demoMode === true;
 
         if (!isDemoMode) {
@@ -18,38 +18,43 @@ export async function POST(req: NextRequest) {
         }
 
         if (!csgTree) {
-            return NextResponse.json({ error: 'CSG Tree is required' }, { status: 400 });
+            return NextResponse.json({ error: 'CSG Tree reference is required' }, { status: 400 });
         }
 
-        const backendRes = await fetch(`${PYTHON_BACKEND_URL}/export-step`, {
+        if (!dxfMode) {
+            return NextResponse.json({ error: 'DXF mode is required' }, { status: 400 });
+        }
+
+        const backendRes = await fetch(`${PYTHON_BACKEND_URL}/export-dxf`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ csg_tree: csgTree }),
+            body: JSON.stringify({
+                csg_tree: csgTree,
+                dxf_mode: dxfMode
+            }),
         });
 
         if (!backendRes.ok) {
             const errorText = await backendRes.text();
-            console.error(`[API/Export/Step] Backend failed with status ${backendRes.status}:`, errorText);
+            console.error(`[API/Export/Dxf] Backend failed with status ${backendRes.status}:`, errorText);
             return NextResponse.json(
                 { error: `AI Engine failed: ${errorText}` },
                 { status: backendRes.status }
             );
         }
 
-        // Directly stream the python backend's response body to the client
-        // This prevents the Next.js API route from OOM crashing when buffering huge STEP files
         return new Response(backendRes.body, {
             status: 200,
             headers: {
-                'Content-Type': 'application/step',
-                'Content-Disposition': 'attachment; filename="model.step"',
+                'Content-Type': 'application/octet-stream',
+                'Content-Disposition': `attachment; filename="model_${dxfMode}.dxf"`,
             },
         });
 
     } catch (err: any) {
-        console.error('[API/Export/Step] Exception:', err);
+        console.error('[API/Export/Dxf] Exception:', err);
         return NextResponse.json(
             { error: err.message || 'Internal Server Error' },
             { status: 500 }

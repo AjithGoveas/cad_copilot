@@ -97,7 +97,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
     const [selection, setSelection] = useState<Selection | null>(null);
 
     const viewerRef = useRef<CADViewerRef>(null);
-    const [engineStatus, setEngineStatus] = useState({ isCompiling: false, isExporting: false });
+    const [engineStatus, setEngineStatus] = useState({ isCompiling: false, isExporting: false, isImported: false });
 
     // ── Generation ────────────────────────────────────────────────────────────
     const handleGenerate = async (e?: React.FormEvent) => {
@@ -279,14 +279,18 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
     }, []);
 
     const handleExport = useCallback(async (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => {
+        console.log("[HitlWorkspace] handleExport clicked", { format, dxfMode, hasScript: !!cadScript, isImported: engineStatus.isImported });
         if (isDemoMode) {
             setDemoLimitReason('export');
             return;
         }
-        if (!cadScript) return;
+        if (!cadScript && !engineStatus.isImported) {
+            console.log("[HitlWorkspace] handleExport returned early: no script and not imported.");
+            return;
+        }
         const label = format.toUpperCase();
         
-        const promise = (async () => {
+        const run = async () => {
             const buffer = await viewerRef.current?.exportModel(format, dxfMode);
             if (!buffer) throw new Error('No export buffer generated');
             const blob = new Blob([buffer], { type: 'application/octet-stream' });
@@ -300,14 +304,14 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
             a.click();
             document.body.removeChild(a);
             setTimeout(() => URL.revokeObjectURL(url), 1000);
-        })();
+        };
 
-        toast.promise(promise, {
+        await toast.promise(run(), {
             loading: `Exporting ${label}…`,
             success: `${label} Exported Successfully`,
             error: (err) => `${label} Export Failed: ${err.message || err}`,
         });
-    }, [cadScript, isDemoMode]);
+    }, [cadScript, isDemoMode, engineStatus.isImported]);
 
     const handleDownloadScad = useCallback(() => {
         if (isDemoMode) {
@@ -464,6 +468,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
                 isCompiling={engineStatus.isCompiling}
                 isExporting={engineStatus.isExporting}
                 hasScript={!!cadScript}
+                isImported={engineStatus.isImported}
                 selection={selection}
                 onClearSelection={() => setSelection(null)}
                 onLoadSession={handleLoadSession}

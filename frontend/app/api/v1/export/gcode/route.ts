@@ -9,6 +9,7 @@ export async function POST(req: NextRequest) {
         const body = await req.json();
         const {
             csgTree,
+            assetId,
             controller,
             safe_z,
             coolant,
@@ -28,12 +29,14 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        if (!csgTree) {
-            return NextResponse.json({ error: 'CSG Tree is required' }, { status: 400 });
+        if (!csgTree && !assetId) {
+            return NextResponse.json({ error: 'CSG Tree or Asset ID is required' }, { status: 400 });
         }
 
         // 1. Build the job_request object matching the backend schemas
         const jobRequest = {
+            csg_tree: assetId ? JSON.stringify({ type: 'step_reference', asset_id: assetId }) : (csgTree || null),
+            step_file_path: assetId || null,
             machine_configuration: {
                 controller: controller || 'fanuc',
                 safe_z: safe_z !== undefined ? Number(safe_z) : 5.0,
@@ -69,30 +72,55 @@ export async function POST(req: NextRequest) {
             }))
         };
 
-        // 2. Package it into FormData
-        const formData = new FormData();
-        
-        // Create a blob representing the CSG tree text file
-        const fileBlob = new Blob([csgTree], { type: 'text/plain' });
-        formData.append('file', fileBlob, 'part.csg');
-        formData.append('job_request', JSON.stringify(jobRequest));
+        // 2. Send to FastAPI backend
+        if (assetId) {
+            // Forward as JSON directly when using a cached STEP reference
+            const backendRes = await fetch(`${PYTHON_BACKEND_URL}/gcode`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(jobRequest)
+            });
 
-        // 3. Send to FastAPI backend via multipart Form upload
-        const backendRes = await fetch(`${PYTHON_BACKEND_URL}/gcode`, {
-            method: 'POST',
-            body: formData
-        });
+            if (!backendRes.ok) {
+                const errorText = await backendRes.text();
+                console.error(`[API/Export/GCode] Backend failed with status ${backendRes.status}:`, errorText);
+                return NextResponse.json(
+                    { error: `AI Engine G-code generation failed: ${errorText}` },
+                    { status: backendRes.status }
+                );
+            }
 
-        if (!backendRes.ok) {
-            const errorText = await backendRes.text();
-            throw new Error(`AI Engine G-code generation failed: ${errorText}`);
+            const data = await backendRes.json();
+            return NextResponse.json(data);
+        } else {
+            // Legacy multipart path for OpenSCAD compiled CSG
+            const formData = new FormData();
+            const fileBlob = new Blob([csgTree], { type: 'text/plain' });
+            formData.append('file', fileBlob, 'part.csg');
+            formData.append('job_request', JSON.stringify(jobRequest));
+
+            const backendRes = await fetch(`${PYTHON_BACKEND_URL}/gcode`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!backendRes.ok) {
+                const errorText = await backendRes.text();
+                console.error(`[API/Export/GCode] Backend failed with status ${backendRes.status}:`, errorText);
+                return NextResponse.json(
+                    { error: `AI Engine G-code generation failed: ${errorText}` },
+                    { status: backendRes.status }
+                );
+            }
+
+            const data = await backendRes.json();
+            return NextResponse.json(data);
         }
 
-        const data = await backendRes.json();
-        return NextResponse.json(data);
-
     } catch (err: any) {
-        console.error('[API/Export/GCode] Error:', err);
+        console.error('[API/Export/GCode] Exception:', err);
         return NextResponse.json(
             { error: err.message || 'Internal Server Error' },
             { status: 500 }

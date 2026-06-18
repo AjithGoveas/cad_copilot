@@ -20,6 +20,145 @@ from app.services.llm_codegen import LLMCodegenService
 
 router = APIRouter(tags=["cad"])
 
+import time
+
+class ShapeCache:
+    _cache: dict[str, dict[str, Any]] = {}
+
+    @classmethod
+    def get(cls, asset_id: str) -> Any:
+        entry = cls._cache.get(asset_id)
+        if entry:
+            entry["last_accessed"] = time.time()
+            return entry["shape"]
+        return None
+
+    @classmethod
+    def set(cls, asset_id: str, shape: Any):
+        cls.evict(asset_id)
+        cls._cache[asset_id] = {
+            "shape": shape,
+            "last_accessed": time.time(),
+        }
+
+    @classmethod
+    def evict(cls, asset_id: str):
+        if asset_id in cls._cache:
+            entry = cls._cache.pop(asset_id)
+            shape = entry.get("shape")
+            if shape:
+                try:
+                    if hasattr(shape, "wrapped"):
+                        shape.wrapped = None
+                except Exception:
+                    pass
+                del shape
+
+    @classmethod
+    def clear(cls):
+        for asset_id in list(cls._cache.keys()):
+            cls.evict(asset_id)
+
+
+def is_step_reference(csg_tree: Any) -> tuple[bool, str | None]:
+    if not csg_tree:
+        return False, None
+    if isinstance(csg_tree, dict):
+        if csg_tree.get("type") == "step_reference":
+            return True, csg_tree.get("asset_id")
+    elif isinstance(csg_tree, str):
+        trimmed = csg_tree.strip()
+        if trimmed.startswith("{") and trimmed.endswith("}"):
+            try:
+                data = json.loads(trimmed)
+                if data.get("type") == "step_reference":
+                    return True, data.get("asset_id")
+            except Exception:
+                pass
+    return False, None
+
+
+def export_to_stl_bytes(shape) -> bytes:
+    import tempfile
+    from pathlib import Path
+    from build123d import export_stl
+    
+    # Measure max dimension for dynamic tolerance
+    bb = shape.bounding_box()
+    max_dim = max(
+        bb.max.X - bb.min.X,
+        bb.max.Y - bb.min.Y,
+        bb.max.Z - bb.min.Z
+    )
+    tolerance = max(0.001, min(0.5, max_dim * 0.002))
+    
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".stl", delete=False) as tf:
+            temp_path = Path(tf.name)
+            
+        export_stl(shape, str(temp_path), tolerance=tolerance, angular_tolerance=0.15)
+        
+        with open(temp_path, "rb") as f:
+            return f.read()
+    finally:
+        if temp_path and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+
+
+def export_to_dxf_bytes(shape, dxf_mode: str) -> bytes:
+    import tempfile
+    from pathlib import Path
+    from build123d import Plane, BuildSketch, project, ExportDXF, Location, Rotation, Compound, Mode
+    
+    dxf_shape = None
+    if dxf_mode == "silhouette":
+        with BuildSketch(Plane.XY):
+            dxf_shape = project(shape.edges(), mode=Mode.PRIVATE)
+    elif dxf_mode == "section":
+        section_profile = shape.section(Plane.XY.offset(0.01))
+        with BuildSketch(Plane.XY):
+            dxf_shape = project(section_profile.edges(), mode=Mode.PRIVATE)
+    elif dxf_mode == "blueprint":
+        offset_dist = 120.0
+        
+        with BuildSketch(Plane.XY):
+            # 1. Top View
+            top_view = project(shape.edges(), mode=Mode.PRIVATE)
+            
+            # 2. Isometric View
+            iso_shape = Location((offset_dist, 0, 0)) * Rotation(0, 0, 45) * Rotation(54.7356, 0, 0) * shape
+            iso_view = project(iso_shape.edges(), mode=Mode.PRIVATE)
+            
+            # 3. Front View
+            front_shape = Location((0, -offset_dist, 0)) * Rotation(90, 0, 0) * shape
+            front_view = project(front_shape.edges(), mode=Mode.PRIVATE)
+            
+            # 4. Right View
+            right_shape = Location((offset_dist, -offset_dist, 0)) * Rotation(0, 0, 90) * Rotation(90, 0, 0) * shape
+            right_view = project(right_shape.edges(), mode=Mode.PRIVATE)
+            
+            dxf_shape = Compound([top_view, iso_view, front_view, right_view])
+    else:
+        with BuildSketch(Plane.XY):
+            dxf_shape = project(shape.edges(), mode=Mode.PRIVATE)
+
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".dxf", delete=False) as tf:
+            temp_path = Path(tf.name)
+        
+        exporter = ExportDXF()
+        exporter.add_shape(dxf_shape)
+        exporter.write(str(temp_path))
+        
+        with open(temp_path, "rb") as f:
+            return f.read()
+    finally:
+        if temp_path and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+
+
 _ALLOWED_MIME_PREFIXES = ("image/",)
 _ALLOWED_MIME_EXACT   = {"application/pdf"}
 _DEFAULT_MODEL = os.getenv("GENAI_MODEL", "gemini-3.1-flash-lite")
@@ -256,7 +395,15 @@ def _cleanup_file(path: Path):
 def _process_export_step(csg_tree: str) -> bytes:
     from app.services.csg_parser import CSGParser
     from app.services.export_utils import build123d_to_step_bytes
-    shape = CSGParser.parse(csg_tree)
+    
+    is_ref, asset_id = is_step_reference(csg_tree)
+    if is_ref and asset_id:
+        shape = ShapeCache.get(asset_id)
+        if shape is None:
+            raise ValueError(f"STEP asset ID {asset_id} not found in cache or has expired.")
+    else:
+        shape = CSGParser.parse(csg_tree)
+        
     return build123d_to_step_bytes(shape)
 
 @router.post("/export-step")
@@ -299,7 +446,30 @@ def _process_gcode(cam_request_dict: dict, step_file_path: str | None, temp_path
     
     cam_request = CAMJobRequest(**cam_request_dict)
     
+    # Check if csg_tree is a step reference
+    is_ref, asset_id = is_step_reference(cam_request.csg_tree)
+    if is_ref and asset_id:
+        shape = ShapeCache.get(asset_id)
+        if shape is None:
+            raise ValueError(f"STEP asset ID {asset_id} not found in cache or has expired.")
+        generator = GCodeGenerator(
+            controller=cam_request.machine_configuration.controller,
+            safe_z=cam_request.machine_configuration.safe_z,
+            resolution=cam_request.machine_configuration.resolution
+        )
+        return generator.generate(cam_request, step_path=shape)
+
     if not cam_request.csg_tree and step_file_path:
+        # Check if step_file_path itself is an asset ID (direct JSON routing)
+        shape = ShapeCache.get(step_file_path)
+        if shape is not None:
+            generator = GCodeGenerator(
+                controller=cam_request.machine_configuration.controller,
+                safe_z=cam_request.machine_configuration.safe_z,
+                resolution=cam_request.machine_configuration.resolution
+            )
+            return generator.generate(cam_request, step_path=shape)
+
         generator = GCodeGenerator(
             controller=cam_request.machine_configuration.controller,
             safe_z=cam_request.machine_configuration.safe_z,
@@ -465,3 +635,156 @@ def get_material_defaults_endpoint(material: str, diameter: float) -> dict:
             status_code=400,
             detail={"error": {"message": f"Failed to retrieve material defaults: {exc}"}}
         )
+
+
+def _process_import_step(file_bytes: bytes) -> tuple[bytes, Any]:
+    import tempfile
+    from pathlib import Path
+    from build123d import import_step, export_stl
+    
+    # Write incoming STEP bytes to a secure temporary file
+    with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as temp_step:
+        temp_step.write(file_bytes)
+        temp_step_path = Path(temp_step.name)
+        
+    temp_stl_path = temp_step_path.with_suffix(".stl")
+    
+    try:
+        # Load step file into compound shape
+        imported_shape = import_step(str(temp_step_path))
+        
+        # Calculate dynamic tolerance based on bounding box size
+        bb = imported_shape.bounding_box()
+        max_dim = max(
+            bb.max.X - bb.min.X,
+            bb.max.Y - bb.min.Y,
+            bb.max.Z - bb.min.Z
+        )
+        # Bounded between 0.001 (1 micron) and 0.5 (500 microns)
+        tolerance = max(0.001, min(0.5, max_dim * 0.002))
+        
+        # Export the shape to STL using the calculated tolerance
+        export_stl(imported_shape, str(temp_stl_path), tolerance=tolerance, angular_tolerance=0.15)
+        
+        # Read the generated STL bytes
+        with open(temp_stl_path, "rb") as f:
+            stl_bytes = f.read()
+            
+        return stl_bytes, imported_shape
+    finally:
+        # Ensure temporary files are unlinked and cleaned up
+        for path in (temp_step_path, temp_stl_path):
+            try:
+                if path.exists():
+                    path.unlink()
+            except Exception:
+                pass
+
+
+@router.post("/import/step")
+async def import_step_endpoint(file: UploadFile = File(...)) -> StreamingResponse:
+    """
+    Ingest STEP file, compute dynamic deflection tolerance based on bounding box size,
+    tessellate using build123d background threads, cache the shape, and stream binary STL back to the client.
+    """
+    if not file.filename.lower().endswith((".step", ".stp")):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"message": "Invalid file format. Only .step or .stp files are accepted."}}
+        )
+        
+    try:
+        file_bytes = await file.read()
+        
+        # Safely run CPU-heavy STEP meshing on a background thread pool to avoid blocking FastAPI
+        stl_bytes, shape = await asyncio.to_thread(_process_import_step, file_bytes)
+        
+        # Cache the shape
+        asset_id = str(uuid.uuid4())
+        ShapeCache.set(asset_id, shape)
+        
+        return StreamingResponse(
+            io.BytesIO(stl_bytes),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f"attachment; filename=imported_{file.filename}.stl",
+                "x-asset-id": asset_id
+            }
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"message": f"STEP Import failed: {str(exc)}"}}
+        )
+
+
+@router.post("/import/teardown/{asset_id}")
+async def import_teardown_endpoint(asset_id: str):
+    ShapeCache.evict(asset_id)
+    return {"status": "evicted"}
+
+
+@router.post("/export-stl")
+async def export_stl_endpoint(request: StepRequest) -> StreamingResponse:
+    try:
+        is_ref, asset_id = is_step_reference(request.csg_tree)
+        if not is_ref or not asset_id:
+            raise HTTPException(status_code=400, detail="Invalid step reference for STL export.")
+            
+        shape = ShapeCache.get(asset_id)
+        if shape is None:
+            raise HTTPException(status_code=404, detail="STEP asset ID not found in cache.")
+
+        stl_bytes = await asyncio.to_thread(export_to_stl_bytes, shape)
+        return StreamingResponse(
+            io.BytesIO(stl_bytes),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": "attachment; filename=model.stl"}
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"STL export failed: {exc}")
+
+
+from pydantic import BaseModel
+class DxfExportRequest(BaseModel):
+    csg_tree: str
+    dxf_mode: str
+
+@router.post("/export-dxf")
+async def export_dxf_endpoint(request: DxfExportRequest) -> StreamingResponse:
+    try:
+        is_ref, asset_id = is_step_reference(request.csg_tree)
+        if not is_ref or not asset_id:
+            raise HTTPException(status_code=400, detail="Invalid step reference for DXF export.")
+            
+        shape = ShapeCache.get(asset_id)
+        if shape is None:
+            raise HTTPException(status_code=404, detail="STEP asset ID not found in cache.")
+
+        dxf_bytes = await asyncio.to_thread(export_to_dxf_bytes, shape, request.dxf_mode)
+        return StreamingResponse(
+            io.BytesIO(dxf_bytes),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": "attachment; filename=model.dxf"}
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"DXF export failed: {exc}")
+
+
+@router.get("/generate-test-step")
+def generate_test_step_endpoint():
+    from build123d import Box, Cylinder, export_step
+    from pathlib import Path
+    try:
+        box = Box(20, 20, 20)
+        cyl = Cylinder(5, 30)
+        part = box - cyl
+        dest_path = Path(__file__).resolve().parents[1] / "test_cube.step"
+        export_step(part, str(dest_path))
+        return {"status": "success", "path": str(dest_path)}
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)}
