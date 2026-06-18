@@ -183,7 +183,6 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
             setTargetPoint(null);
         } catch (err: any) {
             toast.error(err?.message || (isEditing ? 'Failed to modify CAD model' : 'Failed to generate CAD model'));
-            console.error(err);
         } finally {
             setIsGenerating(false);
         }
@@ -253,7 +252,6 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
             setActiveTab('parameters');
         } catch (err) {
             toast.error('Failed to regenerate model');
-            console.error(err);
         } finally {
             setIsGenerating(false);
         }
@@ -279,13 +277,11 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
     }, []);
 
     const handleExport = useCallback(async (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => {
-        console.log("[HitlWorkspace] handleExport clicked", { format, dxfMode, hasScript: !!cadScript, isImported: engineStatus.isImported });
         if (isDemoMode) {
             setDemoLimitReason('export');
             return;
         }
         if (!cadScript && !engineStatus.isImported) {
-            console.log("[HitlWorkspace] handleExport returned early: no script and not imported.");
             return;
         }
         const label = format.toUpperCase();

@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 export type EngineErrorType = 'OutOfBounds' | 'CompileFailure' | 'Timeout' | 'Unknown';
 
 export type EngineError = {
@@ -13,7 +11,6 @@ export type EngineError = {
 export type CADEngineConfig = {
     script:      string;
     enabled?:    boolean;
-    /** Debounce delay in ms before dispatching a compile to the worker (default: 600ms). */
     debounceMs?: number;
 };
 
@@ -23,18 +20,12 @@ export type EngineStatus =
     | 'ready'
     | 'error';
 
-// ── Status labels ─────────────────────────────────────────────────────────────
-
 const STATUS_LABELS: Record<EngineStatus, string> = {
     idle:       'Awaiting Input…',
     compiling:  'Compiling Geometry…',
     ready:      'Engine Ready',
     error:      'Kernel Exception',
 };
-
-// ── Singleton Worker System ───────────────────────────────────────────────────
-// Using a singleton prevents massive memory spikes from spawning multiple WASM 
-// instances if the hook is accidentally mounted multiple times.
 
 let globalWorker: Worker | null = null;
 const globalListeners = new Set<(e: MessageEvent) => void>();
@@ -44,28 +35,27 @@ function getGlobalWorker(): Worker {
     if (typeof window === 'undefined') {
         throw new Error('Worker cannot be created on server side');
     }
-    
+
     if (!globalWorker) {
-        console.log('[useCADEngine] Spawning global singleton WASM worker...');
         globalWorker = new Worker(
             new URL('../workers/cad-worker.ts', import.meta.url),
             { type: 'module' }
         );
-        
+
         globalWorker.onmessage = (e: MessageEvent) => {
             globalListeners.forEach(listener => {
-                try { listener(e); } 
-                catch (err) { console.error('[useCADEngine] Error in message listener:', err); }
+                try { listener(e); }
+                catch { }
             });
         };
-        
+
         globalWorker.onerror = (e: ErrorEvent) => {
             globalErrorListeners.forEach(listener => {
-                try { listener(e); } 
-                catch (err) { console.error('[useCADEngine] Error in error listener:', err); }
+                try { listener(e); }
+                catch { }
             });
         };
-        
+
         globalWorker.postMessage({ type: 'warmup' });
     }
     return globalWorker;
@@ -73,13 +63,10 @@ function getGlobalWorker(): Worker {
 
 function terminateGlobalWorker() {
     if (globalWorker) {
-        console.log('[useCADEngine] Terminating global singleton worker...');
         globalWorker.terminate();
         globalWorker = null;
     }
 }
-
-// ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useCADEngine({
     script,
@@ -92,22 +79,17 @@ export function useCADEngine({
     const [engineError, setEngineError] = useState<EngineError | null>(null);
     const [isExporting, setIsExporting] = useState(false);
 
-    // Refs for persistence, coordination, and cleanup
     const lastRequestIdRef = useRef<number>(0);
     
-    // Store pending promises with both resolve and reject so we can clear them safely
     const pendingRequestsRef = useRef<Map<number, { 
         resolve: (data: any) => void, 
         reject: (reason?: any) => void 
     }>>(new Map());
 
-    // Keep track of active URLs for unmount cleanup
     const activeUrlsRef = useRef<Map<string, string>>(new Map());
     useEffect(() => {
         activeUrlsRef.current = stlUrls;
     }, [stlUrls]);
-
-    // ── Worker Management ───────────────────────────────────────────────────
 
     const flushPendingRequests = useCallback((reason: string) => {
         pendingRequestsRef.current.forEach(({ reject }) => reject(new Error(reason)));
@@ -123,15 +105,12 @@ export function useCADEngine({
         return getGlobalWorker();
     }, []);
 
-    // ── Worker Message Hub ──────────────────────────────────────────────────
-
     useEffect(() => {
         const handleMessage = (e: MessageEvent) => {
             const data = e.data;
             
             if (data.type === 'ready') return;
 
-            // Handle global engine errors
             if (data.type === 'error' && !data.id) {
                 setEngineError({
                     errorType: data.errorType ?? 'Unknown',
@@ -141,7 +120,6 @@ export function useCADEngine({
                 setStatus('error');
             }
 
-            // Route targeted responses to their waiting Promises (e.g., exports)
             if (data.id && pendingRequestsRef.current.has(data.id)) {
                 const { resolve, reject } = pendingRequestsRef.current.get(data.id)!;
                 if (data.type === 'error') {
@@ -152,10 +130,8 @@ export function useCADEngine({
                 pendingRequestsRef.current.delete(data.id);
             }
 
-            // Handle background compilation results
             if (data.type === 'compiled' && data.id === lastRequestIdRef.current) {
                 setStlUrls(prev => {
-                    // Clean up old object URLs from memory
                     prev.forEach(url => URL.revokeObjectURL(url));
                     
                     const next = new Map<string, string>();
@@ -170,7 +146,6 @@ export function useCADEngine({
         };
 
         const handleError = (e: ErrorEvent) => {
-            console.error('[useCADEngine] Worker hard crash:', e);
             setEngineError({
                 errorType: 'Unknown',
                 message:   'WASM Worker crashed.',
@@ -189,8 +164,6 @@ export function useCADEngine({
         };
     }, [terminateWorker]);
 
-    // ── Actions ────────────────────────────────────────────────────────────
-
     const executeCompile = useCallback((codeToCompile: string) => {
         const worker = getWorker();
         const requestId = Date.now();
@@ -203,36 +176,33 @@ export function useCADEngine({
     }, [getWorker]);
 
     const exportModel = useCallback(async (
-        format: 'stl' | 'dxf', 
+        format: 'stl' | 'dxf',
         dxfMode?: 'silhouette' | 'section' | 'blueprint',
         customScript?: string
     ): Promise<ArrayBuffer> => {
-        
-        // Terminate any existing dirty worker to force clean state
         terminateWorker();
 
-        // Use custom script if provided by a wrapper (like generateDxfWrapper), otherwise fallback to base script
         const codeToProcess = customScript || script;
         if (!codeToProcess) throw new Error('No script available to export');
 
         const worker = getWorker();
         const requestId = Date.now();
-        
+
         setIsExporting(true);
-        
+
         try {
             return await new Promise<ArrayBuffer>((resolve, reject) => {
                 pendingRequestsRef.current.set(requestId, {
-                    resolve: (data) => resolve(data.data), // Assumes worker sends { type: 'exported', data: ArrayBuffer }
+                    resolve: (data) => resolve(data.data),
                     reject
                 });
 
-                worker.postMessage({ 
-                    type: 'export', 
-                    script: codeToProcess, // Standardized key name
-                    format, 
-                    dxfMode, 
-                    id: requestId 
+                worker.postMessage({
+                    type: 'export',
+                    script: codeToProcess,
+                    format,
+                    dxfMode,
+                    id: requestId
                 });
             });
         } finally {
@@ -241,7 +211,6 @@ export function useCADEngine({
     }, [script, getWorker, terminateWorker]);
 
     const compileCsgTree = useCallback(async (customScript?: string): Promise<string> => {
-        // Terminate any existing dirty worker to force clean state
         terminateWorker();
 
         const codeToProcess = customScript || script;
@@ -259,10 +228,10 @@ export function useCADEngine({
                     reject
                 });
 
-                worker.postMessage({ 
-                    type: 'compile-csg', 
-                    script: codeToProcess, 
-                    id: requestId 
+                worker.postMessage({
+                    type: 'compile-csg',
+                    script: codeToProcess,
+                    id: requestId
                 });
             });
         } finally {
@@ -280,8 +249,6 @@ export function useCADEngine({
         if (script) executeCompile(script);
     }, [script, executeCompile, terminateWorker]);
 
-    // ── Lifecycle & Auto-Compile ───────────────────────────────────────────
-
     useEffect(() => {
         if (!enabled || !script) return;
         
@@ -292,11 +259,9 @@ export function useCADEngine({
         return () => clearTimeout(timer);
     }, [script, enabled, executeCompile, debounceMs]);
 
-    // Cleanup memory on unmount
     useEffect(() => {
         return () => {
             flushPendingRequests('Component unmounted');
-            // Clean up Blob URLs to prevent memory leaks when navigating away
             activeUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
         };
     }, [flushPendingRequests]);

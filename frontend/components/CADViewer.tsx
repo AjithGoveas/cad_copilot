@@ -41,60 +41,46 @@ type CADViewerProps = {
     isDemoMode?: boolean;
 };
 
-// --- DXF Safety Wrapper Logic ---
-// This safely converts a 3D script into a 2D projection script
 const generateDxfWrapper = (originalCode: string, mode: 'silhouette' | 'section' | 'blueprint') => {
-    // 1. Wrap the entire input script within a controlled module namespace
     const cleanCode = `
 module target_blueprint() {
     ${originalCode}
 }
 `;
 
-    // 2. Force a lower resolution to prevent CGAL mesh flattening crashes
-    const safeHeader = `\n/* --- DXF EXPORT INJECTION --- */\n$fn = 32; // Overridden for DXF stability\n\n`;
+    const safeHeader = `\n/* --- DXF EXPORT INJECTION --- */\n$fn = 32;\n\n`;
 
-    // 3. Inject the specific projection mode
     let projectionWrapper = '';
     
     if (mode === 'silhouette') {
         projectionWrapper = `
-// SILHOUETTE: Full top-down shadow
 projection(cut = false) {
     render() { target_blueprint(); }
 }`;
     } else if (mode === 'section') {
-        // SECTION: Cross-section slice with epsilon offset
         projectionWrapper = `
-// SECTION: Cross-section slice with epsilon offset
 projection(cut = true) {
     translate([0, 0, -0.01]) {
         render() { target_blueprint(); }
     }
 }`;
     } else if (mode === 'blueprint') {
-        // BLUEPRINT: Multi-view orthographic + Isometric layout
         projectionWrapper = `
-// BLUEPRINT: 4-View Engineering Layout
-offset_dist = 120; // Distance between views
+offset_dist = 120;
 
 union() {
-    // 1. Top View (Top Left)
     projection(cut = false) {
         render() { target_blueprint(); }
     }
     
-    // 2. Isometric View (Top Right)
     translate([offset_dist, 0, 0]) {
         projection(cut = false) {
-            // Magic isometric rotation math
             rotate([54.7356, 0, 45]) {
                 render() { target_blueprint(); }
             }
         }
     }
     
-    // 3. Front View (Bottom Left)
     translate([0, -offset_dist, 0]) {
         projection(cut = false) {
             rotate([90, 0, 0]) {
@@ -103,7 +89,6 @@ union() {
         }
     }
     
-    // 4. Right View (Bottom Right)
     translate([offset_dist, -offset_dist, 0]) {
         projection(cut = false) {
             rotate([90, 0, 90]) {
@@ -135,7 +120,6 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
     },
     ref
 ) {
-    // WASM engine
     const {
         stlUrls,
         statusText,
@@ -180,7 +164,6 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         importedStlUrlRef.current = importedStlUrl;
     }, [importedStlUrl]);
 
-    // Cleanup imported URL and backend shape on unmount
     useEffect(() => {
         return () => {
             if (importedStlUrlRef.current) {
@@ -213,7 +196,6 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         }
 
         const importPromise = (async () => {
-            // Evict previous asset ID if exists
             if (sourceAssetId) {
                 fetch(`/api/v1/import/teardown/${sourceAssetId}`, { method: 'POST' }).catch(() => {});
             }
@@ -228,16 +210,10 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                 throw new Error(errText || 'Import service failed');
             }
 
-            console.log('[CADViewer] import response status:', res.status);
-            console.log('[CADViewer] import response headers:', Array.from(res.headers.entries()));
-
             const assetId = res.headers.get('x-asset-id');
-            console.log('[CADViewer] import assetId:', assetId);
             if (assetId) {
                 setSourceAssetId(assetId);
                 setGeometrySource('step');
-            } else {
-                console.warn('[CADViewer] import response did not contain x-asset-id header!');
             }
 
             const buffer = await res.arrayBuffer();
@@ -258,7 +234,6 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         });
     }, [isDemoMode, sourceAssetId]);
 
-    // Expose methods to parent ref
     useImperativeHandle(ref, () => ({
         rebuild,
         exportModel: async (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint', customScript?: string) => {
@@ -301,7 +276,6 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         lastCodeRef.current = code;
     }, [code, handleClearImport]);
 
-    // Extract annotations from scad code (debounced to avoid main-thread freeze)
     const [annotations, setAnnotations] = useState<OpenScadAnnotations>({});
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -323,12 +297,9 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         });
     }, [isRecompiling, isExporting, isImported]);
 
-    // Export handlers
     const handleExport = useCallback(
         async (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => {
-            console.log("[CADViewer] handleExport called", { format, dxfMode, hasCode: !!code, geometrySource, sourceAssetId });
             if (!code && geometrySource !== 'step') {
-                console.log("[CADViewer] handleExport returned early: no code and not STEP source.");
                 return;
             }
             const label = format.toUpperCase();
@@ -367,12 +338,10 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                 } else {
                     let exportScript = code;
 
-                    // If requesting a DXF, apply the safety wrapper
                     if (format === 'dxf' && dxfMode) {
                         exportScript = generateDxfWrapper(code, dxfMode);
                     }
 
-                    // Pass the overridden script to the engine
                     buffer = await exportModel(format, dxfMode, exportScript);
                 }
 
@@ -416,9 +385,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
     }, [code]);
 
     const handleExportStep = useCallback(async () => {
-        console.log("[CADViewer] handleExportStep called", { hasCode: !!code, geometrySource, sourceAssetId });
         if (!code && geometrySource !== 'step') {
-            console.log("[CADViewer] handleExportStep returned early: no code and not STEP source.");
             return;
         }
 
@@ -482,9 +449,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
     }, []);
 
     const handleGenerateGCode = useCallback(async (config: CamConfig) => {
-        console.log("[CADViewer] handleGenerateGCode called", { config, hasCode: !!code, geometrySource, sourceAssetId });
         if (!code && geometrySource !== 'step') {
-            console.log("[CADViewer] handleGenerateGCode returned early: no code and not STEP source.");
             return;
         }
         setIsGeneratingGCode(true);
@@ -548,7 +513,6 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
             });
             setIsCamModalOpen(false);
         } catch (err) {
-            // Already handled by toast.promise
         } finally {
             setIsGeneratingGCode(false);
         }
@@ -571,9 +535,6 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                 onImportStep={isDemoMode ? undefined : handleImportStep}
             />
 
-
-
-            {/* ── Top Bar (Share & Export) ── */}
             {showExport && displayStlUrls.size > 0 && (
                 <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
                     {onShare && (
@@ -678,7 +639,6 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                 </div>
             )}
 
-            {/* WASM Error Banner */}
             {engineError && (
                 <div className="absolute bottom-6 left-6 right-6 z-30">
                     <div className="glass flex items-center justify-between rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-4 shadow-2xl backdrop-blur-2xl animate-in slide-in-from-bottom-4 duration-500">

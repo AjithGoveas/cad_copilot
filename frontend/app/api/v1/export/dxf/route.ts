@@ -38,7 +38,6 @@ export async function POST(req: NextRequest) {
 
         if (!backendRes.ok) {
             const errorText = await backendRes.text();
-            console.error(`[API/Export/Dxf] Backend failed with status ${backendRes.status}:`, errorText);
             return NextResponse.json(
                 { error: `AI Engine failed: ${errorText}` },
                 { status: backendRes.status }
@@ -54,7 +53,6 @@ export async function POST(req: NextRequest) {
         });
 
     } catch (err: any) {
-        console.error('[API/Export/Dxf] Exception:', err);
         return NextResponse.json(
             { error: err.message || 'Internal Server Error' },
             { status: 500 }

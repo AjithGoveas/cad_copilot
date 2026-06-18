@@ -1,7 +1,5 @@
 /// <reference lib="webworker" />
 
-// ─── Message Protocol ────────────────────────────────────────────────────────
-
 type WarmupRequest      = { type: 'warmup' };
 type CompileRequest     = { type: 'compile'; id: number; script: string };
 type ExportRequest      = { 
@@ -30,7 +28,6 @@ type CompiledMessage = {
 };
 
 type ExportedMessage        = { type: 'exported'; id: number; data: ArrayBuffer; format: 'stl' | 'dxf'; durationMs: number };
-
 type CsgCompiledMessage     = { type: 'csg-compiled'; id: number; csgTree: string };
 
 type ErrorMessage = {
@@ -42,8 +39,6 @@ type ErrorMessage = {
 };
 
 type WorkerMessage = ReadyMessage | CompiledMessage | ExportedMessage | ErrorMessage | CsgCompiledMessage;
-
-// ─── Engine Interface ────────────────────────────────────────────────────────
 
 interface FS {
     mkdir(path: string): void;
@@ -67,21 +62,17 @@ type OpenScadModule = {
     createOpenSCAD: (options?: Record<string, unknown>) => Promise<OpenScadInstance>;
 };
 
-// ─── Engine Lifecycle ────────────────────────────────────────────────────────
-
 const workerScope = self as DedicatedWorkerGlobalScope;
 let enginePromise: Promise<OpenScadInstance> | null = null;
 const stderrCapture: string[] = [];
 
 async function ensureEngine(forceReload = false): Promise<OpenScadInstance> {
     if (forceReload) {
-        console.log('[CAD-Worker] Force resetting engine instance...');
         enginePromise = null;
     }
 
     if (!enginePromise) {
         enginePromise = (async () => {
-            console.log('[CAD-Worker] Initializing OpenSCAD WASM instance...');
             const mod = (await import('openscad-wasm')) as unknown as OpenScadModule;
 
             if (!mod.createOpenSCAD) {
@@ -89,26 +80,23 @@ async function ensureEngine(forceReload = false): Promise<OpenScadInstance> {
             }
 
             return mod.createOpenSCAD({
-                print: (text: string) => console.log('[OpenSCAD]', text),
+                print: (_text: string) => {},
                 printErr: (text: string) => {
                     if (text.includes('localization')) return;
 
                     const isStat = /Geometries|CGAL|rendering time|Top level object|Simple:|Vertices:|Halfedges:|Edges:|Halffacets:|Facets:|Volumes:/i.test(text);
-                    if (isStat) return; 
+                    if (isStat) return;
 
-                    console.warn('[OpenSCAD Error]', text);
                     stderrCapture.push(text);
                 },
-                INITIAL_MEMORY: 512 * 1024 * 1024,    // 512 MB
-                MAXIMUM_MEMORY: 2048 * 1024 * 1024,   // 2 GB
+                INITIAL_MEMORY: 512 * 1024 * 1024,
+                MAXIMUM_MEMORY: 2048 * 1024 * 1024,
                 ALLOW_MEMORY_GROWTH: 1,
             });
         })();
     }
     return enginePromise;
 }
-
-// ─── Compilation Core ────────────────────────────────────────────────────────
 
 function classifyError(message: string, details: string): ErrorMessage['errorType'] {
     const combined = `${message} ${details}`.toLowerCase();
@@ -202,7 +190,6 @@ async function computeHash(text: string): Promise<string> {
 }
 
 const geometryCache = new LRUCache<string, { buffer: ArrayBuffer }>(20);
-
 const INPUT_PATH  = '/input.scad';
 
 async function exportToFile(
@@ -214,7 +201,6 @@ async function exportToFile(
     const cacheKey = `${format}:${dxfMode}:${hash}`;
     const cached = geometryCache.get(cacheKey);
     if (cached) {
-        console.log(`[CAD-Worker] Cache Hit for: ${cacheKey}`);
         return {
             buffer: cached.buffer.slice(0),
             durationMs: 0
@@ -226,21 +212,15 @@ async function exportToFile(
     const outputPath = `/output.${format}`;
 
     try {
-        // Use a persistent WebAssembly instance. Reusing the engine avoids ~500ms setup 
-        // overhead and memory reallocation spikes per compilation.
-        const engine   = await ensureEngine(false); 
-        
+        const engine   = await ensureEngine(false);
         const instance = engine.getInstance();
         fs       = instance.FS;
 
-        stderrCapture.length = 0; 
+        stderrCapture.length = 0;
 
         try { if (fs.analyzePath(INPUT_PATH).exists) fs.unlink(INPUT_PATH); } catch (e) {}
         try { if (fs.analyzePath(outputPath).exists) fs.unlink(outputPath); } catch (e) {}
 
-        console.log(`[CAD-Worker] Running Export (${format.toUpperCase()})...`);
-        
-        // Write the script (already correctly wrapped by CADViewer.tsx) to the virtual FS
         fs.writeFile(INPUT_PATH, script);
 
         const exitCode = instance.callMain(['--enable=manifold', '--enable=fast-csg', '-o', outputPath, INPUT_PATH]);
@@ -250,17 +230,15 @@ async function exportToFile(
             throw Object.assign(
                 new Error(`OpenSCAD export to ${format.toUpperCase()} failed (exit ${exitCode}).`),
                 { details, classified: classifyError('compile', details) }
-            );
+            ) as Error & { details?: string; classified?: ErrorMessage['errorType'] };
         }
 
         const outputData = fs.readFile(outputPath) as Uint8Array;
         const buffer     = outputData.buffer.slice(outputData.byteOffset, outputData.byteOffset + outputData.byteLength) as ArrayBuffer;
         const durationMs = Math.round(performance.now() - started);
 
-        // Store a clone of the buffer in the cache
         geometryCache.set(cacheKey, { buffer: buffer.slice(0) });
 
-        console.log(`[CAD-Worker] Exported ${format.toUpperCase()} in ${durationMs}ms - ${Math.round(buffer.byteLength / 1024)} KB`);
         return { buffer, durationMs };
 
     } catch (err: unknown) {
@@ -292,8 +270,7 @@ async function compileToParts(
     script: string
 ): Promise<{ parts: PartData[]; durationMs: number }> {
     const started = performance.now();
-    
-    console.log('[CAD-Worker] Compiling full assembly...');
+
     try {
         const { buffer, durationMs } = await exportToFile(script, 'stl');
         return {
@@ -316,8 +293,6 @@ async function compileCsg(
     const OUTPUT_PATH = '/output.csg';
 
     try {
-        // Force reload the engine to get a completely clean WASM instance for CSG compilation.
-        // This avoids re-entrancy crashes when switching formats on the same OpenSCAD instance.
         const engine = await ensureEngine(true);
         const instance = engine.getInstance();
         fs = instance.FS;
@@ -327,7 +302,6 @@ async function compileCsg(
         try { if (fs.analyzePath(INPUT_PATH).exists) fs.unlink(INPUT_PATH); } catch (e) {}
         try { if (fs.analyzePath(OUTPUT_PATH).exists) fs.unlink(OUTPUT_PATH); } catch (e) {}
 
-        console.log('[CAD-Worker] Compiling CSG...');
         fs.writeFile(INPUT_PATH, script);
 
         const exitCode = instance.callMain(['--enable=manifold', '--enable=fast-csg', '-o', OUTPUT_PATH, INPUT_PATH]);
@@ -337,7 +311,7 @@ async function compileCsg(
             throw Object.assign(
                 new Error(`OpenSCAD CSG compilation failed (exit ${exitCode}).`),
                 { details, classified: classifyError('compile', details) }
-            );
+            ) as Error & { details?: string; classified?: ErrorMessage['errorType'] };
         }
 
         const csgTree = fs.readFile(OUTPUT_PATH, { encoding: 'utf8' }) as string;
@@ -346,7 +320,6 @@ async function compileCsg(
     } catch (err: unknown) {
         throw normaliseThrown(err);
     } finally {
-        // Reset the engine instance cache so any subsequent rendering/export compiles start fresh.
         enginePromise = null;
         if (fs) {
             const filesToCleanup = [
@@ -363,8 +336,6 @@ async function compileCsg(
         }
     }
 }
-
-// ─── Message Handler ─────────────────────────────────────────────────────────
 
 workerScope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     const data = event.data;
@@ -441,7 +412,6 @@ function handleWorkerError(err: unknown, id?: number) {
     const errorType = e.classified ?? classifyError(message, details);
 
     if (errorType === 'CompileFailure' && (message.includes('CGAL') || message.includes('pointer:'))) {
-        console.warn('[CAD-Worker] Fatal WASM engine crash detected. Resetting engine instance to auto-recover...');
         enginePromise = null;
     }
 

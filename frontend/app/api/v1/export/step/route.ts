@@ -31,15 +31,12 @@ export async function POST(req: NextRequest) {
 
         if (!backendRes.ok) {
             const errorText = await backendRes.text();
-            console.error(`[API/Export/Step] Backend failed with status ${backendRes.status}:`, errorText);
             return NextResponse.json(
                 { error: `AI Engine failed: ${errorText}` },
                 { status: backendRes.status }
             );
         }
 
-        // Directly stream the python backend's response body to the client
-        // This prevents the Next.js API route from OOM crashing when buffering huge STEP files
         return new Response(backendRes.body, {
             status: 200,
             headers: {
@@ -49,7 +46,6 @@ export async function POST(req: NextRequest) {
         });
 
     } catch (err: any) {
-        console.error('[API/Export/Step] Exception:', err);
         return NextResponse.json(
             { error: err.message || 'Internal Server Error' },
             { status: 500 }

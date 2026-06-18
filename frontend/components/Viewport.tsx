@@ -74,8 +74,7 @@ export const Viewport = memo(function Viewport({
     return (
         <section className="relative flex-1 overflow-hidden bg-[#09090b] shadow-[inset_0_0_80px_rgba(0,0,0,0.8)]">
             
-            {/* Subtle radial glow behind the canvas to separate geometry from absolute black */}
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(39,39,42,0.4)_0%,transparent_70%)] pointer-events-none" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(39,39,42,0.4)_0%,transparent_70%)] pointer-events-none" />
 
             <Canvas
                 shadows="percentage" dpr={[1, 2]}
@@ -85,7 +84,7 @@ export const Viewport = memo(function Viewport({
                 <PerspectiveCamera makeDefault position={[5, 5, 5]} fov={40} />
 
                 <Suspense fallback={null}>
-                    <Stage intensity={0.6} environment="city" adjustCamera={false} shadows="contact" preset="rembrandt" center={{ disable: true }}>
+                    <Stage intensity={0.6} environment="city" adjustCamera={false} shadows={false} preset="rembrandt" center={{ disable: true }}>
                         <Center
                             onCentered={({ center, width, height, depth }) => handleGeometryLoaded(
                                 [center.x, center.y, center.z], [width, height, depth], 1.0
@@ -100,8 +99,6 @@ export const Viewport = memo(function Viewport({
                             ))}
                         </Center>
                     </Stage>
-                    {/* Softer contact shadow for realism */}
-                    <ContactShadows position={[0, -1.2, 0]} opacity={0.6} scale={25} blur={2.5} far={4} color="#000000" />
                 </Suspense>
 
                 <CameraRig activeParameter={activeFeatureId} annotations={annotations} geometryInfo={geometryInfo} />

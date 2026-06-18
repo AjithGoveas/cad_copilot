@@ -22,7 +22,6 @@ app = FastAPI(
     redoc_url=None,
 )
 
-# Allow the Next.js dev server to call the API directly
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -33,8 +32,6 @@ app.add_middleware(
 
 app.include_router(v1_router, prefix="/api/v1")
 
-
-# ── Global exception handlers ─────────────────────────────────────────────────
 
 @app.exception_handler(RequestValidationError)
 async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

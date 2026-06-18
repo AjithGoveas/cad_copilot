@@ -34,11 +34,7 @@ export async function POST(req: NextRequest) {
             throw new Error(`AI Engine failed: ${errorText}`);
         }
 
-        console.log('[API/Import/Step] Received response from python backend. status:', backendRes.status);
-        console.log('[API/Import/Step] Python backend headers:', Array.from(backendRes.headers.entries()));
-
         const assetId = backendRes.headers.get('x-asset-id');
-        console.log('[API/Import/Step] Retreived assetId:', assetId);
 
         const headers: Record<string, string> = {
             'Content-Type': 'application/octet-stream',
@@ -49,16 +45,12 @@ export async function POST(req: NextRequest) {
             headers['Access-Control-Expose-Headers'] = 'x-asset-id';
         }
 
-        console.log('[API/Import/Step] Returning headers to frontend:', headers);
-
-        // Stream binary STL back to the client
         return new Response(backendRes.body, {
             status: 200,
             headers,
         });
 
     } catch (err: any) {
-        console.error('[API/Import/Step] Error:', err);
         return NextResponse.json(
             { error: err.message || 'Internal Server Error' },
             { status: 500 }
