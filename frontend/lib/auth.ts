@@ -29,9 +29,15 @@ export const authOptions: NextAuthOptions = {
           throw new Error("Incorrect password");
         }
 
+        if (!user.isApproved) {
+          throw new Error("ACCOUNT_AWAITING_APPROVAL");
+        }
+
         return {
           id: user.id,
           email: user.email,
+          role: user.role,
+          isApproved: user.isApproved,
         };
       }
     })
@@ -47,13 +53,17 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.id = user.id;
         token.email = user.email;
+        token.role = (user as any).role;
+        token.isApproved = (user as any).isApproved;
       }
       return token;
     },
     async session({ session, token }) {
       if (token && session.user) {
-        session.user.id = token.id;
-        session.user.email = token.email;
+        session.user.id = token.id as string;
+        session.user.email = token.email as string;
+        session.user.role = token.role as string;
+        session.user.isApproved = token.isApproved as boolean;
       }
       return session;
     }

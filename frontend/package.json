@@ -11,7 +11,8 @@
     "start": "next start",
     "lint": "eslint",
     "prisma:generate": "prisma generate",
-    "prisma:push": "prisma db push"
+    "prisma:push": "prisma db push",
+    "prisma:seed": "prisma db seed"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -59,5 +60,8 @@
     "next-auth": {
       "uuid": "^9.0.1"
     }
+  },
+  "prisma": {
+    "seed": "npx tsx prisma/seed.ts"
   }
 }

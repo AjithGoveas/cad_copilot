@@ -13,6 +13,7 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isPendingApproval, setIsPendingApproval] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,8 +35,8 @@ export default function SignupPage() {
       if (res.error) {
         toast.error(res.error);
       } else {
-        toast.success("Account created successfully! Please log in.");
-        router.push("/app/login");
+        toast.success("Account created successfully!");
+        setIsPendingApproval(true);
       }
     } catch (error) {
       console.error(error);
@@ -72,7 +73,6 @@ export default function SignupPage() {
           <span className="font-mono text-xs font-black uppercase tracking-[0.2em] text-[#00C8FF]">
             CADVΞX
           </span>
-
         </Link>
       </header>
 
@@ -91,100 +91,122 @@ export default function SignupPage() {
           {/* Subtle top highlights */}
           <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-[#007ACC]/45 to-transparent" />
           
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-2">
-              <label htmlFor="signup-email" className="text-[10px] font-bold uppercase tracking-wider text-[#A6A6A6] font-mono">
-                Email Address
-              </label>
-              <div className="relative group">
-                <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#A6A6A6] group-focus-within:text-[#00C8FF] transition-colors">
-                  <Mail className="h-4 w-4" />
-                </span>
-                <input
-                  id="signup-email"
-                  type="email"
-                  placeholder="name@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded-xl border border-[#3C3C3C] bg-[#1E1E1E] py-3 pl-11 pr-4 text-sm text-[#DFE1E5] placeholder-[#606368] outline-none transition-all duration-200 focus:border-[#007ACC] focus:ring-1 focus:ring-[#007ACC]/30 hover:border-[#4d4d52]"
-                  required
-                  disabled={isLoading}
-                />
+          {isPendingApproval ? (
+            <div className="space-y-6 py-2 text-center animate-in fade-in zoom-in-95 duration-300">
+              <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-amber-500/30 bg-amber-500/10 shadow-[0_0_30px_rgba(245,158,11,0.15)] ring-1 ring-amber-500/20">
+                <ShieldCheck className="h-6 w-6 text-amber-500 animate-pulse" />
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <label htmlFor="signup-password" className="text-[10px] font-bold uppercase tracking-wider text-[#A6A6A6] font-mono">
-                Password
-              </label>
-              <div className="relative group">
-                <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#A6A6A6] group-focus-within:text-[#00C8FF] transition-colors">
-                  <Lock className="h-4 w-4" />
-                </span>
-                <input
-                  id="signup-password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full rounded-xl border border-[#3C3C3C] bg-[#1E1E1E] py-3 pl-11 pr-4 text-sm text-[#DFE1E5] placeholder-[#606368] outline-none transition-all duration-200 focus:border-[#007ACC] focus:ring-1 focus:ring-[#007ACC]/30 hover:border-[#4d4d52]"
-                  required
-                  disabled={isLoading}
-                />
+              <div className="space-y-2.5">
+                <h2 className="text-sm font-bold text-amber-500 font-mono uppercase tracking-wider">Approval Required</h2>
+                <p className="text-xs text-[#A6A6A6] leading-relaxed px-1">
+                  Your account must be approved. Please contact the administrator via email. Once approved, you will receive an email confirmation.
+                </p>
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <label htmlFor="signup-confirm-password" className="text-[10px] font-bold uppercase tracking-wider text-[#A6A6A6] font-mono">
-                Confirm Password
-              </label>
-              <div className="relative group">
-                <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#A6A6A6] group-focus-within:text-[#00C8FF] transition-colors">
-                  <Lock className="h-4 w-4" />
-                </span>
-                <input
-                  id="signup-confirm-password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full rounded-xl border border-[#3C3C3C] bg-[#1E1E1E] py-3 pl-11 pr-4 text-sm text-[#DFE1E5] placeholder-[#606368] outline-none transition-all duration-200 focus:border-[#007ACC] focus:ring-1 focus:ring-[#007ACC]/30 hover:border-[#4d4d52]"
-                  required
-                  disabled={isLoading}
-                />
-              </div>
-            </div>
-
-            <button
-              id="signup-submit-btn"
-              type="submit"
-              disabled={isLoading}
-              className="relative flex w-full items-center justify-center gap-2 rounded-xl bg-[#007ACC] py-3.5 text-xs font-bold uppercase tracking-widest text-white shadow-[0_4px_14px_rgba(0,122,204,0.2)] transition-all duration-300 hover:bg-[#007ACC]/90 hover:shadow-[0_6px_20px_rgba(0,122,204,0.4)] active:scale-[0.98] disabled:pointer-events-none disabled:bg-[#3C3C3C] disabled:text-[#868A91] disabled:shadow-none cursor-pointer"
-            >
-              {isLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin text-white" />
-              ) : (
-                <>
-                  <UserPlus className="h-4 w-4" />
-                  <span>Create Account</span>
-                </>
-              )}
-            </button>
-          </form>
-
-          <div className="mt-7 border-t border-[#3C3C3C]/80 pt-6 text-center">
-            <p className="text-xs text-[#868A91]">
-              Already have an account?{" "}
               <Link
-                id="login-link"
                 href="/app/login"
-                className="font-semibold text-[#00C8FF] hover:text-[#007ACC] transition-colors inline-flex items-center gap-1 group"
+                className="relative flex w-full items-center justify-center gap-2 rounded-xl bg-zinc-800/85 hover:bg-zinc-800 border border-zinc-700/80 py-3 text-xs font-bold uppercase tracking-widest text-[#DFE1E5] transition-all duration-200 active:scale-[0.98] text-center"
               >
-                Log In
-                <ArrowRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
+                Go to Login
               </Link>
-            </p>
-          </div>
+            </div>
+          ) : (
+            <>
+              <form onSubmit={handleSubmit} className="space-y-5">
+                <div className="space-y-2">
+                  <label htmlFor="signup-email" className="text-[10px] font-bold uppercase tracking-wider text-[#A6A6A6] font-mono">
+                    Email Address
+                  </label>
+                  <div className="relative group">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#A6A6A6] group-focus-within:text-[#00C8FF] transition-colors">
+                      <Mail className="h-4 w-4" />
+                    </span>
+                    <input
+                      id="signup-email"
+                      type="email"
+                      placeholder="name@example.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full rounded-xl border border-[#3C3C3C] bg-[#1E1E1E] py-3 pl-11 pr-4 text-sm text-[#DFE1E5] placeholder-[#606368] outline-none transition-all duration-200 focus:border-[#007ACC] focus:ring-1 focus:ring-[#007ACC]/30 hover:border-[#4d4d52]"
+                      required
+                      disabled={isLoading}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label htmlFor="signup-password" className="text-[10px] font-bold uppercase tracking-wider text-[#A6A6A6] font-mono">
+                    Password
+                  </label>
+                  <div className="relative group">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#A6A6A6] group-focus-within:text-[#00C8FF] transition-colors">
+                      <Lock className="h-4 w-4" />
+                    </span>
+                    <input
+                      id="signup-password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full rounded-xl border border-[#3C3C3C] bg-[#1E1E1E] py-3 pl-11 pr-4 text-sm text-[#DFE1E5] placeholder-[#606368] outline-none transition-all duration-200 focus:border-[#007ACC] focus:ring-1 focus:ring-[#007ACC]/30 hover:border-[#4d4d52]"
+                      required
+                      disabled={isLoading}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label htmlFor="signup-confirm-password" className="text-[10px] font-bold uppercase tracking-wider text-[#A6A6A6] font-mono">
+                    Confirm Password
+                  </label>
+                  <div className="relative group">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#A6A6A6] group-focus-within:text-[#00C8FF] transition-colors">
+                      <Lock className="h-4 w-4" />
+                    </span>
+                    <input
+                      id="signup-confirm-password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="w-full rounded-xl border border-[#3C3C3C] bg-[#1E1E1E] py-3 pl-11 pr-4 text-sm text-[#DFE1E5] placeholder-[#606368] outline-none transition-all duration-200 focus:border-[#007ACC] focus:ring-1 focus:ring-[#007ACC]/30 hover:border-[#4d4d52]"
+                      required
+                      disabled={isLoading}
+                    />
+                  </div>
+                </div>
+
+                <button
+                  id="signup-submit-btn"
+                  type="submit"
+                  disabled={isLoading}
+                  className="relative flex w-full items-center justify-center gap-2 rounded-xl bg-[#007ACC] py-3.5 text-xs font-bold uppercase tracking-widest text-white shadow-[0_4px_14px_rgba(0,122,204,0.2)] transition-all duration-300 hover:bg-[#007ACC]/90 hover:shadow-[0_6px_20px_rgba(0,122,204,0.4)] active:scale-[0.98] disabled:pointer-events-none disabled:bg-[#3C3C3C] disabled:text-[#868A91] disabled:shadow-none cursor-pointer"
+                >
+                  {isLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                  ) : (
+                    <>
+                      <UserPlus className="h-4 w-4" />
+                      <span>Create Account</span>
+                    </>
+                  )}
+                </button>
+              </form>
+
+              <div className="mt-7 border-t border-[#3C3C3C]/80 pt-6 text-center">
+                <p className="text-xs text-[#868A91]">
+                  Already have an account?{" "}
+                  <Link
+                    id="login-link"
+                    href="/app/login"
+                    className="font-semibold text-[#00C8FF] hover:text-[#007ACC] transition-colors inline-flex items-center gap-1 group"
+                  >
+                    Log In
+                    <ArrowRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform" />
+                  </Link>
+                </p>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Footer */}
