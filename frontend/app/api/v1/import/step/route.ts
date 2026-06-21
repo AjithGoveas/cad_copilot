@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth';
 const PYTHON_BACKEND_URL = process.env.FASTAPI_URL;
 
 export const maxDuration = 300;
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
     try {
@@ -27,6 +28,7 @@ export async function POST(req: NextRequest) {
         const backendRes = await fetch(`${PYTHON_BACKEND_URL}/import/step`, {
             method: 'POST',
             body: backendFormData,
+            cache: 'no-store',
         });
 
         if (!backendRes.ok) {
@@ -39,6 +41,9 @@ export async function POST(req: NextRequest) {
         const headers: Record<string, string> = {
             'Content-Type': 'application/octet-stream',
             'Content-Disposition': `attachment; filename="imported_${file.name}.stl"`,
+            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
         };
         if (assetId) {
             headers['x-asset-id'] = assetId;

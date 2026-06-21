@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
 /**
- * Fetches the 20 most recent CAD projects for the authenticated user.
+ * Fetches the 20 most recent CAD sessions for the authenticated user.
  */
 export async function GET() {
     try {
@@ -17,7 +17,7 @@ export async function GET() {
             );
         }
 
-        const projects = await prisma.project.findMany({
+        const sessions = await prisma.session.findMany({
             where: {
                 userId: session.user.id,
             },
@@ -27,7 +27,7 @@ export async function GET() {
             },
         });
 
-        return NextResponse.json(projects);
+        return NextResponse.json(sessions);
     } catch (err: any) {
         console.error('[API/History] Error:', err);
         return NextResponse.json(

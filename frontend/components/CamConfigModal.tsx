@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { 
-    X, Plus, Trash2, Settings, Hammer, Layers, AlertCircle, Play, Loader2, 
+    X, Plus, Trash2, Settings, Hammer, Layers, AlertCircle, Play, 
     Sparkles, ChevronRight, ChevronLeft, ShieldCheck, Gauge, Zap, 
     ChevronUp, ChevronDown, Cpu, Check, Info, Box, HelpCircle
 } from 'lucide-react';
+import { Spinner } from '@/components/ui/spinner';
 import { toast } from 'sonner';
 
 export interface ToolConfig {
@@ -1282,7 +1283,7 @@ export default function CamConfigModal({
                             <button onClick={handleFormSubmit} disabled={isGenerating || !isValid}
                                 className="flex items-center gap-2 px-5 py-2 bg-amber-500 hover:bg-amber-400 disabled:bg-zinc-850 disabled:text-zinc-650 text-black text-xs font-semibold rounded-lg shadow-sm transition-colors disabled:opacity-50">
                                 {isGenerating ? (
-                                    <><Loader2 size={14} className="animate-spin" /> Compiling...</>
+                                    <><Spinner className="size-3.5" /> Compiling...</>
                                 ) : (
                                     <><Play size={12} fill="currentColor" /> Compile G-code</>
                                 )}

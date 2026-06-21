@@ -3,7 +3,7 @@
 import { Suspense, useState, useMemo, memo, useCallback, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Stage, ContactShadows, Center } from '@react-three/drei';
-import { Loader2, MousePointer2, Cuboid, Upload } from 'lucide-react';
+import { MousePointer2, Cuboid, Upload } from 'lucide-react';
 import { StlMesh } from './StlMesh';
 import { DimensionOverlay } from './DimensionOverlay';
 import { CameraRig } from './CameraRig';
@@ -20,12 +20,13 @@ type Props = {
     onParameterUpdate?: (key: string, value: number) => void;
     targetPoint?: [number, number, number] | null;
     onImportStep?: (file: File) => Promise<void>;
+    onSelectPrompt?: (prompt: string) => void;
 };
 
 export const Viewport = memo(function Viewport({ 
     stlUrls, statusText, isCompiling, selection, onMeshClick,
     annotations = {}, activeFeatureId = null, onSelectParameter, onHoverParameter, onParameterUpdate,
-    targetPoint = null, onImportStep,
+    targetPoint = null, onImportStep, onSelectPrompt,
 }: Props) {
     const [geometryCenter, setGeometryCenter] = useState<[number, number, number]>([0, 0, 0]);
     const [geometryScale, setGeometryScale] = useState<number>(1.0);
@@ -43,6 +44,7 @@ export const Viewport = memo(function Viewport({
         if (file) {
             onImportStep?.(file);
         }
+        e.target.value = '';
     }, [onImportStep]);
 
     const handleGeometryLoaded = useCallback((center: [number, number, number], size: [number, number, number], scale: number) => {
@@ -167,16 +169,54 @@ export const Viewport = memo(function Viewport({
 
             {/* Premium Empty State */}
             {!hasGeometry && !isCompiling && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 pointer-events-none z-10">
-                    <div className="relative flex size-20 items-center justify-center rounded-3xl bg-zinc-900/50 border border-zinc-800/50 shadow-2xl backdrop-blur-sm animate-in zoom-in duration-1000">
-                        <div className="absolute inset-0 rounded-3xl bg-blue-500/5 animate-pulse" />
-                        <Cuboid size={32} strokeWidth={1.5} className="text-zinc-600" />
-                    </div>
-                    <div className="text-center flex flex-col items-center animate-in fade-in slide-in-from-bottom-4 duration-1000 delay-150">
-                        <h3 className="font-sans text-sm font-medium tracking-wide text-zinc-300">Awaiting Geometry</h3>
-                        <p className="mt-2 font-sans text-[13px] text-zinc-500 max-w-[250px] leading-relaxed mb-4">
-                            Upload a blueprint or describe a shape in CADVΞX to begin generating.
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-6 z-10 overflow-y-auto">
+                    <div className="flex flex-col items-center max-w-xl text-center mb-8 pointer-events-none">
+                        <div className="relative flex size-14 items-center justify-center rounded-2xl bg-zinc-900/60 border border-zinc-800/80 shadow-xl backdrop-blur-sm animate-in zoom-in duration-1000 mb-4">
+                            <div className="absolute inset-0 rounded-2xl bg-[#007ACC]/5 animate-pulse" />
+                            <Cuboid size={24} strokeWidth={1.5} className="text-[#007ACC]" />
+                        </div>
+                        <h3 className="font-sans text-lg font-bold tracking-wide text-zinc-100 bg-clip-text text-transparent bg-gradient-to-r from-zinc-100 to-zinc-400">CADVΞX Workstation</h3>
+                        <p className="mt-2 font-sans text-xs text-zinc-400 leading-relaxed max-w-md">
+                            Welcome to your dynamic CAD workbench. Click any starter template below to instantly generate a parametric OpenSCAD model, or type your own instructions on the left.
                         </p>
+                    </div>
+
+                    {/* Starter Templates Grid */}
+                    <div className="grid grid-cols-2 gap-4 w-full max-w-xl mb-6 pointer-events-auto">
+                        {[
+                            {
+                                title: '🔩 Flange Bracket',
+                                desc: 'High-torque mounting bracket with counterbore holes',
+                                prompt: 'Generate a heavy-duty mounting flange bracket with 4 counterbore screw holes'
+                            },
+                            {
+                                title: '⚙️ Spur Gear',
+                                desc: 'Parametric spur gear with teeth and hub keyway',
+                                prompt: 'Create a parametric spur gear with 18 teeth, 3mm module, and central hub'
+                            },
+                            {
+                                title: '📦 Electronics Box',
+                                desc: 'Project enclosure with mounting lugs and vents',
+                                prompt: 'Design a custom electronics project enclosure with mounting lugs and ventilation slots'
+                            },
+                            {
+                                title: '🔗 Shaft Coupler',
+                                desc: 'Rigid coupler for linking motor shaft to lead screw',
+                                prompt: 'Model a rigid clamping shaft coupler for linking a 5mm motor shaft to an 8mm lead screw'
+                            }
+                        ].map((tpl) => (
+                            <button
+                                key={tpl.title}
+                                onClick={() => onSelectPrompt?.(tpl.prompt)}
+                                className="group flex flex-col items-start p-4 rounded-xl border border-zinc-800/80 bg-zinc-900/40 hover:bg-[#1E1E1E]/80 hover:border-[#007ACC]/45 transition-all duration-300 text-left hover:shadow-[0_4px_20px_rgba(0,122,204,0.08)] hover:-translate-y-0.5 active:scale-[0.98] cursor-pointer"
+                            >
+                                <span className="text-xs font-semibold text-zinc-200 group-hover:text-white transition-colors mb-1">{tpl.title}</span>
+                                <span className="text-[10px] text-zinc-500 leading-normal group-hover:text-zinc-400 transition-colors">{tpl.desc}</span>
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="flex items-center gap-3 pointer-events-auto">
                         <input
                             type="file"
                             ref={fileInputRef}
@@ -187,9 +227,9 @@ export const Viewport = memo(function Viewport({
                         {onImportStep && (
                             <button
                                 onClick={handleImportClick}
-                                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-600 text-[11px] font-semibold text-zinc-200 transition-all shadow-xl active:scale-95 pointer-events-auto cursor-pointer"
+                                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-900/50 hover:bg-zinc-800/80 border border-zinc-800 hover:border-zinc-700 text-[11px] font-semibold text-zinc-300 hover:text-zinc-100 transition-all shadow-md active:scale-95 cursor-pointer"
                             >
-                                <Upload size={13} className="text-blue-500" />
+                                <Upload size={12} className="text-[#007ACC]" />
                                 Import STEP File
                             </button>
                         )}

@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { signIn } from "next-auth/react";
 import { toast } from "sonner";
-import { Loader2, LogIn, Lock, Mail, ArrowRight, ShieldCheck } from "lucide-react";
+import { LogIn, Lock, Mail, ArrowRight, ShieldCheck } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -169,7 +170,7 @@ export default function LoginPage() {
                   className="relative flex w-full items-center justify-center gap-2 rounded-xl bg-[#007ACC] py-3.5 text-xs font-bold uppercase tracking-widest text-white shadow-[0_4px_14px_rgba(0,122,204,0.2)] transition-all duration-300 hover:bg-[#007ACC]/90 hover:shadow-[0_6px_20px_rgba(0,122,204,0.4)] active:scale-[0.98] disabled:pointer-events-none disabled:bg-[#3C3C3C] disabled:text-[#868A91] disabled:shadow-none cursor-pointer"
                 >
                   {isLoading ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                    <Spinner className="text-white" />
                   ) : (
                     <>
                       <LogIn className="h-4 w-4" />

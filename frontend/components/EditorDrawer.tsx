@@ -1,14 +1,15 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { ChevronLeft, ChevronRight, Code2, Loader2, Sliders, Play, Copy, Check, Download, History, AlertTriangle, Share2, Box } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Code2, Sliders, Play, Copy, Check, Download, History, AlertTriangle, Share2, Box } from 'lucide-react';
 import { type ReactNode, useState, memo } from 'react';
 import useSWR from 'swr';
+import { Spinner } from '@/components/ui/spinner';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSeparator, DropdownMenuPortal, DropdownMenuSubTrigger } from './ui/dropdown-menu';
 
 const Editor = dynamic(() => import('@monaco-editor/react'), {
     ssr: false,
-    loading: () => <div className="flex h-full items-center justify-center bg-[#1E1E1E]"><Loader2 size={16} className="animate-spin text-[#A6A6A6]" /></div>
+    loading: () => <div className="flex h-full items-center justify-center bg-[#1E1E1E]"><Spinner className="text-[#A6A6A6]" /></div>
 });
 
 const fetcher = (url: string) => fetch(url).then(res => res.json());
@@ -22,21 +23,26 @@ type Props = {
     onRebuild: () => void; isCompiling: boolean; isExporting?: boolean; hasScript: boolean;
     selection?: { id: string; point: [number, number, number] } | null;
     onClearSelection?: () => void;
-    onLoadSession?: (script: string, params: any, shareToken?: string) => void;
+    onLoadSession?: (sessionId: string) => void;
+    onLoadHistoryItem?: (code: string, params: any) => void;
     onExport?: (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => void;
     onDownloadScad?: () => void; onShare?: () => void;
     children?: ReactNode; isDemoMode?: boolean;
     isImported?: boolean;
+    sessionId?: string;
 };
 
 export const EditorDrawer = memo(function EditorDrawer({
     isOpen, setIsOpen, activeTab, setActiveTab, cadScript, onScriptChange,
-    onRebuild, isCompiling, isExporting, hasScript, onLoadSession, onExport, onDownloadScad, onShare,
-    children, isDemoMode, isImported = false,
+    onRebuild, isCompiling, isExporting, hasScript, onLoadSession, onLoadHistoryItem, onExport, onDownloadScad, onShare,
+    children, isDemoMode, isImported = false, sessionId,
 }: Props) {
     const [isCopied, setIsCopied] = useState(false);
     const { data: historySessions, isLoading: isLoadingHistory } = useSWR<any[]>(
-        activeTab === 'history' ? '/api/history' : null, fetcher, { revalidateOnFocus: false }
+        activeTab === 'history' && !sessionId ? '/api/history' : null, fetcher, { revalidateOnFocus: false }
+    );
+    const { data: activeSessionData, isLoading: isLoadingActiveSession } = useSWR<any>(
+        activeTab === 'history' && sessionId ? `/api/history/session/${sessionId}` : null, fetcher, { revalidateOnFocus: false }
     );
 
     const handleCopyCode = async () => {
@@ -93,7 +99,7 @@ export const EditorDrawer = memo(function EditorDrawer({
                                 <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
                                         <button disabled={isExporting} className="flex size-6 items-center justify-center rounded-md text-[#A6A6A6] hover:bg-[#3C3C3C] hover:text-[#D4D4D4] disabled:opacity-50 transition-colors">
-                                            {isExporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                                            {isExporting ? <Spinner className="size-3 text-[#A6A6A6]" /> : <Download size={12} />}
                                         </button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end" className="w-40 border-[#3C3C3C] bg-[#252526] p-1 shadow-xl rounded-md">
@@ -118,15 +124,74 @@ export const EditorDrawer = memo(function EditorDrawer({
 
                     {activeTab === 'history' && (
                         <div className="p-4 flex flex-col gap-3">
-                            {isLoadingHistory ? <Loader2 size={16} className="animate-spin text-[#A6A6A6] mx-auto mt-6" /> : historySessions?.map((session) => (
-                                <button key={session.id} onClick={() => onLoadSession?.(session.scadCode, session.parametersJson, session.shareToken)} className="group flex items-start gap-3 rounded-md border border-[#3C3C3C] bg-[#1E1E1E] p-3.5 text-left hover:border-[#007ACC]/50 hover:bg-[#252526] transition-all duration-300 hover:shadow-md hover:-translate-y-0.5">
-                                    <div className="mt-1 size-1.5 rounded-full bg-[#A6A6A6] group-hover:bg-[#007ACC] transition-colors" />
-                                    <div>
-                                        <div className="text-[10px] text-[#A6A6A6] font-mono mb-1.5">{new Date(session.createdAt).toLocaleString()}</div>
-                                        <div className="text-xs text-[#D4D4D4] line-clamp-2 leading-relaxed">{session.prompt}</div>
-                                    </div>
-                                </button>
-                            ))}
+                            {sessionId ? (
+                                <>
+                                    <button 
+                                        onClick={() => onLoadSession?.('')} 
+                                        className="flex items-center gap-1.5 self-start text-[11px] font-semibold text-[#A6A6A6] hover:text-[#D4D4D4] bg-[#3C3C3C]/40 hover:bg-[#3C3C3C]/80 px-2.5 py-1.5 rounded transition-all mb-2 cursor-pointer border-none"
+                                    >
+                                        <ChevronLeft size={12} /> Back to Sessions
+                                    </button>
+                                    <h4 className="text-[11px] font-bold tracking-wider text-[#A6A6A6] uppercase mb-1">Session Timeline</h4>
+                                    {isLoadingActiveSession ? (
+                                        <Spinner className="text-[#A6A6A6] mx-auto mt-6" />
+                                    ) : activeSessionData?.historyItems?.map((item: any, idx: number) => {
+                                        const isActive = item.openscadCode === cadScript;
+                                        return (
+                                            <button 
+                                                key={item.id} 
+                                                onClick={() => onLoadHistoryItem?.(item.openscadCode, item.parametersJson)}
+                                                className={`group flex items-start gap-3 rounded-md border p-3.5 text-left transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 cursor-pointer w-full ${
+                                                    isActive 
+                                                        ? 'border-[#007ACC] bg-[#007ACC]/10 text-white shadow-[0_0_12px_rgba(0,122,204,0.15)]' 
+                                                        : 'border-[#3C3C3C] bg-[#1E1E1E] hover:border-[#007ACC]/50 hover:bg-[#252526] text-[#D4D4D4]'
+                                                }`}
+                                            >
+                                                <div className={`mt-1.5 size-2 rounded-full ${isActive ? 'bg-[#007ACC]' : 'bg-[#A6A6A6] group-hover:bg-[#007ACC]'} transition-colors`} />
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center justify-between gap-2 mb-1">
+                                                        <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#A6A6A6]">
+                                                            Step {idx + 1}: {item.actionType}
+                                                        </span>
+                                                        <span className="text-[9px] text-[#858585] font-mono">
+                                                            {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-xs line-clamp-2 leading-relaxed break-words">{item.prompt || 'Generated part'}</p>
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </>
+                            ) : (
+                                <>
+                                    <h4 className="text-[11px] font-bold tracking-wider text-[#A6A6A6] uppercase mb-1">Recent Sessions</h4>
+                                    {isLoadingHistory ? (
+                                        <Spinner className="text-[#A6A6A6] mx-auto mt-6" />
+                                    ) : historySessions?.map((session) => (
+                                        <button 
+                                            key={session.id} 
+                                            onClick={() => onLoadSession?.(session.id)} 
+                                            className="group flex items-start gap-3 rounded-md border border-[#3C3C3C] bg-[#1E1E1E] p-3.5 text-left hover:border-[#007ACC]/50 hover:bg-[#252526] transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 cursor-pointer w-full"
+                                        >
+                                            <div className="mt-1 size-1.5 rounded-full bg-[#A6A6A6] group-hover:bg-[#007ACC] transition-colors" />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="text-[10px] text-[#A6A6A6] font-mono mb-1.5">
+                                                    {new Date(session.createdAt).toLocaleString()}
+                                                </div>
+                                                <div className="text-xs text-[#D4D4D4] line-clamp-2 leading-relaxed font-medium break-words">
+                                                    {session.title}
+                                                </div>
+                                            </div>
+                                        </button>
+                                    ))}
+                                    {!isLoadingHistory && (!historySessions || historySessions.length === 0) && (
+                                        <div className="text-[11px] text-[#A6A6A6] text-center mt-6">
+                                            No active history sessions found.
+                                        </div>
+                                    )}
+                                </>
+                            )}
                         </div>
                     )}
                 </div>
@@ -142,7 +207,7 @@ export const EditorDrawer = memo(function EditorDrawer({
                         disabled={isCompiling || !hasScript || isImported}
                         className="flex w-full items-center justify-center gap-2 rounded-md bg-[#007ACC] py-2.5 text-[12px] font-semibold text-white transition-all duration-300 hover:bg-[#007ACC]/90 hover:shadow-[0_0_12px_rgba(0,122,204,0.4)] active:scale-[0.98] disabled:bg-[#3C3C3C] disabled:text-[#A6A6A6] disabled:shadow-none"
                     >
-                        {isCompiling ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} className="fill-current" />}
+                        {isCompiling ? <Spinner className="size-3.5 text-white" /> : <Play size={14} className="fill-current" />}
                         {isCompiling ? 'Compiling...' : 'Rebuild Model'}
                     </button>
                 </div>

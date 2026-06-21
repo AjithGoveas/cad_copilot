@@ -11,21 +11,30 @@ type Props = {
 export default async function Page({ params }: Props) {
 	const { shareToken } = await params;
 
-	const project = await prisma.project.findUnique({
+	const session = await prisma.session.findUnique({
 		where: {
 			shareToken: shareToken,
 		},
+		include: {
+			historyItems: {
+				orderBy: {
+					createdAt: 'asc',
+				},
+			},
+		},
 	});
 
-	if (!project || !project.scadCode) {
+	if (!session || session.historyItems.length === 0) {
 		notFound();
 	}
 
+	const latestSnapshot = session.historyItems[session.historyItems.length - 1];
+
 	return (
 		<ViewerClient
-			prompt={project.prompt}
-			scadCode={project.scadCode}
-			parametersJson={project.parametersJson}
+			prompt={session.title}
+			scadCode={latestSnapshot.openscadCode}
+			parametersJson={latestSnapshot.parametersJson}
 		/>
 	);
 }

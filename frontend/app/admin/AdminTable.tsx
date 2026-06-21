@@ -3,7 +3,8 @@
 import React, { useState } from "react";
 import { toggleUserApproval } from "@/app/actions/admin";
 import { toast } from "sonner";
-import { Loader2, Mail, Calendar, UserCheck, UserX } from "lucide-react";
+import { Mail, Calendar, UserCheck, UserX } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 
 interface UserItem {
   id: string;
@@ -134,7 +135,7 @@ export default function AdminTable({ initialUsers }: { initialUsers: UserItem[] 
                             } flex items-center justify-center shadow`}
                           >
                             {isPending && (
-                              <Loader2 className="h-2.5 w-2.5 animate-spin text-[#007ACC]" />
+                              <Spinner className="size-2.5 text-[#007ACC]" />
                             )}
                           </span>
                         </button>

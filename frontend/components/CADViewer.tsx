@@ -5,7 +5,8 @@ import { Viewport } from './Viewport';
 import { useCADEngine } from '@/hooks/useCADEngine';
 import CamConfigModal, { CamConfig } from './CamConfigModal';
 import { toast } from 'sonner';
-import { AlertCircle, Share2, Download, ChevronDown, Layers, Box, Loader2, Cpu } from 'lucide-react';
+import { AlertCircle, Share2, Download, ChevronDown, Layers, Box, Cpu } from 'lucide-react';
+import { Spinner } from '@/components/ui/spinner';
 import { extractStructuredAnnotations, OpenScadAnnotations } from '@/lib/openscadParameters';
 import {
     DropdownMenu,
@@ -39,6 +40,7 @@ type CADViewerProps = {
     onParameterUpdate?: (key: string, value: number) => void;
     targetPoint?: [number, number, number] | null;
     isDemoMode?: boolean;
+    onSelectPrompt?: (prompt: string) => void;
 };
 
 const generateDxfWrapper = (originalCode: string, mode: 'silhouette' | 'section' | 'blueprint') => {
@@ -117,6 +119,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         onParameterUpdate,
         targetPoint = null,
         isDemoMode = false,
+        onSelectPrompt,
     },
     ref
 ) {
@@ -203,6 +206,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
             const res = await fetch('/api/v1/import/step', {
                 method: 'POST',
                 body: formData,
+                cache: 'no-store',
             });
 
             if (!res.ok) {
@@ -533,6 +537,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                 onParameterUpdate={onParameterUpdate}
                 targetPoint={targetPoint}
                 onImportStep={isDemoMode ? undefined : handleImportStep}
+                onSelectPrompt={onSelectPrompt}
             />
 
             {showExport && displayStlUrls.size > 0 && (
@@ -552,7 +557,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                                 disabled={isExporting} 
                                 className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#252526]/80 hover:bg-[#3C3C3C] border border-[#3C3C3C] shadow-lg backdrop-blur-md text-[11px] font-medium text-[#D4D4D4] transition-colors disabled:opacity-50"
                             >
-                                {isExporting ? <Loader2 size={13} className="animate-spin text-[#007ACC]" /> : <Download size={13} className="text-[#007ACC]" />}
+                                {isExporting ? <Spinner className="size-3.5 text-[#007ACC]" /> : <Download size={13} className="text-[#007ACC]" />}
                                 Export
                                 <ChevronDown size={11} className="text-[#A6A6A6] ml-0.5" />
                             </button>

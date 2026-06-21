@@ -1,7 +1,8 @@
 'use client';
 
 import { type FormEvent, useEffect, useRef } from 'react';
-import { Upload, X, Loader2, Sparkles, Binary, LogOut, ChevronLeft, ChevronRight, Box, ArrowUp, Paperclip, Target, FileText, Image } from 'lucide-react';
+import { Upload, X, Sparkles, Binary, LogOut, ChevronLeft, ChevronRight, Box, ArrowUp, Paperclip, Target, FileText, Image } from 'lucide-react';
+import { Spinner } from '@/components/ui/spinner';
 import { ChatBubble } from './ChatBubble';
 import { signOut } from 'next-auth/react';
 import type { Message } from './HitlWorkspace';
@@ -44,7 +45,7 @@ export function ChatPanel({
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
-    const canSubmit = !isGenerating && prompt.trim().length > 0 && (!!selectedFile || hasScript);
+    const canSubmit = !isGenerating && prompt.trim().length > 0;
 
     return (
         <aside
@@ -63,7 +64,10 @@ export function ChatPanel({
                 
                 {/* Header */}
                 <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800/60 bg-[#09090b]/80 backdrop-blur-md px-5 z-10">
-                    <div className="flex items-center gap-3">
+                    <div 
+                        onClick={() => window.location.replace('/app')}
+                        className="flex items-center gap-3 hover:opacity-80 transition-opacity cursor-pointer"
+                    >
                         <div className="flex size-7 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
                             <Box size={16} />
                         </div>
@@ -182,7 +186,7 @@ export function ChatPanel({
                                     }`}
                                 >
                                     {isGenerating ? (
-                                        <Loader2 size={16} className="animate-spin text-zinc-400" />
+                                        <Spinner className="text-zinc-400" />
                                     ) : (
                                         <ArrowUp size={16} strokeWidth={2.5} />
                                     )}

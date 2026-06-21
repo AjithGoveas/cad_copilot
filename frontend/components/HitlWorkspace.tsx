@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import useSWR, { mutate } from 'swr';
 import { ChatPanel } from './ChatPanel';
 import { EditorDrawer } from './EditorDrawer';
 import { CADViewer, type CADViewerRef } from './CADViewer';
@@ -8,6 +10,7 @@ import { ParameterDrawer } from './ParameterDrawer';
 import { DemoLimitModal } from './DemoLimitModal';
 import { toast } from 'sonner';
 import { Target, AlertCircle } from 'lucide-react';
+import { Spinner } from '@/components/ui/spinner';
 import { extractOpenScadParameters, injectOpenScadParameters } from '@/lib/openscadParameters';
 
 export type Message = {
@@ -32,7 +35,20 @@ const MODEL_OPTIONS = [
     {id: 'gemma-4-31b-it', name: 'Gemma 4 31B IT', icon: 'zap'}
 ];
 
-export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boolean }) {
+export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDemoMode?: boolean; sessionId?: string }) {
+    const router = useRouter();
+
+    // ── Session SWR Fetcher ──────────────────────────────────────────────────
+    const { data: sessionData, error: sessionError, isLoading: isLoadingSession } = useSWR(
+        sessionId ? `/api/history/session/${sessionId}` : null,
+        async (url) => {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error('Failed to fetch session timeline.');
+            return res.json();
+        },
+        { revalidateOnFocus: false }
+    );
+
     // ── State ────────────────────────────────────────────────────────────────
     const [prompt, setPrompt] = useState('');
     const [messages, setMessages] = useState<Message[]>([]);
@@ -56,6 +72,54 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
     const [promptCount, setPromptCount] = useState(0);
     const [demoLimitReason, setDemoLimitReason] = useState<'time' | 'prompt' | 'export' | 'entry-limit' | null>(null);
     const [timeLeft, setTimeLeft] = useState<number | null>(null);
+
+    // Reset workspace on session departure
+    useEffect(() => {
+        if (!sessionId) {
+            setMessages([]);
+            setCadScript('');
+            setParameters({});
+            setShareToken(null);
+            setTargetPoint(null);
+        }
+    }, [sessionId]);
+
+    // Restore state from active session history timeline
+    useEffect(() => {
+        if (sessionData?.historyItems?.length > 0) {
+            const items = sessionData.historyItems;
+            const reconstructedMessages: Message[] = [];
+            
+            items.forEach((item: any) => {
+                if (item.prompt) {
+                    reconstructedMessages.push({
+                        id: `user-${item.id}`,
+                        role: 'user',
+                        content: item.prompt,
+                    });
+                }
+                
+                reconstructedMessages.push({
+                    id: `assistant-${item.id}`,
+                    role: 'assistant',
+                    content: item.actionType === 'GENERATE'
+                        ? `I've generated the OpenSCAD code for your request. You can now tweak the parameters in the drawer or edit the code directly.`
+                        : `I've updated the model with your requested changes. Let me know if you need further adjustments.`,
+                });
+            });
+
+            setMessages(reconstructedMessages);
+
+            const latestSnapshot = items[items.length - 1];
+            setCadScript(latestSnapshot.openscadCode);
+            if (latestSnapshot.parametersJson) {
+                setParameters(latestSnapshot.parametersJson);
+            }
+            if (sessionData.shareToken) {
+                setShareToken(sessionData.shareToken);
+            }
+        }
+    }, [sessionData]);
 
     // Demo Entry Count Tracking
     useEffect(() => {
@@ -101,9 +165,10 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
     const [engineStatus, setEngineStatus] = useState({ isCompiling: false, isExporting: false, isImported: false });
 
     // ── Generation ────────────────────────────────────────────────────────────
-    const handleGenerate = async (e?: React.FormEvent) => {
+    const handleGenerate = async (e?: React.FormEvent, overridePrompt?: string) => {
         if (e) e.preventDefault();
-        if (!prompt.trim()) return;
+        const activePrompt = overridePrompt || prompt;
+        if (!activePrompt.trim()) return;
 
         if (isDemoMode && promptCount >= 1) {
             setDemoLimitReason('prompt');
@@ -113,7 +178,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
         const userMsg: Message = { 
             id: Date.now().toString(), 
             role: 'user', 
-            content: prompt,
+            content: activePrompt,
             attachment: selectedFile ? { name: selectedFile.name, file: selectedFile } : undefined
         };
         
@@ -128,11 +193,12 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
             let res;
             if (isEditing) {
                 const body = {
-                    prompt,
+                    prompt: activePrompt,
                     currentCode: cadScript,
                     targetPoint: targetPoint || null,
                     model: selectedModel,
                     demoMode: isDemoMode,
+                    sessionId: sessionId || null,
                 };
                 res = await fetch('/api/v1/edit', {
                     method: 'POST',
@@ -143,7 +209,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
                 });
             } else {
                 const formData = new FormData();
-                formData.append('prompt', prompt);
+                formData.append('prompt', activePrompt);
                 formData.append('model', selectedModel);
                 if (selectedFile) {
                     let fileToUpload: File | Blob = selectedFile;
@@ -193,6 +259,14 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
             };
             setMessages((prev) => [...prev, assistantMsg]);
             setActiveTab('parameters');
+            
+            if (isEditing) {
+                if (sessionId) {
+                    mutate(`/api/history/session/${sessionId}`);
+                }
+            } else if (data.id && data.id !== 'demo-project') {
+                router.push(`/app/${data.id}`);
+            }
             
             if (isDemoMode) setPromptCount(prev => prev + 1);
             setTargetPoint(null);
@@ -279,6 +353,10 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
             };
             setMessages((prev) => [...prev, assistantMsg]);
             setActiveTab('parameters');
+
+            if (data.id && data.id !== 'demo-project') {
+                router.push(`/app/${data.id}`);
+            }
         } catch (err) {
             toast.error('Failed to regenerate model');
         } finally {
@@ -356,12 +434,22 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
         toast.success('SCAD File Downloaded');
     }, [cadScript, isDemoMode]);
 
-    const handleLoadSession = useCallback((script: string, params: any, token?: string) => {
-        setCadScript(script);
-        setParameters(params);
-        setShareToken(token || null);
+    const handleLoadSession = useCallback((id: string) => {
+        if (!id) {
+            router.push('/app');
+        } else {
+            router.push(`/app/${id}`);
+        }
         setActiveTab('parameters');
-        toast.success('Session loaded from history');
+    }, [router]);
+
+    const handleLoadHistoryItem = useCallback((code: string, params: any) => {
+        setCadScript(code);
+        if (params) {
+            setParameters(params);
+        }
+        setActiveTab('parameters');
+        toast.success('Restored timeline state');
     }, []);
 
     const handleShare = async () => {
@@ -382,6 +470,17 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
         const s = (totalSeconds % 60).toString().padStart(2, '0');
         return `${m}:${s}`;
     };
+
+    if (sessionId && isLoadingSession) {
+        return (
+            <div className="flex h-screen w-full flex-col items-center justify-center bg-[#181818] text-[#D4D4D4]">
+                <div className="flex flex-col items-center gap-3">
+                    <Spinner className="text-[#007ACC] size-7" />
+                    <p className="font-sans text-xs font-semibold tracking-wider text-[#A6A6A6] uppercase animate-pulse">Restoring geometric workstation state...</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         // VS Code Dark Modern Theme Base
@@ -477,6 +576,7 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
                     onParameterUpdate={handleParamChange}
                     targetPoint={targetPoint}
                     isDemoMode={isDemoMode}
+                    onSelectPrompt={(p) => handleGenerate(undefined, p)}
                 />
             </main>
 
@@ -497,9 +597,11 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
                 selection={selection}
                 onClearSelection={() => setSelection(null)}
                 onLoadSession={handleLoadSession}
+                onLoadHistoryItem={handleLoadHistoryItem}
                 onExport={handleExport}
                 onDownloadScad={handleDownloadScad}
                 onShare={shareToken ? handleShare : undefined}
+                sessionId={sessionId}
             >
                 <ParameterDrawer
                     parameters={parameters}

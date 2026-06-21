@@ -1,4 +1,5 @@
 import { Vector3, Line3, Matrix4, Euler, Quaternion } from 'three';
+import JSON5 from 'json5';
 
 export type OpenScadParameters = Record<string, unknown>;
 
@@ -25,9 +26,9 @@ export function extractStructuredAnnotations(script: string): OpenScadAnnotation
 	if (match) {
 		try {
 			const jsonText = match[1].trim();
-			explicitAnnotations = JSON.parse(jsonText) as OpenScadAnnotations;
-		} catch (e) {
-			console.error("Failed to parse PARAMETERS_JSON from script:", e);
+			explicitAnnotations = JSON5.parse(jsonText) as OpenScadAnnotations;
+		} catch (e: any) {
+			console.warn("Failed to parse PARAMETERS_JSON from script:", e.message || e);
 		}
 	}
 

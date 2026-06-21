@@ -1,17 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
 
 const PYTHON_BACKEND_URL = process.env.FASTAPI_URL;
+
+function extractParameters(code: string): Record<string, any> {
+    const params: Record<string, any> = {};
+    const lines = code.split('\n');
+    const paramRegex = /^([a-zA-Z0-9_]+)\s*=\s*([^;]+);/i;
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('//') || !trimmed.includes('=')) continue;
+
+        const match = trimmed.match(paramRegex);
+        if (match) {
+            const [, name, rawValue] = match;
+            let val: any = rawValue.trim();
+
+            if (val.toLowerCase() === 'true') val = true;
+            else if (val.toLowerCase() === 'false') val = false;
+            else if (!isNaN(Number(val))) val = Number(val);
+            else if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+
+            params[name] = val;
+        }
+    }
+    return params;
+}
 
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { prompt, currentCode, targetPoint, model, demoMode } = body;
+        const { prompt, currentCode, targetPoint, model, demoMode, sessionId } = body;
         const isDemoMode = demoMode === true;
 
+        let authSession = null;
         if (!isDemoMode) {
-            const authSession = await getServerSession(authOptions);
+            authSession = await getServerSession(authOptions);
             if (!authSession || !authSession.user || !authSession.user.id) {
                 return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
             }
@@ -48,6 +75,23 @@ export async function POST(req: NextRequest) {
 
         const data = await backendRes.json();
         const cadCode = data.openscad_script || '';
+
+        // Extract parameters for database snapshot caching
+        const parameters = extractParameters(cadCode);
+
+        // Persist history item if authenticated and in session
+        if (!isDemoMode && authSession?.user?.id && sessionId) {
+            await prisma.historyItem.create({
+                data: {
+                    sessionId,
+                    actionType: 'EDIT',
+                    prompt,
+                    openscadCode: cadCode,
+                    parametersJson: parameters,
+                    targetPoint: targetPoint || [],
+                },
+            });
+        }
 
         return NextResponse.json({
             code: cadCode,

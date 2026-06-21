@@ -91,17 +91,23 @@ export async function POST(req: NextRequest) {
         let createdAt = new Date().toISOString();
 
         if (!isDemoMode && authSession?.user?.id) {
-            const project = await prisma.project.create({
+            const session = await prisma.session.create({
                 data: {
                     userId: authSession.user.id,
-                    prompt,
-                    scadCode: cadCode,
-                    parametersJson: parameters,
+                    title: prompt.length > 50 ? prompt.substring(0, 47) + '...' : prompt,
+                    historyItems: {
+                        create: {
+                            actionType: 'GENERATE',
+                            prompt,
+                            openscadCode: cadCode,
+                            parametersJson: parameters,
+                        },
+                    },
                 },
             });
-            projectId = project.id;
-            shareToken = project.shareToken;
-            createdAt = project.createdAt.toISOString();
+            projectId = session.id;
+            shareToken = session.shareToken;
+            createdAt = session.createdAt.toISOString();
         }
 
         // 4. Return result
