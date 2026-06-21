@@ -241,47 +241,6 @@ class LLMCodegenService:
         self.client = genai.Client(api_key=api_key)
         self.model  = model or os.getenv("GENAI_MODEL", "gemini-3.1-flash-lite-preview")
 
-    def upload_file_to_gemini(self, file_bytes: bytes, mime_type: str, filename: str) -> Any:
-        """Upload file bytes to Gemini Files API using a temporary file and return the file object."""
-        import tempfile
-        from pathlib import Path
-        
-        suffix = Path(filename).suffix or ".pdf"
-        if not suffix.startswith("."):
-            suffix = "." + suffix
-            
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-            tmp.write(file_bytes)
-            tmp_path = tmp.name
-            
-        try:
-            uploaded_file = self.client.files.upload(
-                file=tmp_path,
-                config=types.UploadFileConfig(
-                    mime_type=mime_type
-                )
-            )
-            
-            # Poll if state is PROCESSING
-            import time
-            state = getattr(uploaded_file, "state", None)
-            if state and state.name == "PROCESSING":
-                for _ in range(30):
-                    time.sleep(1)
-                    uploaded_file = self.client.files.get(name=uploaded_file.name)
-                    if uploaded_file.state.name != "PROCESSING":
-                        break
-                        
-            if uploaded_file.state.name == "FAILED":
-                raise RuntimeError("Gemini file processing failed")
-                
-            return uploaded_file
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-
     # -- Private helpers -------------------------------------------------------
 
     @staticmethod
@@ -336,35 +295,21 @@ class LLMCodegenService:
         self,
         image_bytes: bytes,
         mime_type: str,
-        filename: str = "blueprint.pdf",
     ) -> dict[str, Any]:
         """
-        Stage 1 - Analyse a blueprint image/PDF and return a structured
+        Stage 1 - Analyse a blueprint image bytes inline and return a structured
         feature-map dictionary.
         """
         file_hash = hashlib.md5(image_bytes).hexdigest()
         
-        uploaded_file = None
-        cache_hit = False
         with _CACHE_LOCK:
             if file_hash in _BLUEPRINT_CACHE:
                 if "feature_map" in _BLUEPRINT_CACHE[file_hash]:
-                    cache_hit = True
-                else:
-                    uploaded_file = _BLUEPRINT_CACHE[file_hash].get("gemini_file")
-                    
-        if cache_hit:
-            print(f"[audit] Cache hit for file hash {file_hash}")
-            with _CACHE_LOCK:
-                return _BLUEPRINT_CACHE[file_hash]["feature_map"]
+                    print(f"[audit] Cache hit for image hash {file_hash}")
+                    return _BLUEPRINT_CACHE[file_hash]["feature_map"]
 
-        if not uploaded_file:
-            print(f"[audit] Cache miss. Uploading {filename} to Gemini Files API...")
-            uploaded_file = self.upload_file_to_gemini(image_bytes, mime_type, filename)
-            _cache_blueprint(file_hash, {
-                "gemini_file": uploaded_file,
-                "mime_type": mime_type,
-            })
+        # Create inline media part directly from bytes
+        image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
             
         def _call() -> Any:
             is_thinking = "3.5" in self.model
@@ -379,7 +324,7 @@ class LLMCodegenService:
                 model=self.model,
                 contents=[
                     types.Part.from_text(text=AUDIT_INSTRUCTION),
-                    uploaded_file,
+                    image_part,
                 ],
                 config=types.GenerateContentConfig(**config_params),
             )
@@ -402,7 +347,6 @@ class LLMCodegenService:
         feature_map: dict[str, Any] | None = None,
         base_code: str | None = None,
         selection_context: str | None = None,
-        filename: str = "blueprint.pdf",
     ) -> str:
         """
         Stage 2 - Synthesise or refine an OpenSCAD script.
@@ -425,27 +369,12 @@ class LLMCodegenService:
 
         user_text = "\n\n".join(parts)
 
-        # Retrieve or upload file reference
-        uploaded_file = None
-        # Avoid file upload/reference when refining existing base_code to eliminate context drag
-        if not base_code and image_bytes and mime_type:
-            file_hash = hashlib.md5(image_bytes).hexdigest()
-            with _CACHE_LOCK:
-                if file_hash in _BLUEPRINT_CACHE:
-                    uploaded_file = _BLUEPRINT_CACHE[file_hash].get("gemini_file")
-            
-            if not uploaded_file:
-                print(f"[codegen] Cache miss. Uploading {filename} to Gemini Files API...")
-                uploaded_file = self.upload_file_to_gemini(image_bytes, mime_type, filename)
-                _cache_blueprint(file_hash, {
-                    "gemini_file": uploaded_file,
-                    "mime_type": mime_type,
-                })
-
-        # Assemble multimodal contents
+        # Assemble multimodal contents using inline bytes instead of uploaded file reference
         contents: list[Any] = [types.Part.from_text(text=SYSTEM_INSTRUCTION)]
-        if uploaded_file:
-            contents.append(uploaded_file)
+        if image_bytes and mime_type:
+            contents.append(
+                types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+            )
         contents.append(types.Part.from_text(text=user_text))
 
         def _call() -> Any:
@@ -454,7 +383,7 @@ class LLMCodegenService:
                 "temperature": 0.0,
             }
             if is_thinking:
-                config_params["thinking_config"] = types.ThinkingConfig(thinking_level=types.ThinkingLevel.HIGH)
+                config_params["thinking_config"] = types.ThinkingConfig(thinking_level=types.ThinkingLevel.MEDIUM)
 
             return self.client.models.generate_content(
                 model=self.model,

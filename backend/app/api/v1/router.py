@@ -238,10 +238,10 @@ async def generate(
         raise HTTPException(status_code=500, detail={"error": {"message": str(exc)}})
 
     feature_map = {}
-    if image_bytes and mime_type and image:
+    if image_bytes and mime_type:
         try:
             feature_map = await asyncio.to_thread(
-                svc.audit_blueprint, image_bytes, mime_type, image.filename
+                svc.audit_blueprint, image_bytes, mime_type
             )
         except Exception:
             pass
@@ -255,7 +255,6 @@ async def generate(
             feature_map=feature_map,
             base_code=base_code,
             selection_context=selection_context,
-            filename=image.filename if image else "blueprint.pdf",
         )
     except Exception as exc:
         raise HTTPException(

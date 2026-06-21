@@ -145,7 +145,21 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
                 const formData = new FormData();
                 formData.append('prompt', prompt);
                 formData.append('model', selectedModel);
-                if (selectedFile) formData.append('image', selectedFile, selectedFile.name);
+                if (selectedFile) {
+                    let fileToUpload: File | Blob = selectedFile;
+                    let fileName = selectedFile.name;
+                    if (selectedFile.name.toLowerCase().endsWith('.pdf')) {
+                        try {
+                            const { rasterizePdfToWebP } = await import('@/utils/pdfRasterizer');
+                            fileToUpload = await rasterizePdfToWebP(selectedFile);
+                            fileName = selectedFile.name.replace(/\.pdf$/i, '.webp');
+                        } catch (err: any) {
+                            console.error('PDF conversion error:', err);
+                            toast.error(`PDF conversion failed: ${err.message || err}`);
+                        }
+                    }
+                    formData.append('image', fileToUpload, fileName);
+                }
                 if (isDemoMode) formData.append('demoMode', 'true');
 
                 res = await fetch('/api/v1/generate', {
@@ -224,7 +238,21 @@ export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boo
             const formData = new FormData();
             formData.append('prompt', targetMessage.content);
             formData.append('model', selectedModel);
-            if (file) formData.append('image', file, file.name);
+            if (file) {
+                let fileToUpload: File | Blob = file;
+                let fileName = file.name;
+                if (file.name.toLowerCase().endsWith('.pdf')) {
+                    try {
+                        const { rasterizePdfToWebP } = await import('@/utils/pdfRasterizer');
+                        fileToUpload = await rasterizePdfToWebP(file);
+                        fileName = file.name.replace(/\.pdf$/i, '.webp');
+                    } catch (err: any) {
+                        console.error('PDF conversion error:', err);
+                        toast.error(`PDF conversion failed: ${err.message || err}`);
+                    }
+                }
+                formData.append('image', fileToUpload, fileName);
+            }
             if (isDemoMode) formData.append('demoMode', 'true');
 
             const res = await fetch('/api/v1/generate', {

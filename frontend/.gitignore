@@ -47,3 +47,6 @@ Thumbs.db
 
 # misc
 *.pem
+
+# prisma generated client
+/prisma/generated/
