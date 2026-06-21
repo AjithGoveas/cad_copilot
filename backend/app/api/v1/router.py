@@ -177,8 +177,8 @@ def _resolve_mime(content_type: str, filename: str) -> str | None:
 def _sanitize_script(script: str) -> str:
     if not script:
         return script
-
-    script = re.sub(r'include\s*<BOSL2/.*?>;?', '', script, flags=re.I)
+    # Preserved: BOSL2 / MCAD includes are resolved in the browser worker VFS
+    # script = re.sub(r'include\s*<BOSL2/.*?>;?', '', script, flags=re.I)
 
     FN_CAP = 32
 

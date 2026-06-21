@@ -12,8 +12,12 @@ import os
 import re
 import time
 import hashlib
+import threading
 from pathlib import Path
 from typing import Any, Callable
+
+# Thread lock to serialize LRU cache access across async routes
+_CACHE_LOCK = threading.Lock()
 
 try:
     from google import genai
@@ -22,172 +26,164 @@ except ImportError:
     genai = None  # type: ignore
     types = None  # type: ignore
 
-
 # -- System Instructions -------------------------------------------------------
 
 AUDIT_INSTRUCTION = """
-# ROLE: Precision Mechanical Engineer & CAD Auditor
-Analyze the provided technical drawing with tolerance-aware rigor. Output ONLY a valid JSON feature-map matching the exact schema below.
+# ROLE: Precision Mechanical CAD Auditor & Spatial Topologist
+Analyze the provided multi-view technical drawing with tolerance-aware manufacturing rigor. Output ONLY a valid JSON feature-map matching the exact schema below.
 
 ## 1. COORDINATE SYSTEM CONSTRAINTS
-- **Origin**: Place (0,0,0) at the absolute leftmost-bottommost-foremost point of the entire part.
-- **Z-Axis**: Points UPWARD. All features stack along the +Z axis.
+- **Origin**: Place (0,0,0) at the absolute bottom-center of the primary datum body for symmetric stability.
+- **Z-Axis**: Points UPWARD (+Z). Face pockets, blind steps, and through-boring occur relative to this axis.
 - **Rationale**: State the exact placement logic in `origin_rationale`.
 
-## 2. FEATURE TAXONOMY (Choose ONE per feature)
-- **ADDITIVE**: `base_block`, `base_cylinder`, `secondary_block`, `secondary_cylinder`
-- **SUBTRACTIVE**: `hole_blind`, `hole_through`, `slot_rectangular`, `slot_curved`, `pocket_shallow`, `pocket_deep`
-- **EDGE**: `chamfer`, `fillet`, `thread`
+## 2. FEATURE TAXONOMY
+- **ADDITIVE**: `base_prismoid`, `base_cylinder`, `mounting_ear`, `alignment_boss`, `reinforcement_rib`
+- **SUBTRACTIVE**: `pocket_interior`, `step_shoulder`, `counterbore`, `hole_through`, `hole_blind`, `oring_groove`
+- **EDGE_MODIFIER**: `fillet_interior`, `chamfer_exterior`
 
-## 3. DIMENSIONAL EXTRACTION RULES
-- **Confidence**: `verified` (in 2+ views), `inferred` (1 view, implied by geometry), `uncertain` (ambiguous/missing, explain in notes).
-- **Angles**: Decompose non-aligned features into explicit X, Y, Z translation/rotation offsets.
-- **Z-Reference**: Every subtractive feature must specify `z_reference` as: `"top_of_feature"`, `"bottom_of_feature"`, or `"center_of_feature"`.
+## 3. MACHINING & DIMENSIONAL RULES
+- **Profile Decompositions**: For parts with asymmetric or multi-angular walls (e.g., specific draft angles like 33°, 40°, 22° shifts), capture the exact 2D coordinate paths outlining the perimeter.
+- **Z-Reference**: Every feature must declare an exact `z_reference`: `"bottom_of_feature"`, `"top_of_feature"`, or `"absolute_zero"`.
 
 ## 4. STRICT JSON SCHEMA
 ```json
 {
   "units": "mm",
   "origin_point": [0, 0, 0],
-  "origin_rationale": "Origin placed at bottom-center of base cylinder for symmetry.",
-  "envelope": { "x_min": 0, "x_max": 0, "y_min": 0, "y_max": 0, "z_min": 0, "z_max": 0 },
-  "primary_datum": { "id": "base_001", "type": "base_cylinder", "description": "" },
+  "origin_rationale": "Symmetric center anchoring of primary geometric envelope.",
+  "envelope": { "x_total": 116.50, "y_total": 78.61, "z_total": 14.00 },
+  "primary_datum": { "id": "body_main", "type": "base_prismoid" },
   "features": [
     {
-      "id": "base_001",
-      "type": "base_cylinder",
-      "description": "",
-      "dims": { "diameter": 50.0, "height": 100.0 },
+      "id": "body_main",
+      "type": "base_prismoid",
+      "description": "Main tapered outer housing with profile boundaries.",
+      "dims": { "length": 116.50, "width": 78.61, "height": 14.00, "corner_radius": 4.50 },
       "location": { "x": 0.0, "y": 0.0, "z": 0.0, "z_reference": "bottom_of_feature" },
       "is_subtractive": false,
       "parent_id": null,
-      "confidence": "verified",
-      "notes": ""
-    },
-    {
-      "id": "hole_001",
-      "type": "hole_through",
-      "description": "",
-      "dims": { "diameter": 10.0 },
-      "location": { "x": 0.0, "y": 0.0, "z": 0.0, "z_reference": "bottom_of_feature" },
-      "is_subtractive": true,
-      "parent_id": "base_001",
-      "confidence": "verified",
-      "notes": ""
+      "confidence": "verified"
     }
   ],
-  "patterns": [
-    {
-      "type": "radial",
-      "feature_ids": ["hole_001"],
-      "count": 1,
-      "spacing_degrees": 360.0,
-      "center": [0.0, 0.0, 0.0],
-      "rotation_axis": "Z"
-    }
-  ],
-  "ambiguities": []
+  "patterns": []
 }
 
+```
 
-## 5. VALIDATION RULES
-- Every subtractive feature MUST reference a valid parent_id.
-- All locations must reside within envelope bounds.
-- No duplicate `id` keys.
-- Do not output any markdown code fences or explanatory text. Return JSON only.
+## 5. SEVERE VALIDATION GATE
+
+* Do not output any markdown code fences, conversational prose, or warning summaries. Return pure, parsable JSON text only.
 """.strip()
 
-
 SYSTEM_INSTRUCTION = """
-# ROLE: Expert OpenSCAD Parametric CAD Engineer
-Generate production-grade, mathematically robust, parametric OpenSCAD code.
 
-## 🎯 GOLDEN RULES
-1. **Manifold Stability**: Every boolean operation must resolve cleanly without generating zero-thickness walls or self-intersections. Use `$fn = 32;` (strictly ≤ 32).
-2. **Parametric Stacking**: No hardcoded values. Derive downstream Z-coordinates explicitly from base heights (e.g., `body_z = shank_height;`).
-3. **Epsilon Protocol (`eps = 0.01`)**: 
-   - Apply `eps` to avoid Z-fighting on coplanar surfaces.
-   - For blind holes/cuts: Shift start point back by `eps/2` and extend depth by `eps`.
-   - For through-holes/cuts: Extend length by `2*eps` and offset starting plane by `eps` to pierce completely.
-4. **No Forbidden Operations**: Never use `minkowski()`, `hull()`, external libraries, or recursive custom functions.
+# ROLE: Elite Parametric OpenSCAD Engineer (BOSL2 Specialist)
 
-## 📦 COMPACT STRUCTURE
-Your output script must follow this exact structure:
+Synthesize production-grade, mathematically flawless, highly complex parametric OpenSCAD scripts utilizing the `BOSL2` architecture natively.
+
+## 🎯 ENGINEERING & COMPILER STABILITY RULES
+
+1. **Explicit Direction Vectors (CRITICAL FOR MANIFOLD COMPILER COMPLIANCE)**:
+* **NEVER** use the literal variables `X`, `Y`, or `Z` as values for the `orient` parameter in `cyl()`, `cuboid()`, or other BOSL2 modules. OpenSCAD treats these as unassigned variables and throws massive syntax warnings.
+* **ALWAYS** pass explicit 3D directional vector arrays for orientation flags:
+* Use `orient=[1,0,0]` instead of `X` (Axis points along X).
+* Use `orient=[0,1,0]` instead of `Y` (Axis points along Y).
+* Use `orient=[0,0,1]` instead of `Z` (Axis points along Z).
+
+
+
+
+2. **BOSL2 Attachment Architecture over Raw Math**:
+* Do not compute global spatial offsets manually for secondary features. Use `attach()` blocks and named anchors (`CENTER`, `TOP`, `BOTTOM`, `LEFT`, `RIGHT`) to chain geometry elements together reliably.
+* Use `prismoid()` for tapered outer boundaries, `cuboid()` for boxes, and `cyl()` for round boss holes. Set `anchor` properties explicitly (e.g., `anchor=BOTTOM+CENTER`).
+
+
+3. **The Epsilon Protocol (`eps = 0.02`)**:
+* High-fidelity WASM executions require clear splitting boundaries during `difference()` computations to prevent zero-thickness faces.
+* For all through-holes or cutouts: Extend total length/depth by `2*eps` and offset the translation axis backwards by `eps` relative to the matching surface to guarantee a perfect mechanical pierce.
+
+
+4. **WASM Constraints**:
+* Set `$fn = 32;` globally to maintain high client rendering frame rates. Do not use `minkowski()`, `hull()`, or recursive custom functions.
+
+
+
+## 📦 MANDATORY SCRIPT LAYOUT STRUCTURING
+
+Your output script must follow this structural template down to the exact block layouts:
 
 ```scad
 /* PLANNING:
-1. Base feature Z-range: Z ∈ [0, shank_height]
-2. Stacked feature Z-range: Z ∈ [shank_height, shank_height + body_height]
-3. Cuts/Epsilon offsets calculated relative to stack heights
+1. Outer boundary tracing and symmetry alignment
+2. Epsilon protocols for multi-axis subtractive milling
+3. Explicit [0,1,0]/[1,0,0] orientation vectors for cylindrical ears
 */
 
 $fn = 32;
 
 /* PARAMETERS_JSON
 {
-  "shank_diameter": { "type": "diameter", "center": [0,0,10], "axis": [0,0,1], "value": 20.0, "unit": "mm" },
-  "shank_height": { "type": "height", "p1": [0,0,0], "p2": [0,0,20], "value": 20.0, "unit": "mm", "direction": "+Z" }
+  "enclosure_length": { "type": "length", "value": 116.50, "unit": "mm" },
+  "enclosure_width": { "type": "width", "value": 78.61, "unit": "mm" },
+  "total_height": { "type": "height", "value": 14.00, "unit": "mm" },
+  "wall_thickness": { "type": "thickness", "value": 2.50, "unit": "mm" }
 }
 */
 
 // PARAMETERS_START
-shank_diameter = 20.0;
-shank_height = 20.0;
-body_diameter = 40.0;
-body_height = 30.0;
-eps = 0.01;
+enclosure_length = 116.50;
+enclosure_width = 78.61;
+total_height = 14.00;
+wall_thickness = 2.50;
+eps = 0.02;
 // PARAMETERS_END
 
-// @id: shank
+include <BOSL2/std.scad>
+include <BOSL2/transforms.scad>
+
+// @id: main_housing
 // @type: additive
-module shank() {
-    cylinder(d=shank_diameter, h=shank_height);
+module main_housing() {
+    prismoid(size1=[enclosure_length, enclosure_width], size2=[enclosure_length-2, enclosure_width-2], h=total_height, r=4.50, anchor=BOTTOM+CENTER);
 }
 
-// @id: body
-// @type: additive
-// @deps: [shank]
-module body() {
-    translate([0, 0, shank_height])
-        cylinder(d=body_diameter, h=body_height);
-}
-
-// @id: through_hole
+// @id: interior_milling
 // @type: subtractive
-// @deps: [shank, body]
-module through_hole() {
-    total_h = shank_height + body_height;
-    translate([0, 0, -eps])
-        cylinder(d=10, h=total_h + 2*eps);
+module interior_milling() {
+    translate([0, 0, wall_thickness])
+        cuboid([enclosure_length - (2*wall_thickness), enclosure_width - (2*wall_thickness), total_height - wall_thickness + eps], r=2.50, anchor=BOTTOM+CENTER);
 }
 
 // @id: part_root
 // @type: assembly
 module part_root() {
     difference() {
-        union() {
-            shank();
-            body();
-        }
-        through_hole()
+        main_housing();
+        interior_milling();
     }
 }
 
-part_root()
+part_root();
+
 ```
 
-**YOU ARE NOW READY TO GENERATE PRODUCTION-GRADE OPENSCAD CODE FOR WASM RENDERING.**
+**CRITICAL**: Output the entire structural OpenSCAD script text block. Do not add introductory chit-chat, setup remarks, or trailing explanations.
 """.strip()
 
-
 EDIT_SYSTEM_PROMPT = """
-# ROLE: Expert CAD Engineer & OpenSCAD Refinement Specialist
-You are an expert CAD engineer editing an existing OpenSCAD script.
-You must read the provided CURRENT CODE and modify it to fulfill the user's request.
-DO NOT generate a completely new model from scratch. Retain the existing structure, modules, and variable definitions (PARAMETERS_START/END block) unless specifically asked to remove them.
-Output the ENTIRE updated OpenSCAD script. Do not output partial snippets.
 
-Your script must follow the exact syntax, manifold stability rules, and $fn cap parameters. Use the existing modules as the assembly base inside part_root().
+# ROLE: Expert CAD Revision Engineer & Code Refinement Agent
+
+You are performing surgical geometric updates on an existing BOSL2-based OpenSCAD model.
+
+## ⚠️ IMMUTABILITY & ENGINE RULES
+
+1. **Never generate a completely new part from scratch**. Retain the foundational modules, structural identifiers, and base assets.
+2. **Variable Protection**: You are strictly FORBIDDEN from altering the string spelling of any variable keys inside the `// PARAMETERS_START` envelope. You may append new parameter keys or adjust their default right-hand numbers, but changing key names will break the user's React slider system completely.
+3. **Orientation Syntax Constraint**: Ensure all rotational adjustments use explicit direction vector arrays (e.g., `orient=[1,0,0]` or `orient=[0,1,0]`). Never pass unassigned alphabetic tokens like `X` or `Y` to orientation nodes.
+
+Output the ENTIRE updated OpenSCAD file text block containing the fixes. Partial code snippets are completely unacceptable.
 """.strip()
 
 
@@ -212,16 +208,17 @@ _BLUEPRINT_CACHE_KEYS: list[str] = []
 _MAX_CACHE_SIZE = 50
 
 def _cache_blueprint(file_hash: str, data: dict[str, Any]) -> None:
-    if file_hash in _BLUEPRINT_CACHE:
-        _BLUEPRINT_CACHE[file_hash].update(data)
-        return
-        
-    if len(_BLUEPRINT_CACHE_KEYS) >= _MAX_CACHE_SIZE:
-        oldest_key = _BLUEPRINT_CACHE_KEYS.pop(0)
-        _BLUEPRINT_CACHE.pop(oldest_key, None)
-        
-    _BLUEPRINT_CACHE[file_hash] = data
-    _BLUEPRINT_CACHE_KEYS.append(file_hash)
+    with _CACHE_LOCK:
+        if file_hash in _BLUEPRINT_CACHE:
+            _BLUEPRINT_CACHE[file_hash].update(data)
+            return
+            
+        if len(_BLUEPRINT_CACHE_KEYS) >= _MAX_CACHE_SIZE:
+            oldest_key = _BLUEPRINT_CACHE_KEYS.pop(0)
+            _BLUEPRINT_CACHE.pop(oldest_key, None)
+            
+        _BLUEPRINT_CACHE[file_hash] = data
+        _BLUEPRINT_CACHE_KEYS.append(file_hash)
 
 
 # -- Service -------------------------------------------------------------------
@@ -229,7 +226,7 @@ def _cache_blueprint(file_hash: str, data: dict[str, Any]) -> None:
 class LLMCodegenService:
     """Stateless AI orchestration service wrapping the Gemini API."""
 
-    MAX_RETRIES = 3
+    MAX_RETRIES = 1
 
     def __init__(self, model: str | None = None) -> None:
         if genai is None:
@@ -240,6 +237,7 @@ class LLMCodegenService:
         if not api_key:
             raise RuntimeError("GOOGLE_API_KEY environment variable not set.")
 
+        self.MAX_RETRIES = int(os.getenv("GENAI_MAX_RETRIES", "1"))
         self.client = genai.Client(api_key=api_key)
         self.model  = model or os.getenv("GENAI_MODEL", "gemini-3.1-flash-lite-preview")
 
@@ -315,10 +313,15 @@ class LLMCodegenService:
             return ""
 
         # Extract the largest code fence block if present
-        fences = _CODE_FENCE_RE.findall(raw)
-        text   = max(fences, key=len) if fences else raw
-
-        cleaned = text.strip().strip("`").strip()
+        cleaned = raw.strip()
+        fences = _CODE_FENCE_RE.findall(cleaned)
+        if fences:
+            cleaned = max(fences, key=len).strip()
+        else:
+            # Fallback: strip code blocks manually
+            cleaned = re.sub(r"^```(?:scad|openscad|text)?\s*", "", cleaned, flags=re.I)
+            cleaned = re.sub(r"```$", "", cleaned)
+            cleaned = cleaned.strip()
 
         # Fast-forward to the first recognizable OpenSCAD token
         m = _CODE_START_RE.search(cleaned)
@@ -341,14 +344,21 @@ class LLMCodegenService:
         """
         file_hash = hashlib.md5(image_bytes).hexdigest()
         
-        if file_hash in _BLUEPRINT_CACHE and "feature_map" in _BLUEPRINT_CACHE[file_hash]:
-            print(f"[audit] Cache hit for file hash {file_hash}")
-            return _BLUEPRINT_CACHE[file_hash]["feature_map"]
-            
         uploaded_file = None
-        if file_hash in _BLUEPRINT_CACHE and "gemini_file" in _BLUEPRINT_CACHE[file_hash]:
-            uploaded_file = _BLUEPRINT_CACHE[file_hash]["gemini_file"]
-        else:
+        cache_hit = False
+        with _CACHE_LOCK:
+            if file_hash in _BLUEPRINT_CACHE:
+                if "feature_map" in _BLUEPRINT_CACHE[file_hash]:
+                    cache_hit = True
+                else:
+                    uploaded_file = _BLUEPRINT_CACHE[file_hash].get("gemini_file")
+                    
+        if cache_hit:
+            print(f"[audit] Cache hit for file hash {file_hash}")
+            with _CACHE_LOCK:
+                return _BLUEPRINT_CACHE[file_hash]["feature_map"]
+
+        if not uploaded_file:
             print(f"[audit] Cache miss. Uploading {filename} to Gemini Files API...")
             uploaded_file = self.upload_file_to_gemini(image_bytes, mime_type, filename)
             _cache_blueprint(file_hash, {
@@ -357,16 +367,21 @@ class LLMCodegenService:
             })
             
         def _call() -> Any:
+            is_thinking = "3.5" in self.model
+            config_params = {
+                "temperature": 0.0,
+                "response_mime_type": "application/json",
+            }
+            if is_thinking:
+                config_params["thinking_config"] = types.ThinkingConfig(thinking_level=types.ThinkingLevel.HIGH)
+
             return self.client.models.generate_content(
                 model=self.model,
                 contents=[
                     types.Part.from_text(text=AUDIT_INSTRUCTION),
                     uploaded_file,
                 ],
-                config=types.GenerateContentConfig(
-                    temperature=0.0,
-                    response_mime_type="application/json",
-                ),
+                config=types.GenerateContentConfig(**config_params),
             )
 
         raw = self._call_with_retry(_call, "audit")
@@ -412,11 +427,14 @@ class LLMCodegenService:
 
         # Retrieve or upload file reference
         uploaded_file = None
-        if image_bytes and mime_type:
+        # Avoid file upload/reference when refining existing base_code to eliminate context drag
+        if not base_code and image_bytes and mime_type:
             file_hash = hashlib.md5(image_bytes).hexdigest()
-            if file_hash in _BLUEPRINT_CACHE and "gemini_file" in _BLUEPRINT_CACHE[file_hash]:
-                uploaded_file = _BLUEPRINT_CACHE[file_hash]["gemini_file"]
-            else:
+            with _CACHE_LOCK:
+                if file_hash in _BLUEPRINT_CACHE:
+                    uploaded_file = _BLUEPRINT_CACHE[file_hash].get("gemini_file")
+            
+            if not uploaded_file:
                 print(f"[codegen] Cache miss. Uploading {filename} to Gemini Files API...")
                 uploaded_file = self.upload_file_to_gemini(image_bytes, mime_type, filename)
                 _cache_blueprint(file_hash, {
@@ -431,10 +449,17 @@ class LLMCodegenService:
         contents.append(types.Part.from_text(text=user_text))
 
         def _call() -> Any:
+            is_thinking = "3.5" in self.model
+            config_params = {
+                "temperature": 0.0,
+            }
+            if is_thinking:
+                config_params["thinking_config"] = types.ThinkingConfig(thinking_level=types.ThinkingLevel.HIGH)
+
             return self.client.models.generate_content(
                 model=self.model,
                 contents=contents,
-                config=types.GenerateContentConfig(temperature=0.0),
+                config=types.GenerateContentConfig(**config_params),
             )
 
         raw = self._call_with_retry(_call, "codegen")
@@ -462,10 +487,17 @@ class LLMCodegenService:
         ]
 
         def _call() -> Any:
+            is_thinking = "3.5" in self.model
+            config_params = {
+                "temperature": 0.0,
+            }
+            if is_thinking:
+                config_params["thinking_config"] = types.ThinkingConfig(thinking_level=types.ThinkingLevel.MEDIUM)
+
             return self.client.models.generate_content(
                 model=self.model,
                 contents=contents,
-                config=types.GenerateContentConfig(temperature=0.0),
+                config=types.GenerateContentConfig(**config_params),
             )
 
         raw = self._call_with_retry(_call, "edit")

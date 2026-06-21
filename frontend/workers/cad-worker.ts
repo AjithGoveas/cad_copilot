@@ -89,7 +89,9 @@ async function ensureEngine(forceReload = false): Promise<OpenScadInstance> {
 
                     stderrCapture.push(text);
                 },
-                INITIAL_MEMORY: 512 * 1024 * 1024,
+                // High-performance allocation: Pre-allocating 1GB avoids runtime WASM memory resizing 
+                // penalties when building complex geometries or executing heavy BOSL2 operations.
+                INITIAL_MEMORY: 1024 * 1024 * 1024,
                 MAXIMUM_MEMORY: 2048 * 1024 * 1024,
                 ALLOW_MEMORY_GROWTH: 1,
             });
@@ -189,6 +191,86 @@ async function computeHash(text: string): Promise<string> {
     }
 }
 
+const loadedLibraries = new Set<string>();
+const loadingPromises = new Map<string, Promise<void>>();
+
+async function loadLibraryZip(fs: FS, libName: string): Promise<void> {
+    if (loadedLibraries.has(libName)) {
+        return;
+    }
+    if (loadingPromises.has(libName)) {
+        return loadingPromises.get(libName)!;
+    }
+
+    const promise = (async () => {
+        const fflateUrl = 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/+esm';
+        const { unzipSync } = await import(/* webpackIgnore: true */ fflateUrl);
+
+        const url = `/libraries/${libName}.zip`;
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch library zip from ${url}: ${response.statusText}`);
+        }
+        
+        const arrayBuffer = await response.arrayBuffer();
+        const zipData = new Uint8Array(arrayBuffer);
+        const unzipped = unzipSync(zipData) as Record<string, Uint8Array>;
+
+        for (const [filePath, fileData] of Object.entries(unzipped)) {
+            if (filePath.endsWith('/') || fileData.length === 0) {
+                continue;
+            }
+
+            let normalizedPath = filePath;
+            if (!filePath.startsWith(libName + '/')) {
+                normalizedPath = libName + '/' + filePath;
+            }
+
+            const parts = normalizedPath.split('/');
+            let currentDir = '';
+            for (let i = 0; i < parts.length - 1; i++) {
+                currentDir += '/' + parts[i];
+                try {
+                    if (!fs.analyzePath(currentDir).exists) {
+                        fs.mkdir(currentDir);
+                    }
+                } catch (e) {}
+            }
+
+            fs.writeFile('/' + normalizedPath, fileData);
+        }
+
+        loadedLibraries.add(libName);
+    })();
+
+    loadingPromises.set(libName, promise);
+    try {
+        await promise;
+    } finally {
+        loadingPromises.delete(libName);
+    }
+}
+
+async function resolveScriptLibraries(fs: FS, script: string): Promise<void> {
+    const cleanScript = script.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const includeRegex = /(?:include|use)\s*<([^>]+)>/g;
+    let match;
+    const loads: Promise<void>[] = [];
+
+    while ((match = includeRegex.exec(cleanScript)) !== null) {
+        const libraryPath = match[1];
+        if (libraryPath.startsWith('BOSL2/')) {
+            loads.push(loadLibraryZip(fs, 'BOSL2'));
+        } else if (libraryPath.startsWith('MCAD/')) {
+            loads.push(loadLibraryZip(fs, 'MCAD'));
+        }
+    }
+
+    if (loads.length > 0) {
+        await Promise.all(loads);
+    }
+}
+
 const geometryCache = new LRUCache<string, { buffer: ArrayBuffer }>(20);
 const INPUT_PATH  = '/input.scad';
 
@@ -218,11 +300,14 @@ async function exportToFile(
 
         stderrCapture.length = 0;
 
+        await resolveScriptLibraries(fs, script);
+
         try { if (fs.analyzePath(INPUT_PATH).exists) fs.unlink(INPUT_PATH); } catch (e) {}
         try { if (fs.analyzePath(outputPath).exists) fs.unlink(outputPath); } catch (e) {}
 
         fs.writeFile(INPUT_PATH, script);
 
+        // --enable=manifold uses the highly parallelized, faster mesh evaluation kernel instead of old CGAL operations
         const exitCode = instance.callMain(['--enable=manifold', '--enable=fast-csg', '-o', outputPath, INPUT_PATH]);
 
         if (exitCode !== 0 || !fs.analyzePath(outputPath).exists) {
@@ -298,6 +383,8 @@ async function compileCsg(
         fs = instance.FS;
 
         stderrCapture.length = 0;
+
+        await resolveScriptLibraries(fs, script);
 
         try { if (fs.analyzePath(INPUT_PATH).exists) fs.unlink(INPUT_PATH); } catch (e) {}
         try { if (fs.analyzePath(OUTPUT_PATH).exists) fs.unlink(OUTPUT_PATH); } catch (e) {}

@@ -28,7 +28,8 @@ type Selection = {
 const MODEL_OPTIONS = [
     { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', icon: 'sparkles' },
     { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', icon: 'box' },
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', icon: 'zap' }
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', icon: 'zap' },
+    {id: 'gemma-4-31b-it', name: 'Gemma 4 31B IT', icon: 'zap'}
 ];
 
 export default function HitlWorkspace({ isDemoMode = false }: { isDemoMode?: boolean }) {
