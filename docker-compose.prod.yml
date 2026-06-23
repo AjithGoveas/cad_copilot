@@ -32,7 +32,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: npx prisma db push
+    command: sh -c "npx prisma db push && npx prisma db seed"
 
   backend:
     build:
