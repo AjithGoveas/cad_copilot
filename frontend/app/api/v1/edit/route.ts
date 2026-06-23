@@ -71,7 +71,8 @@ export async function POST(req: NextRequest) {
 
         if (!backendRes.ok) {
             const errorText = await backendRes.text();
-            throw new Error(`AI Engine failed: ${errorText}`);
+            console.error(`[API/Edit] AI Backend failed with status ${backendRes.status}:`, errorText);
+            throw new Error('AI Engine failed to edit OpenSCAD script. Please try again.');
         }
 
         const data = await backendRes.json();

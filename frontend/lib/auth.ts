@@ -13,32 +13,40 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
-          throw new Error("Please enter an email and password");
+          throw new Error("Please enter email and password");
         }
 
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email }
-        });
+        try {
+          const user = await prisma.user.findUnique({
+            where: { email: credentials.email }
+          });
 
-        if (!user || !user.passwordHash) {
-          throw new Error("No user found with this email");
+          if (!user || !user.passwordHash) {
+            throw new Error("Invalid email or password");
+          }
+
+          const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
+          if (!isValid) {
+            throw new Error("Invalid email or password");
+          }
+
+          if (!user.isApproved) {
+            throw new Error("ACCOUNT_AWAITING_APPROVAL");
+          }
+
+          return {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            isApproved: user.isApproved,
+          };
+        } catch (err: any) {
+          if (err.message === "ACCOUNT_AWAITING_APPROVAL" || err.message === "Invalid email or password") {
+            throw err;
+          }
+          console.error("Auth Authorize Error:", err);
+          throw new Error("An unexpected error occurred. Please try again.");
         }
-
-        const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
-        if (!isValid) {
-          throw new Error("Incorrect password");
-        }
-
-        if (!user.isApproved) {
-          throw new Error("ACCOUNT_AWAITING_APPROVAL");
-        }
-
-        return {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          isApproved: user.isApproved,
-        };
       }
     })
   ],

@@ -15,7 +15,8 @@ type Props = {
     setPrompt: (v: string) => void;
     selectedModel: string;
     setSelectedModel: (v: string) => void;
-    modelOptions: { value: string; label: string }[];
+    modelOptions: { value: string; label: string; badge?: string }[];
+
     selectedFile: File | null;
     onFileChange: (f: File | null) => void;
     isGenerating: boolean;
@@ -82,9 +83,12 @@ export function ChatPanel({
                             className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 font-sans text-[12px] text-zinc-300 focus:outline-none focus:ring-1 focus:ring-blue-500/50 cursor-pointer shadow-sm hover:bg-zinc-800 transition-colors"
                         >
                             {modelOptions.map((o) => (
-                                <option key={o.value} value={o.value}>{o.label}</option>
+                                <option key={o.value} value={o.value}>
+                                    {o.badge === 'thinking' ? '🧠 ' : o.badge === 'fast' ? '⚡ ' : ''}{o.label}
+                                </option>
                             ))}
                         </select>
+
                         <button onClick={() => signOut({ callbackUrl: '/app/login' })} className="flex size-10 items-center justify-center rounded-xl text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition-all">
                             <LogOut size={18} />
                         </button>

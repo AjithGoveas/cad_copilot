@@ -22,9 +22,14 @@ export function reconstructHistory<T extends HistoryItemInput>(items: T[]): (T &
       itemCode = item.openscadCode || '';
       activeCode = itemCode;
     } else if (item.patchDelta) {
-      const result = applyPatch(activeCode, item.patchDelta);
+      let result = applyPatch(activeCode, item.patchDelta);
       if (result === false) {
-        throw new Error(`Patch sync collision: Corrupt historical delta trail encountered at item ${item.id}`);
+        // Retry with a higher fuzzFactor to tolerate minor changes or parameter updates
+        result = applyPatch(activeCode, item.patchDelta, { fuzzFactor: 3 });
+      }
+      if (result === false) {
+        console.warn(`[reconstructHistory] Patch failed to apply for item ${item.id}. Falling back to previous step code.`);
+        result = activeCode;
       }
       itemCode = result;
       activeCode = itemCode;

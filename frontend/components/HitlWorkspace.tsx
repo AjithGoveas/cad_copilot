@@ -29,11 +29,16 @@ type Selection = {
 };
 
 const MODEL_OPTIONS = [
-    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', icon: 'sparkles' },
-    { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', icon: 'box' },
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', icon: 'zap' },
-    {id: 'gemma-4-31b-it', name: 'Gemma 4 31B IT', icon: 'zap'}
+    // ── Thinking models (primary) ─────────────────────────────────────────
+    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', badge: 'thinking' },
+    { id: 'gemini-2.5-flash',      name: 'Gemini 2.5 Flash',      badge: 'thinking' },
+    { id: 'gemini-2.5-pro',        name: 'Gemini 2.5 Pro',        badge: 'thinking' },
+    { id: 'gemini-3.5-flash',      name: 'Gemini 3.5 Flash',      badge: 'thinking' },
+    { id: 'gemini-3.5-pro',        name: 'Gemini 3.5 Pro',        badge: 'thinking' },
+    // ── Fallback (simple / non-reasoning) ────────────────────────────────
+    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', badge: 'fast' },
 ];
+
 
 export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDemoMode?: boolean; sessionId?: string }) {
     const router = useRouter();
@@ -57,6 +62,7 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
     const [prompt, setPrompt] = useState('');
     const [messages, setMessages] = useState<Message[]>([]);
     const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0].id);
+
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
 
@@ -68,9 +74,10 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
     const [shareToken, setShareToken] = useState<string | null>(null);
     const [targetPoint, setTargetPoint] = useState<[number, number, number] | null>(null);
 
-    const modelValueOptions = useMemo(() => 
-        MODEL_OPTIONS.map(m => ({ value: m.id, label: m.name })), 
+    const modelValueOptions = useMemo(() =>
+        MODEL_OPTIONS.map(m => ({ value: m.id, label: m.name, badge: m.badge })),
     []);
+
 
     // ── Demo Limits State ─────────────────────────────────────────────────────
     const [promptCount, setPromptCount] = useState(0);

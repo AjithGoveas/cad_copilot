@@ -150,7 +150,8 @@ def export_to_dxf_bytes(shape, dxf_mode: str) -> bytes:
 
 _ALLOWED_MIME_PREFIXES = ("image/",)
 _ALLOWED_MIME_EXACT   = {"application/pdf"}
-_DEFAULT_MODEL = os.getenv("GENAI_MODEL", "gemini-3.1-flash-lite")
+_DEFAULT_MODEL = os.getenv("GENAI_MODEL", "gemini-2.5-flash-lite")
+
 
 
 def _extract_parameters(script: str) -> dict[str, Any]:
@@ -484,110 +485,6 @@ async def generate_gcode(
             except Exception:
                 pass
 
-
-@router.post("/gcode", response_model=GCodeResponse)
-async def generate_gcode(
-    request: Request,
-    file: UploadFile | None = File(None),
-    job_request: str | None = Form(None)
-) -> GCodeResponse:
-    import tempfile
-    import pathlib
-
-    content_type = request.headers.get("content-type", "")
-    temp_path = None
-
-    if "multipart/form-data" in content_type:
-        if not file or not job_request:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"message": "Form data must include 'file' and 'job_request'."}}
-            )
-        try:
-            job_request_data = json.loads(job_request)
-            cam_request = CAMJobRequest(**job_request_data)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"message": f"Invalid CAMJobRequest JSON payload: {exc}"}}
-            )
-
-        file_bytes = await file.read()
-        filename = file.filename or ""
-
-        is_step = False
-        if filename.endswith((".step", ".stp")):
-            is_step = True
-        elif file_bytes.startswith(b"ISO-10303-21") or b"HEADER;" in file_bytes[:500]:
-            is_step = True
-
-        if is_step:
-            with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as tf:
-                tf.write(file_bytes)
-                temp_path = pathlib.Path(tf.name)
-            cam_request.step_file_path = str(temp_path)
-        else:
-            try:
-                cam_request.csg_tree = file_bytes.decode("utf-8")
-            except Exception:
-                with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as tf:
-                    tf.write(file_bytes)
-                    temp_path = pathlib.Path(tf.name)
-                cam_request.step_file_path = str(temp_path)
-    else:
-        try:
-            body_bytes = await request.body()
-            body_json = json.loads(body_bytes)
-            cam_request = CAMJobRequest(**body_json)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"message": f"Invalid JSON body: {exc}"}}
-            )
-    try:
-        if not cam_request.csg_tree and cam_request.step_file_path:
-            pass
-        else:
-            if not cam_request.csg_tree:
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"message": "Either 'csg_tree' or 'step_file_path' must be provided."}}
-                )
-            if not temp_path:
-                with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as tf:
-                    temp_path = pathlib.Path(tf.name)
-
-        result = await asyncio.to_thread(
-            _process_gcode,
-            cam_request.model_dump(),
-            cam_request.step_file_path,
-            str(temp_path) if temp_path else None
-        )
-
-        gcode_content = result.get("gcode", "")
-        if gcode_content.startswith("; ERROR:"):
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"message": gcode_content[8:].strip()}}
-            )
-
-        return GCodeResponse(
-            gcode=gcode_content,
-            toolpaths=result.get("toolpaths", [])
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"message": f"G-code generation failed: {exc}"}}
-        )
-    finally:
-        if temp_path and temp_path.exists():
-            try:
-                temp_path.unlink()
-            except Exception:
-                pass
 
 
 @router.get("/material-defaults")

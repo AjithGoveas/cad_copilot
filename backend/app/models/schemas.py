@@ -19,7 +19,9 @@ class EditRequest(StrictModel):
     prompt: str
     current_code: str
     target_point: list[float] | None = None
-    model: str = "gemini-3.1-flash-lite"
+    model: str = "gemini-2.5-flash-lite"
+
+
 
 
 class StepRequest(StrictModel):
