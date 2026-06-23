@@ -1,7 +1,6 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import HitlWorkspace from '@/components/HitlWorkspace';
 
 export default async function Page() {
   const session = await getServerSession(authOptions);
@@ -10,5 +9,5 @@ export default async function Page() {
     redirect("/admin");
   }
 
-  return <HitlWorkspace />;
+  return null;
 }

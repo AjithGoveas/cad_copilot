@@ -1,7 +1,6 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import HitlWorkspace from '@/components/HitlWorkspace';
 
 type Props = {
   params: Promise<{
@@ -16,7 +15,5 @@ export default async function Page({ params }: Props) {
     redirect("/admin");
   }
 
-  const { sessionId } = await params;
-
-  return <HitlWorkspace sessionId={sessionId} />;
+  return null;
 }

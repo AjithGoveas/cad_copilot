@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
 import ViewerClient from './ViewerClient';
+import { reconstructHistory } from '@/utils/history';
 
 type Props = {
 	params: Promise<{
@@ -28,7 +29,8 @@ export default async function Page({ params }: Props) {
 		notFound();
 	}
 
-	const latestSnapshot = session.historyItems[session.historyItems.length - 1];
+	const reconstructedItems = reconstructHistory(session.historyItems);
+	const latestSnapshot = reconstructedItems[reconstructedItems.length - 1];
 
 	return (
 		<ViewerClient

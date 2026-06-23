@@ -43,11 +43,13 @@ model HistoryItem {
   session        Session    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   actionType     ActionType
   prompt         String?
-  openscadCode   String
+  openscadCode   String?
+  patchDelta     String?
+  isFullSnapshot Boolean    @default(false)
   parametersJson Json?
   targetPoint    Float[]
   metaData       Json?
   createdAt      DateTime   @default(now())
 
-  @@index([sessionId])
+  @@index([sessionId, createdAt])
 }

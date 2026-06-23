@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { reconstructHistory } from '@/utils/history';
 
 type Props = {
     params: Promise<{
@@ -37,7 +38,12 @@ export async function GET(req: NextRequest, { params }: Props) {
             return NextResponse.json({ error: 'Session not found' }, { status: 404 });
         }
 
-        return NextResponse.json(session);
+        const reconstructedItems = reconstructHistory(session.historyItems);
+
+        return NextResponse.json({
+            ...session,
+            historyItems: reconstructedItems,
+        });
     } catch (err: any) {
         console.error('[API/History/Session] Error:', err);
         return NextResponse.json(

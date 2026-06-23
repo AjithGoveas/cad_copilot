@@ -169,7 +169,8 @@ export const StlMesh = memo(function StlMesh({ id, url, isSelected, onMeshClick 
                 onPointerOut={() => setHovered(false)}
                 onClick={(e) => {
                     e.stopPropagation();
-                    onMeshClick?.([e.point.x, e.point.y, e.point.z]);
+                    const localPt = e.object.worldToLocal(e.point.clone());
+                    onMeshClick?.([localPt.x, localPt.y, localPt.z]);
                 }}
                 onPointerMissed={() => onMeshClick?.(null)}
             >

@@ -46,7 +46,11 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
             if (!res.ok) throw new Error('Failed to fetch session timeline.');
             return res.json();
         },
-        { revalidateOnFocus: false }
+        { 
+            revalidateOnFocus: false,
+            keepPreviousData: true,
+            dedupingInterval: 5000
+        }
     );
 
     // ── State ────────────────────────────────────────────────────────────────
@@ -216,9 +220,9 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
                     let fileName = selectedFile.name;
                     if (selectedFile.name.toLowerCase().endsWith('.pdf')) {
                         try {
-                            const { rasterizePdfToWebP } = await import('@/utils/pdfRasterizer');
-                            fileToUpload = await rasterizePdfToWebP(selectedFile);
-                            fileName = selectedFile.name.replace(/\.pdf$/i, '.webp');
+                            const { rasterizePdfToPng } = await import('@/utils/pdfRasterizer');
+                            fileToUpload = await rasterizePdfToPng(selectedFile);
+                            fileName = selectedFile.name.replace(/\.pdf$/i, '.png');
                         } catch (err: any) {
                             console.error('PDF conversion error:', err);
                             toast.error(`PDF conversion failed: ${err.message || err}`);
@@ -317,9 +321,9 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
                 let fileName = file.name;
                 if (file.name.toLowerCase().endsWith('.pdf')) {
                     try {
-                        const { rasterizePdfToWebP } = await import('@/utils/pdfRasterizer');
-                        fileToUpload = await rasterizePdfToWebP(file);
-                        fileName = file.name.replace(/\.pdf$/i, '.webp');
+                        const { rasterizePdfToPng } = await import('@/utils/pdfRasterizer');
+                        fileToUpload = await rasterizePdfToPng(file);
+                        fileName = file.name.replace(/\.pdf$/i, '.png');
                     } catch (err: any) {
                         console.error('PDF conversion error:', err);
                         toast.error(`PDF conversion failed: ${err.message || err}`);

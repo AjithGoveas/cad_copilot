@@ -141,12 +141,13 @@ function normaliseThrown(err: unknown): Error & { details?: string; classified?:
     return e;
 }
 
-class LRUCache<K, V> {
-    private max: number;
+class LRUCache<K, V extends { buffer: ArrayBuffer }> {
+    private maxBytes: number;
+    private currentBytes = 0;
     private cache: Map<K, V>;
 
-    constructor(max = 20) {
-        this.max = max;
+    constructor(maxBytes = 128 * 1024 * 1024) { // 128 MB RAM Bound
+        this.maxBytes = maxBytes;
         this.cache = new Map();
     }
 
@@ -160,15 +161,28 @@ class LRUCache<K, V> {
     }
 
     set(key: K, val: V): void {
-        if (this.cache.has(key)) {
-            this.cache.delete(key);
-        } else if (this.cache.size >= this.max) {
+        const incomingSize = val.buffer.byteLength;
+
+        // Evict items dynamically until the buffer array clears out enough space
+        while (this.currentBytes + incomingSize > this.maxBytes && this.cache.size > 0) {
             const firstKey = this.cache.keys().next().value;
             if (firstKey !== undefined) {
+                const evictedItem = this.cache.get(firstKey);
+                if (evictedItem) {
+                    this.currentBytes -= evictedItem.buffer.byteLength;
+                }
                 this.cache.delete(firstKey);
             }
         }
+
+        if (this.cache.has(key)) {
+            const existingItem = this.cache.get(key);
+            if (existingItem) this.currentBytes -= existingItem.buffer.byteLength;
+            this.cache.delete(key);
+        }
+
         this.cache.set(key, val);
+        this.currentBytes += incomingSize;
     }
 }
 
@@ -271,7 +285,7 @@ async function resolveScriptLibraries(fs: FS, script: string): Promise<void> {
     }
 }
 
-const geometryCache = new LRUCache<string, { buffer: ArrayBuffer }>(20);
+const geometryCache = new LRUCache<string, { buffer: ArrayBuffer }>();
 const INPUT_PATH  = '/input.scad';
 
 async function exportToFile(
@@ -308,7 +322,11 @@ async function exportToFile(
         fs.writeFile(INPUT_PATH, script);
 
         // --enable=manifold uses the highly parallelized, faster mesh evaluation kernel instead of old CGAL operations
-        const exitCode = instance.callMain(['--enable=manifold', '--enable=fast-csg', '-o', outputPath, INPUT_PATH]);
+        // Manifold kernel does not support 2D projections (dxf blueprint mode), so we bypass it to prevent CGAL fallback overhead.
+        const args = format === 'dxf' && dxfMode === 'blueprint'
+            ? ['--enable=fast-csg', '-o', outputPath, INPUT_PATH]
+            : ['--enable=manifold', '--enable=fast-csg', '-o', outputPath, INPUT_PATH];
+        const exitCode = instance.callMain(args);
 
         if (exitCode !== 0 || !fs.analyzePath(outputPath).exists) {
             const details = stderrCapture.join('\n');
@@ -378,7 +396,7 @@ async function compileCsg(
     const OUTPUT_PATH = '/output.csg';
 
     try {
-        const engine = await ensureEngine(true);
+        const engine = await ensureEngine(false);
         const instance = engine.getInstance();
         fs = instance.FS;
 
@@ -407,7 +425,6 @@ async function compileCsg(
     } catch (err: unknown) {
         throw normaliseThrown(err);
     } finally {
-        enginePromise = null;
         if (fs) {
             const filesToCleanup = [
                 INPUT_PATH,

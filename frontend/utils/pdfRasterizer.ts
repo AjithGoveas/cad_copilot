@@ -6,11 +6,11 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * Rasterizes the first page of a PDF file to a WebP image Blob at 300 DPI.
+ * Rasterizes the first page of a PDF file to a PNG image Blob at 300 DPI.
  * @param file The PDF File object upload
  * @param dpi The target DPI (defaults to 300 for blueprint precision)
  */
-export async function rasterizePdfToWebP(file: File, dpi = 300): Promise<Blob> {
+export async function rasterizePdfToPng(file: File, dpi = 300): Promise<Blob> {
   const arrayBuffer = await file.arrayBuffer();
   
   // Load the document using PDF.js
@@ -45,14 +45,14 @@ export async function rasterizePdfToWebP(file: File, dpi = 300): Promise<Blob> {
   };
   await page.render(renderContext).promise;
 
-  // Convert canvas contents to a high-quality WebP blob (95% quality)
+  // Convert canvas contents to a high-quality PNG blob
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) {
         resolve(blob);
       } else {
-        reject(new Error('Canvas conversion to WebP Blob failed.'));
+        reject(new Error('Canvas conversion to PNG Blob failed.'));
       }
-    }, 'image/webp', 0.95);
+    }, 'image/png');
   });
 }

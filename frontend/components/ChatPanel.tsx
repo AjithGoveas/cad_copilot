@@ -102,6 +102,14 @@ export function ChatPanel({
                                 onUpdateFile={(file) => onUpdateMessageFile?.(m.id, file)}
                             />
                         ))}
+                        {isGenerating && (
+                            <ChatBubble
+                                id="generating-placeholder"
+                                role="assistant"
+                                content=""
+                                isGenerating={true}
+                            />
+                        )}
                         <div ref={bottomRef} className="h-4" />
                     </div>
                 </div>

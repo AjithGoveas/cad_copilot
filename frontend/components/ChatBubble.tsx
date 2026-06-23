@@ -4,6 +4,7 @@ import { useState, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Sparkles, Copy, Check, FileText, ChevronDown, Upload, Trash2, Plus, Binary, Image } from 'lucide-react';
 import { toast } from 'sonner';
+import styles from './ChatBubble.module.css';
 
 type Props = {
     id: string;
@@ -12,9 +13,10 @@ type Props = {
     attachment?: { name: string; file?: File };
     uploadedFiles?: File[];
     onUpdateFile?: (file: File | null) => void;
+    isGenerating?: boolean;
 };
 
-export function ChatBubble({ role, content, attachment, uploadedFiles = [], onUpdateFile }: Props) {
+export function ChatBubble({ role, content, attachment, uploadedFiles = [], onUpdateFile, isGenerating = false }: Props) {
     const [copied, setCopied] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -37,8 +39,12 @@ export function ChatBubble({ role, content, attachment, uploadedFiles = [], onUp
                 
                 {/* Assistant Avatar */}
                 {!isUser && (
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-blue-400 mt-1">
-                        <Sparkles size={14} />
+                    <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full mt-1 transition-all duration-500 ${
+                        isGenerating 
+                            ? 'bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-600 text-white shadow-[0_0_10px_rgba(99,102,241,0.5)]' 
+                            : 'bg-blue-500/10 text-blue-400'
+                    }`}>
+                        <Sparkles size={14} className={isGenerating ? 'animate-pulse' : ''} />
                     </div>
                 )}
 
@@ -121,48 +127,56 @@ export function ChatBubble({ role, content, attachment, uploadedFiles = [], onUp
                     )}
 
                     {/* Main Message Bubble */}
-                    <div className={`relative transition-all duration-300 ${
-                        isUser 
-                            ? 'bg-zinc-800 border border-zinc-700/50 text-zinc-100 rounded-3xl rounded-br-sm px-4 py-2.5 shadow-sm text-[14px]' 
-                            : 'bg-transparent text-zinc-200 rounded-lg py-1 text-[14px]' // TIGHTER PADDING FOR AI
-                    }`}>
-                        <div className="prose prose-invert prose-sm max-w-none break-words leading-normal">
-                            <ReactMarkdown
-                                components={{
-                                    code({ className, children, ...props }) {
-                                        const lang = /language-(\w+)/.exec(className || '')?.[1];
-                                        const codeStr = String(children).replace(/\n$/, '');
-
-                                        if (lang) {
-                                            return (
-                                                <div className="relative my-3 overflow-hidden rounded-lg border border-zinc-700/50 bg-[#1e1e20] shadow-sm">
-                                                    <div className="flex items-center justify-between bg-zinc-800/40 px-3 py-1.5">
-                                                        <span className="font-mono text-[10px] font-medium text-zinc-400 uppercase tracking-wider">{lang}</span>
-                                                        <button 
-                                                            onClick={() => copyCode(codeStr)} 
-                                                            className="flex items-center gap-1.5 font-sans font-medium text-[10px] text-zinc-400 hover:text-zinc-200 transition-colors rounded hover:bg-zinc-700/50 px-2 py-1"
-                                                        >
-                                                            {copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
-                                                            {copied ? 'Copied' : 'Copy'}
-                                                        </button>
-                                                    </div>
-                                                    <pre className="overflow-x-auto p-3 font-mono text-[12px] leading-relaxed custom-scrollbar text-zinc-300">
-                                                        <code className={className} {...props}>{children}</code>
-                                                    </pre>
-                                                </div>
-                                            );
-                                        }
-                                        return <code className="rounded text-[12px] bg-zinc-800/60 px-1.5 py-0.5 font-mono text-blue-300" {...props}>{children}</code>;
-                                    },
-                                    p: ({ children }) => <p className="mb-2.5 last:mb-0">{children}</p>,
-                                    ul: ({ children }) => <ul className="mb-2.5 list-disc pl-4 marker:text-zinc-500 space-y-0.5">{children}</ul>,
-                                    ol: ({ children }) => <ol className="mb-2.5 list-decimal pl-4 marker:text-zinc-500 space-y-0.5">{children}</ol>,
-                                }}
-                            >
-                                {content || '…'}
-                            </ReactMarkdown>
+                    {isGenerating ? (
+                        <div className={`flex flex-col gap-2.5 w-full max-w-[240px] p-2 ${styles.geminiLoadingCard}`}>
+                            <div className={`h-3 w-[90%] rounded-full opacity-85 ${styles.geminiShimmer}`} />
+                            <div className={`h-3 w-[100%] rounded-full opacity-70 ${styles.geminiShimmer}`} />
+                            <div className={`h-3 w-[65%] rounded-full opacity-50 ${styles.geminiShimmer}`} />
                         </div>
-                    </div>
+                    ) : (
+                        <div className={`relative transition-all duration-300 ${
+                            isUser 
+                                ? 'bg-zinc-800 border border-zinc-700/50 text-zinc-100 rounded-3xl rounded-br-sm px-4 py-2.5 shadow-sm text-[14px]' 
+                                : 'bg-transparent text-zinc-200 rounded-lg py-1 text-[14px]' // TIGHTER PADDING FOR AI
+                        }`}>
+                            <div className="prose prose-invert prose-sm max-w-none break-words leading-normal">
+                                <ReactMarkdown
+                                    components={{
+                                        code({ className, children, ...props }) {
+                                            const lang = /language-(\w+)/.exec(className || '')?.[1];
+                                            const codeStr = String(children).replace(/\n$/, '');
+
+                                            if (lang) {
+                                                return (
+                                                    <div className="relative my-3 overflow-hidden rounded-lg border border-zinc-700/50 bg-[#1e1e20] shadow-sm">
+                                                        <div className="flex items-center justify-between bg-zinc-800/40 px-3 py-1.5">
+                                                            <span className="font-mono text-[10px] font-medium text-zinc-400 uppercase tracking-wider">{lang}</span>
+                                                            <button 
+                                                                onClick={() => copyCode(codeStr)} 
+                                                                className="flex items-center gap-1.5 font-sans font-medium text-[10px] text-zinc-400 hover:text-zinc-200 transition-colors rounded hover:bg-zinc-700/50 px-2 py-1"
+                                                            >
+                                                                {copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
+                                                                {copied ? 'Copied' : 'Copy'}
+                                                            </button>
+                                                        </div>
+                                                        <pre className="overflow-x-auto p-3 font-mono text-[12px] leading-relaxed custom-scrollbar text-zinc-300">
+                                                            <code className={className} {...props}>{children}</code>
+                                                        </pre>
+                                                    </div>
+                                                );
+                                            }
+                                            return <code className="rounded text-[12px] bg-zinc-800/60 px-1.5 py-0.5 font-mono text-blue-300" {...props}>{children}</code>;
+                                        },
+                                        p: ({ children }) => <p className="mb-2.5 last:mb-0">{children}</p>,
+                                        ul: ({ children }) => <ul className="mb-2.5 list-disc pl-4 marker:text-zinc-500 space-y-0.5">{children}</ul>,
+                                        ol: ({ children }) => <ol className="mb-2.5 list-decimal pl-4 marker:text-zinc-500 space-y-0.5">{children}</ol>,
+                                    }}
+                                >
+                                    {content || '…'}
+                                </ReactMarkdown>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

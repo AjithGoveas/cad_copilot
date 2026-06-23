@@ -100,6 +100,7 @@ export async function POST(req: NextRequest) {
                             actionType: 'GENERATE',
                             prompt,
                             openscadCode: cadCode,
+                            isFullSnapshot: true,
                             parametersJson: parameters,
                         },
                     },

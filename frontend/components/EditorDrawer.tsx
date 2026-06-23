@@ -2,8 +2,8 @@
 
 import dynamic from 'next/dynamic';
 import { ChevronLeft, ChevronRight, Code2, Sliders, Play, Copy, Check, Download, History, AlertTriangle, Share2, Box } from 'lucide-react';
-import { type ReactNode, useState, memo } from 'react';
-import useSWR from 'swr';
+import { type ReactNode, useState, memo, useCallback } from 'react';
+import useSWR, { mutate } from 'swr';
 import { Spinner } from '@/components/ui/spinner';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSeparator, DropdownMenuPortal, DropdownMenuSubTrigger } from './ui/dropdown-menu';
 
@@ -44,6 +44,10 @@ export const EditorDrawer = memo(function EditorDrawer({
     const { data: activeSessionData, isLoading: isLoadingActiveSession } = useSWR<any>(
         activeTab === 'history' && sessionId ? `/api/history/session/${sessionId}` : null, fetcher, { revalidateOnFocus: false }
     );
+
+    const prefetchSession = useCallback((targetSessionId: string) => {
+        mutate(`/api/history/session/${targetSessionId}`, fetcher(`/api/history/session/${targetSessionId}`), { revalidate: false });
+    }, []);
 
     const handleCopyCode = async () => {
         if (!cadScript) return;
@@ -172,6 +176,7 @@ export const EditorDrawer = memo(function EditorDrawer({
                                         <button 
                                             key={session.id} 
                                             onClick={() => onLoadSession?.(session.id)} 
+                                            onMouseEnter={() => prefetchSession(session.id)}
                                             className="group flex items-start gap-3 rounded-md border border-[#3C3C3C] bg-[#1E1E1E] p-3.5 text-left hover:border-[#007ACC]/50 hover:bg-[#252526] transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 cursor-pointer w-full"
                                         >
                                             <div className="mt-1 size-1.5 rounded-full bg-[#A6A6A6] group-hover:bg-[#007ACC] transition-colors" />

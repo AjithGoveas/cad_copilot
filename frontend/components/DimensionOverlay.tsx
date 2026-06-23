@@ -2,24 +2,18 @@
 
 import { useMemo } from 'react';
 import { Html, Line } from '@react-three/drei';
-import { Vector3, Quaternion, Euler } from 'three';
+import { Vector3, Quaternion } from 'three';
 import { MoveVertical, Circle, Scaling } from 'lucide-react';
+import type { AnnotationEntry } from '@/lib/openscadParameters';
 
-type AnnotationEntry = {
-    type?: 'diameter' | 'height' | 'chamfer';
-    p1?: [number, number, number];
-    p2?: [number, number, number];
-    center?: [number, number, number];
-    axis?: [number, number, number];
-    value?: number;
-    offset?: number;
-    radius?: number;
-};
+// Re-export so callers keep a single source of truth
+export type { AnnotationEntry };
 
 type DimensionOverlayProps = {
     annotations: Record<string, AnnotationEntry>;
     activeParameter: string | null;
     geometryScale: number;
+    /** Raw OpenSCAD-space centroid of the loaded mesh (from Three.js <Center>). */
     geometryCenter: [number, number, number];
     onSelectParameter?: (key: string | null) => void;
     onHoverParameter?: (key: string | null) => void;
@@ -36,164 +30,287 @@ type DimensionProps = {
     onHover?: (hovered: boolean) => void;
 };
 
-// --- Math Helpers ---
-const transformCoords = (pt: [number, number, number], center: [number, number, number], scale: number): Vector3 => {
-    return new Vector3(
+// ---------------------------------------------------------------------------
+// Coordinate helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a raw OpenSCAD-space point into Three.js world space.
+ *
+ * `inferAnnotations` emits coordinates in the OpenSCAD model coordinate frame.
+ * Three.js `<Center>` offsets the mesh so its centroid sits at origin.
+ * We replicate that same offset here so dimension markers align with the mesh.
+ *
+ * `scale` is kept at 1.0 (the mesh geometry is already at real-mm scale);
+ * the parameter exists so future DPI / unit changes are one-liners.
+ */
+const toWorld = (
+    pt: [number, number, number],
+    center: [number, number, number],
+    scale: number
+): Vector3 =>
+    new Vector3(
         (pt[0] - center[0]) * scale,
         (pt[1] - center[1]) * scale,
         (pt[2] - center[2]) * scale
     );
-};
 
-const getAlignmentQuaternion = (dir: Vector3) => {
+const getAlignmentQuaternion = (dir: Vector3): Quaternion => {
     const up = new Vector3(0, 1, 0);
     const axis = new Vector3().crossVectors(up, dir).normalize();
-    const radians = Math.acos(up.dot(dir));
+    const dot = Math.min(1, Math.max(-1, up.dot(dir)));
+    const radians = Math.acos(dot);
+    if (axis.lengthSq() < 1e-10) {
+        // dir is parallel to up – use identity or 180° flip
+        return dot > 0 ? new Quaternion() : new Quaternion(1, 0, 0, 0);
+    }
     return new Quaternion().setFromAxisAngle(axis, radians);
 };
 
-// --- Shared UI Components ---
-const DimensionLabel = ({ label, value, unit, icon: Icon, isActive, hasAnyActive, color, onClick }: any) => {
+// ---------------------------------------------------------------------------
+// Annotation validity guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true for annotations that have enough geometric data to render
+ * a meaningful dimension.  Filters out:
+ *   - eps-only or all-zero entries (flagged by the parser)
+ *   - degenerate entries (p1≈p2, value≈0)
+ *   - entries with explicit zero values
+ *   - diameter annotations with no center
+ *   - height annotations with no p1/p2
+ */
+function isRenderable(a: AnnotationEntry): boolean {
+    if (a.isEps || a.isDegenerate) return false;
+
+    const type = a.type ?? (a.p1 && a.p2 ? 'height' : a.center ? 'diameter' : 'height');
+
+    if (type === 'diameter' || type === 'chamfer') {
+        if (!a.center) return false;
+        const val = a.value ?? (a.radius ? a.radius * 2 : 0);
+        if (!val || val <= 0) return false;
+    } else {
+        // height
+        if (!a.p1 || !a.p2) return false;
+        const dist = Math.hypot(
+            a.p2[0] - a.p1[0],
+            a.p2[1] - a.p1[1],
+            a.p2[2] - a.p1[2]
+        );
+        if (dist < 1e-4) return false;                    // coincident endpoints
+        if (a.value !== undefined && a.value <= 0) return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Shared label chip
+// ---------------------------------------------------------------------------
+
+const DimensionLabel = ({
+    label, value, unit, icon: Icon,
+    isActive, hasAnyActive, color, onClick,
+}: {
+    label: string; value: string; unit: string; icon: any;
+    isActive: boolean; hasAnyActive: boolean; color: string;
+    onClick?: () => void;
+}) => {
     const opacity = isActive ? 1 : hasAnyActive ? 0.15 : 0.55;
-    
     return (
         <div
             onClick={(e) => { e.stopPropagation(); onClick?.(); }}
             className="group"
             style={{
-                background: isActive ? 'rgba(24, 24, 27, 0.95)' : 'rgba(24, 24, 27, 0.45)',
-                border: `1px solid ${isActive ? color : 'rgba(63, 63, 70, 0.2)'}`,
+                background: isActive ? 'rgba(24,24,27,0.95)' : 'rgba(24,24,27,0.45)',
+                border: `1px solid ${isActive ? color : 'rgba(63,63,70,0.2)'}`,
                 borderRadius: isActive ? '8px' : '6px',
                 padding: isActive ? '6px 10px' : '4px 6px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: isActive ? '8px' : '4px',
                 backdropFilter: 'blur(4px)',
-                boxShadow: isActive ? `0 0 20px ${color}40, 0 4px 12px rgba(0,0,0,0.5)` : '0 2px 6px rgba(0,0,0,0.2)',
-                transform: isActive ? 'translate(-50%, -50%) scale(1.05)' : 'translate(-50%, -50%) scale(0.85)',
-                transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+                boxShadow: isActive
+                    ? `0 0 20px ${color}40, 0 4px 12px rgba(0,0,0,0.5)`
+                    : '0 2px 6px rgba(0,0,0,0.2)',
+                transform: isActive
+                    ? 'translate(-50%,-50%) scale(1.05)'
+                    : 'translate(-50%,-50%) scale(0.85)',
+                transition: 'all 0.2s cubic-bezier(0.16,1,0.3,1)',
                 whiteSpace: 'nowrap',
                 cursor: 'pointer',
                 pointerEvents: 'auto',
-                opacity: opacity,
+                opacity,
+                userSelect: 'none',
             }}
         >
             <Icon size={isActive ? 12 : 10} color={isActive ? color : '#71717a'} />
             {isActive && (
                 <>
-                    <span style={{ color: color, fontSize: '11px', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', fontFamily: 'system-ui, sans-serif' }}>
+                    <span style={{
+                        color, fontSize: '11px', fontWeight: 600,
+                        letterSpacing: '0.05em', textTransform: 'uppercase',
+                        fontFamily: 'system-ui, sans-serif',
+                    }}>
                         {label.replace(/_/g, ' ')}
                     </span>
-                    <div style={{ width: '1px', height: '12px', background: 'rgba(82, 82, 91, 0.6)' }} />
+                    <div style={{ width: '1px', height: '12px', background: 'rgba(82,82,91,0.6)' }} />
                 </>
             )}
-            <span style={{ color: isActive ? '#f4f4f5' : '#d4d4d8', fontSize: isActive ? '12px' : '10px', fontWeight: isActive ? 700 : 500, fontFamily: 'monospace' }}>
-                {value} <span style={{ color: '#71717a', fontSize: isActive ? '10px' : '8px' }}>{unit}</span>
+            <span style={{
+                color: isActive ? '#f4f4f5' : '#d4d4d8',
+                fontSize: isActive ? '12px' : '10px',
+                fontWeight: isActive ? 700 : 500,
+                fontFamily: 'monospace',
+            }}>
+                {value}{' '}
+                <span style={{ color: '#71717a', fontSize: isActive ? '10px' : '8px' }}>{unit}</span>
             </span>
         </div>
     );
 };
 
-// --- 3D Dimension Components ---
+// ---------------------------------------------------------------------------
+// Dimension sub-components
+// ---------------------------------------------------------------------------
 
-function HeightDimension({ label, annotation, scale, center, isActive, hasAnyActive, onClick, onHover }: DimensionProps) {
-    const p1 = annotation.p1 || [0, 0, 0];
-    const p2 = annotation.p2 || [0, 0, 0];
+function HeightDimension({
+    label, annotation, scale, center,
+    isActive, hasAnyActive, onClick, onHover,
+}: DimensionProps) {
+    // At this point isRenderable() has already verified p1/p2 exist and are valid
+    const p1 = annotation.p1!;
+    const p2 = annotation.p2!;
 
-    const { transformedP1, transformedP2, midpoint, realDistance, dir, quatP1, quatP2 } = useMemo(() => {
-        const tP1 = transformCoords(p1, center, scale);
-        const tP2 = transformCoords(p2, center, scale);
+    const { wP1, wP2, midpoint, displayValue, quatP1, quatP2 } = useMemo(() => {
+        const tP1 = toWorld(p1, center, scale);
+        const tP2 = toWorld(p2, center, scale);
         const mid = new Vector3().addVectors(tP1, tP2).multiplyScalar(0.5);
-        const dist = new Vector3(...p1).distanceTo(new Vector3(...p2));
-        
+
+        // Use the authoritative param value rather than back-computing from coords
+        const displayMm = annotation.value !== undefined
+            ? annotation.value
+            : tP1.distanceTo(tP2) / scale; // fallback: raw 3-D distance
+
         const direction = new Vector3().subVectors(tP2, tP1).normalize();
-        
-        // Quaternions to point cones outward
         const qP1 = getAlignmentQuaternion(direction.clone().negate());
         const qP2 = getAlignmentQuaternion(direction);
 
-        return { transformedP1: tP1, transformedP2: tP2, midpoint: mid, realDistance: dist, dir: direction, quatP1: qP1, quatP2: qP2 };
-    }, [p1, p2, center, scale]);
+        return { wP1: tP1, wP2: tP2, midpoint: mid, displayValue: displayMm, quatP1: qP1, quatP2: qP2 };
+    }, [p1, p2, center, scale, annotation.value]);
 
     const color = isActive ? '#60a5fa' : '#71717a';
     const opacity = isActive ? 0.95 : hasAnyActive ? 0.1 : 0.35;
     const arrowSize = isActive ? 0.08 : 0.04;
+    // Hitbox length: distance in world units
+    const hitboxLen = wP1.distanceTo(wP2);
 
     return (
         <group>
-            {/* Main Line */}
-            <Line points={[transformedP1, transformedP2]} color={color} lineWidth={isActive ? 3 : 1.5} transparent opacity={opacity} depthTest={false} />
-            
-            {/* End Arrows */}
-            <mesh position={transformedP1} quaternion={quatP1}>
+            <Line
+                points={[wP1, wP2]}
+                color={color} lineWidth={isActive ? 3 : 1.5}
+                transparent opacity={opacity} depthTest={false}
+            />
+            <mesh position={wP1} quaternion={quatP1}>
                 <coneGeometry args={[arrowSize * 0.4, arrowSize, 16]} />
                 <meshBasicMaterial color={color} transparent opacity={opacity} depthTest={false} />
             </mesh>
-            <mesh position={transformedP2} quaternion={quatP2}>
+            <mesh position={wP2} quaternion={quatP2}>
                 <coneGeometry args={[arrowSize * 0.4, arrowSize, 16]} />
                 <meshBasicMaterial color={color} transparent opacity={opacity} depthTest={false} />
             </mesh>
 
-            {/* Interaction Hitbox */}
-            <mesh 
+            {/* Invisible hitbox along the axis */}
+            <mesh
                 position={midpoint}
                 onClick={(e) => { e.stopPropagation(); onClick?.(); }}
                 onPointerOver={(e) => { e.stopPropagation(); onHover?.(true); }}
                 onPointerOut={() => onHover?.(false)}
                 visible={false}
             >
-                <cylinderGeometry args={[0.2, 0.2, realDistance * scale, 8]} />
+                <cylinderGeometry args={[0.2, 0.2, Math.max(hitboxLen, 0.01), 8]} />
             </mesh>
-            
-            {/* Label */}
+
             <Html position={midpoint} zIndexRange={[100, 0]}>
-                <DimensionLabel label={label} value={realDistance.toFixed(2)} unit="mm" icon={MoveVertical} isActive={isActive} hasAnyActive={hasAnyActive} color="#60a5fa" onClick={onClick} />
+                <DimensionLabel
+                    label={label}
+                    value={displayValue.toFixed(2)}
+                    unit="mm"
+                    icon={MoveVertical}
+                    isActive={isActive}
+                    hasAnyActive={hasAnyActive}
+                    color="#60a5fa"
+                    onClick={onClick}
+                />
             </Html>
         </group>
     );
 }
 
-function DiameterDimension({ label, annotation, scale, center, isActive, hasAnyActive, onClick, onHover }: DimensionProps) {
-    const c = annotation.center || [0, 0, 0];
-    const axis = annotation.axis || [0, 0, 1];
-    const value = annotation.value || (annotation.radius ? annotation.radius * 2 : 10.0);
+function DiameterDimension({
+    label, annotation, scale, center,
+    isActive, hasAnyActive, onClick, onHover,
+}: DimensionProps) {
+    const c = annotation.center!;
+    const axis = annotation.axis ?? [0, 0, 1];
+    // annotation.value is the diameter in mm (already validated by isRenderable)
+    const diameterMm = annotation.value!;
+    const radiusWorld = (diameterMm / 2) * scale;
 
-    const transformedCenter = useMemo(() => transformCoords(c, center, scale), [c, center, scale]);
-    const radius = (value / 2) * scale;
+    const transformedCenter = useMemo(
+        () => toWorld(c, center, scale),
+        [c, center, scale]
+    );
 
     const { circlePoints, crosshairs, quat } = useMemo(() => {
-        const points: Vector3[] = [];
         const dir = new Vector3(...axis).normalize();
-        
-        // Generate Circle
+
+        // Build an orthonormal basis perpendicular to the cylinder axis
         const temp = Math.abs(dir.y) < 0.9 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0);
         const u = new Vector3().crossVectors(dir, temp).normalize();
         const v = new Vector3().crossVectors(dir, u).normalize();
 
+        const points: Vector3[] = [];
         for (let i = 0; i <= 64; i++) {
             const theta = (i / 64) * Math.PI * 2;
-            points.push(new Vector3().copy(transformedCenter).addScaledVector(u, radius * Math.cos(theta)).addScaledVector(v, radius * Math.sin(theta)));
+            points.push(
+                new Vector3()
+                    .copy(transformedCenter)
+                    .addScaledVector(u, radiusWorld * Math.cos(theta))
+                    .addScaledVector(v, radiusWorld * Math.sin(theta))
+            );
         }
 
-        // Generate Crosshairs (+)
-        const crossSize = radius * 0.2;
+        const crossSize = radiusWorld * 0.2;
         const cross = [
-            [new Vector3().copy(transformedCenter).addScaledVector(u, -crossSize), new Vector3().copy(transformedCenter).addScaledVector(u, crossSize)],
-            [new Vector3().copy(transformedCenter).addScaledVector(v, -crossSize), new Vector3().copy(transformedCenter).addScaledVector(v, crossSize)]
+            [new Vector3().copy(transformedCenter).addScaledVector(u, -crossSize),
+             new Vector3().copy(transformedCenter).addScaledVector(u, crossSize)],
+            [new Vector3().copy(transformedCenter).addScaledVector(v, -crossSize),
+             new Vector3().copy(transformedCenter).addScaledVector(v, crossSize)],
         ];
 
         return { circlePoints: points, crosshairs: cross, quat: getAlignmentQuaternion(dir) };
-    }, [transformedCenter, axis, radius]);
+    }, [transformedCenter, axis, radiusWorld]);
 
-    const color = isActive ? '#a78bfa' : '#71717a'; // Purple for diameters, gray for inactive
+    const color = isActive ? '#a78bfa' : '#71717a';
     const opacity = isActive ? 0.95 : hasAnyActive ? 0.1 : 0.35;
+    const labelPos = useMemo(
+        () => new Vector3(
+            transformedCenter.x + radiusWorld * 0.8,
+            transformedCenter.y,
+            transformedCenter.z
+        ),
+        [transformedCenter, radiusWorld]
+    );
 
     return (
         <group>
-            {/* Circle Outline */}
-            <Line points={circlePoints} color={color} lineWidth={isActive ? 3 : 1.5} transparent opacity={opacity} depthTest={false} />
-            
-            {/* Center Crosshairs */}
+            <Line
+                points={circlePoints}
+                color={color} lineWidth={isActive ? 3 : 1.5}
+                transparent opacity={opacity} depthTest={false}
+            />
+
             {isActive && (
                 <>
                     <Line points={crosshairs[0]} color={color} lineWidth={1} transparent opacity={opacity * 0.7} depthTest={false} />
@@ -201,40 +318,54 @@ function DiameterDimension({ label, annotation, scale, center, isActive, hasAnyA
                 </>
             )}
 
-            {/* Interaction Mesh */}
-            <mesh 
-                position={transformedCenter} 
+            <mesh
+                position={transformedCenter}
                 quaternion={quat}
                 onClick={(e) => { e.stopPropagation(); onClick?.(); }}
                 onPointerOver={(e) => { e.stopPropagation(); onHover?.(true); }}
                 onPointerOut={() => onHover?.(false)}
                 visible={false}
             >
-                <cylinderGeometry args={[radius, radius, 0.1, 32]} />
+                <cylinderGeometry args={[radiusWorld, radiusWorld, 0.1, 32]} />
             </mesh>
 
-            {/* Label (Pushed slightly outward along the X axis so it doesn't sit dead center) */}
-            <Html position={new Vector3(transformedCenter.x + radius*0.8, transformedCenter.y, transformedCenter.z)} zIndexRange={[100, 0]}>
-                <DimensionLabel label={label} value={`Ø ${value.toFixed(2)}`} unit="mm" icon={Circle} isActive={isActive} hasAnyActive={hasAnyActive} color="#a78bfa" onClick={onClick} />
+            <Html position={labelPos} zIndexRange={[100, 0]}>
+                <DimensionLabel
+                    label={label}
+                    value={`Ø ${diameterMm.toFixed(2)}`}
+                    unit="mm"
+                    icon={Circle}
+                    isActive={isActive}
+                    hasAnyActive={hasAnyActive}
+                    color="#a78bfa"
+                    onClick={onClick}
+                />
             </Html>
         </group>
     );
 }
 
-function ChamferDimension({ label, annotation, scale, center, isActive, hasAnyActive, onClick, onHover }: DimensionProps) {
-    const c = annotation.center || [0, 0, 0];
-    const axis = annotation.axis || [0, 0, 1];
-    const radius = (annotation.radius || 10.0) * scale;
-    const offset = annotation.offset || 1.0;
+function ChamferDimension({
+    label, annotation, scale, center,
+    isActive, hasAnyActive, onClick, onHover,
+}: DimensionProps) {
+    const c = annotation.center ?? [0, 0, 0];
+    const axis = annotation.axis ?? [0, 0, 1];
+    const radiusMm = annotation.radius ?? (annotation.value ? annotation.value / 2 : 10);
+    const offset = annotation.offset ?? 1.0;
 
-    const transformedCenter = useMemo(() => transformCoords(c, center, scale), [c, center, scale]);
+    const transformedCenter = useMemo(
+        () => toWorld(c as [number,number,number], center, scale),
+        [c, center, scale]
+    );
     const quaternion = useMemo(() => {
         const dir = new Vector3(...axis).normalize();
         return new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), dir);
     }, [axis]);
 
-    const color = isActive ? '#34d399' : '#71717a'; // Emerald for active, gray for inactive
+    const color = isActive ? '#34d399' : '#71717a';
     const opacity = isActive ? 0.95 : hasAnyActive ? 0.1 : 0.35;
+    const radiusWorld = radiusMm * scale;
 
     return (
         <group>
@@ -246,34 +377,67 @@ function ChamferDimension({ label, annotation, scale, center, isActive, hasAnyAc
                 onPointerOut={() => onHover?.(false)}
                 renderOrder={1000}
             >
-                <torusGeometry args={[radius, isActive ? 0.02 : 0.012, 16, 64]} />
+                <torusGeometry args={[radiusWorld, isActive ? 0.02 : 0.012, 16, 64]} />
                 <meshBasicMaterial color={isActive ? '#ffffff' : color} transparent opacity={opacity} depthTest={false} />
             </mesh>
 
             <Html position={transformedCenter} zIndexRange={[100, 0]}>
-                <DimensionLabel label={label} value={offset.toFixed(2)} unit="mm" icon={Scaling} isActive={isActive} hasAnyActive={hasAnyActive} color="#34d399" onClick={onClick} />
+                <DimensionLabel
+                    label={label}
+                    value={offset.toFixed(2)}
+                    unit="mm"
+                    icon={Scaling}
+                    isActive={isActive}
+                    hasAnyActive={hasAnyActive}
+                    color="#34d399"
+                    onClick={onClick}
+                />
             </Html>
         </group>
     );
 }
 
-export function DimensionOverlay({ annotations, activeParameter, geometryScale, geometryCenter, onSelectParameter, onHoverParameter }: DimensionOverlayProps) {
+// ---------------------------------------------------------------------------
+// Main export
+// ---------------------------------------------------------------------------
+
+export function DimensionOverlay({
+    annotations, activeParameter, geometryScale, geometryCenter,
+    onSelectParameter, onHoverParameter,
+}: DimensionOverlayProps) {
     if (!annotations) return null;
     const hasAnyActive = activeParameter !== null;
 
+    // Filter at render time as a second safety net (parser already prunes, but
+    // explicit PARAMETERS_JSON blocks bypass the parser, so we guard here too).
+    const renderableEntries = useMemo(
+        () => Object.entries(annotations).filter(([, a]) => isRenderable(a)),
+        [annotations]
+    );
+
+    if (renderableEntries.length === 0) return null;
+
     return (
         <group>
-            {Object.entries(annotations).map(([key, annotation]) => {
-                const type = annotation.type || (annotation.p1 && annotation.p2 ? 'height' : (annotation.center ? 'diameter' : 'height'));
-                const props = {
-                    label: key, annotation, scale: geometryScale, center: geometryCenter,
-                    isActive: key === activeParameter, hasAnyActive,
+            {renderableEntries.map(([key, annotation]) => {
+                const type = annotation.type
+                    ?? (annotation.p1 && annotation.p2 ? 'height'
+                        : annotation.center ? 'diameter'
+                        : 'height');
+
+                const props: DimensionProps = {
+                    label: key,
+                    annotation,
+                    scale: geometryScale,
+                    center: geometryCenter,
+                    isActive: key === activeParameter,
+                    hasAnyActive,
                     onClick: () => onSelectParameter?.(key),
-                    onHover: (hovered: boolean) => onHoverParameter?.(hovered ? key : null)
+                    onHover: (hovered) => onHoverParameter?.(hovered ? key : null),
                 };
 
                 if (type === 'diameter') return <DiameterDimension key={key} {...props} />;
-                if (type === 'chamfer') return <ChamferDimension key={key} {...props} />;
+                if (type === 'chamfer')  return <ChamferDimension  key={key} {...props} />;
                 return <HeightDimension key={key} {...props} />;
             })}
         </group>

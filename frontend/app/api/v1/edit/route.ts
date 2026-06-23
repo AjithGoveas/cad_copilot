@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { createPatch } from 'diff';
 
 const PYTHON_BACKEND_URL = process.env.FASTAPI_URL;
 
@@ -81,12 +82,14 @@ export async function POST(req: NextRequest) {
 
         // Persist history item if authenticated and in session
         if (!isDemoMode && authSession?.user?.id && sessionId) {
+            const delta = createPatch('script.scad', currentCode, cadCode);
             await prisma.historyItem.create({
                 data: {
                     sessionId,
                     actionType: 'EDIT',
                     prompt,
-                    openscadCode: cadCode,
+                    patchDelta: delta,
+                    isFullSnapshot: false,
                     parametersJson: parameters,
                     targetPoint: targetPoint || [],
                 },

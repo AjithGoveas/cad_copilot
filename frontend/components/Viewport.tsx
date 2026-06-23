@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState, useMemo, memo, useCallback, useRef } from 'react';
+import { Suspense, useState, useMemo, memo, useCallback, useRef, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Stage, ContactShadows, Center } from '@react-three/drei';
 import { MousePointer2, Cuboid, Upload } from 'lucide-react';
@@ -9,6 +9,7 @@ import { DimensionOverlay } from './DimensionOverlay';
 import { CameraRig } from './CameraRig';
 import { findNearestParameter } from '@/lib/openscadParameters';
 import { QuickEditOverlay } from './QuickEditOverlay';
+import styles from './Viewport.module.css';
 
 type Selection = { id: string; point: [number, number, number] };
 
@@ -32,6 +33,27 @@ export const Viewport = memo(function Viewport({
     const [geometryScale, setGeometryScale] = useState<number>(1.0);
     const [geometrySize, setGeometrySize] = useState<[number, number, number]>([10, 10, 10]);
     const [quickEdit, setQuickEdit] = useState<{ key: string; point: [number, number, number] } | null>(null);
+
+    const [loadingStep, setLoadingStep] = useState(0);
+    const loadingSteps = useMemo(() => [
+        "Initializing OpenSCAD-WASM engine...",
+        "Analyzing 2D blueprint specifications...",
+        "Calculating extrusion boundaries...",
+        "Executing constructive solid geometry (CSG)...",
+        "Triangulating 3D mesh vertices...",
+        "Optimizing WebAssembly engine buffers..."
+    ], []);
+
+    useEffect(() => {
+        if (!isCompiling) {
+            setLoadingStep(0);
+            return;
+        }
+        const interval = setInterval(() => {
+            setLoadingStep((prev) => (prev + 1) % loadingSteps.length);
+        }, 1800);
+        return () => clearInterval(interval);
+    }, [isCompiling, loadingSteps.length]);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -100,31 +122,35 @@ export const Viewport = memo(function Viewport({
                                 />
                             ))}
                         </Center>
+
+                        {annotations && (
+                            <DimensionOverlay
+                                annotations={annotations} activeParameter={activeFeatureId}
+                                geometryScale={1.0} geometryCenter={geometryCenter}
+                                onSelectParameter={onSelectParameter} onHoverParameter={onHoverParameter}
+                            />
+                        )}
+
+                        {quickEdit && annotations[quickEdit.key] && (
+                            <QuickEditOverlay
+                                position={[
+                                    quickEdit.point[0] - geometryCenter[0],
+                                    quickEdit.point[1] - geometryCenter[1],
+                                    quickEdit.point[2] - geometryCenter[2]
+                                ]}
+                                parameterKey={quickEdit.key}
+                                annotation={annotations[quickEdit.key]}
+                                onUpdate={(key, val) => {
+                                    onParameterUpdate?.(key, val);
+                                    setQuickEdit(null);
+                                }}
+                                onCancel={() => setQuickEdit(null)}
+                            />
+                        )}
                     </Stage>
                 </Suspense>
 
                 <CameraRig activeParameter={activeFeatureId} annotations={annotations} geometryInfo={geometryInfo} />
-                
-                {geometryInfo && (
-                    <DimensionOverlay
-                        annotations={annotations} activeParameter={activeFeatureId}
-                        geometryScale={geometryScale} geometryCenter={geometryCenter}
-                        onSelectParameter={onSelectParameter} onHoverParameter={onHoverParameter}
-                    />
-                )}
-                
-                {quickEdit && annotations[quickEdit.key] && (
-                    <QuickEditOverlay
-                        position={quickEdit.point}
-                        parameterKey={quickEdit.key}
-                        annotation={annotations[quickEdit.key]}
-                        onUpdate={(key, val) => {
-                            onParameterUpdate?.(key, val);
-                            setQuickEdit(null);
-                        }}
-                        onCancel={() => setQuickEdit(null)}
-                    />
-                )}
 
                 {targetPoint && (
                     <group position={targetPoint}>
@@ -233,6 +259,34 @@ export const Viewport = memo(function Viewport({
                                 Import STEP File
                             </button>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {/* Premium Loading State / Transition Animation */}
+            {!hasGeometry && isCompiling && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-6 z-10 bg-[#09090b]/40 backdrop-blur-[2px] animate-in fade-in duration-500">
+                    <div className="flex flex-col items-center max-w-md text-center">
+                        <div className="relative flex size-24 items-center justify-center mb-6">
+                            {/* Inner spinning gradient border */}
+                            <div className={`absolute inset-0 rounded-full bg-gradient-to-tr from-blue-500 via-purple-500 to-pink-500 p-[2px] shadow-[0_0_20px_rgba(139,92,246,0.25)] ${styles.geminiSpin}`}>
+                                <div className="h-full w-full rounded-full bg-[#09090b]" />
+                            </div>
+                            {/* Soft glowing ambient drop shadow */}
+                            <div className="absolute -inset-1 rounded-full bg-gradient-to-tr from-blue-500/10 via-purple-500/10 to-pink-500/10 blur-md" />
+                            {/* Bouncing wireframe cube in the center */}
+                            <div className="relative animate-bounce duration-1000">
+                                <Cuboid size={28} strokeWidth={1.5} className="text-indigo-300 drop-shadow-[0_0_8px_rgba(129,140,248,0.5)]" />
+                            </div>
+                        </div>
+                        <h4 className={`font-sans text-xs font-bold tracking-widest uppercase mb-2.5 ${styles.geminiGradientText}`}>
+                            Synthesizing Mesh
+                        </h4>
+                        <div className="h-4 flex items-center justify-center">
+                            <p className="font-sans text-[11px] text-zinc-400 font-medium tracking-wide animate-pulse transition-all duration-300">
+                                {loadingSteps[loadingStep]}
+                            </p>
+                        </div>
                     </div>
                 </div>
             )}
