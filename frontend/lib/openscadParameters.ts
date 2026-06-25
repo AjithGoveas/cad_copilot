@@ -43,8 +43,9 @@ export function extractStructuredAnnotations(script: string): OpenScadAnnotation
 		const params = extractOpenScadParameters(script);
 		const numParams: Record<string, number> = {};
 		for (const [k, v] of Object.entries(params)) {
-			if (typeof v === 'number') {
-				numParams[k] = v;
+			const rawVal = (v && typeof v === 'object' && 'value' in v) ? (v as any).value : v;
+			if (typeof rawVal === 'number') {
+				numParams[k] = rawVal;
 			}
 		}
 		const inferred = inferAnnotations(script, numParams);
@@ -54,8 +55,13 @@ export function extractStructuredAnnotations(script: string): OpenScadAnnotation
 				...merged[key],
 				...entry,
 			};
-			if (params[key] !== undefined && typeof params[key] === 'number') {
-				merged[key].value = params[key] as number;
+			if (params[key] !== undefined) {
+				const rawVal = (params[key] && typeof params[key] === 'object' && 'value' in (params[key] as any)) 
+					? (params[key] as any).value 
+					: params[key];
+				if (typeof rawVal === 'number') {
+					merged[key].value = rawVal;
+				}
 			}
 		}
 		// Final pass: prune any fully-degenerate or eps-only entries that
@@ -925,30 +931,75 @@ export function extractOpenScadParameters(script: string): OpenScadParameters {
 	
 	const searchContent = taggedMatch ? taggedMatch[0] : script;
 
-	// 2. Parse variable assignments: name = value;
-	// We look for assignments that aren't inside modules or functions.
-	// To keep it simple but effective, we'll split by lines and look for start-of-line assignments.
+	// 2. Parse variable assignments: name = value; // comments
 	const lines = searchContent.split('\n');
 	
 	for (const line of lines) {
-		// Ignore comments and empty lines
 		const trimmed = line.trim();
 		if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('/*')) continue;
 
-		// Regex for: name = value; // optional comment
-		// Supports numbers (including decimals), booleans (true/false), and basic strings
-		const match = /^\s*([a-zA-Z_]\w*)\s*=\s*([^;]+);/.exec(line);
+		const match = /^\s*([a-zA-Z_]\w*)\s*=\s*([^;]+);\s*(?:\/\/\s*(.*))?/.exec(line);
 		if (match) {
 			const name  = match[1];
 			const rawVal = match[2].trim();
+			const comment = match[3];
 			
 			const parsed = parseValue(rawVal);
 			if (parsed !== undefined) {
-				params[name] = parsed;
+				let min: number | undefined;
+				let max: number | undefined;
+				let step: number | undefined;
+				let label: string | undefined;
+				let unit: string | undefined;
+				const rawComment = comment ? comment.trim() : undefined;
+
+				if (comment) {
+					const commentTrimmed = comment.trim();
+					const rangeMatch = /\[\s*(-?\d+(?:\.\d+)?)\s*:\s*(?:(-?\d+(?:\.\d+)?)\s*:\s*)?(-?\d+(?:\.\d+)?)\s*\]/.exec(commentTrimmed);
+					if (rangeMatch) {
+						const firstVal = parseFloat(rangeMatch[1]);
+						const secondVal = rangeMatch[2] ? parseFloat(rangeMatch[2]) : undefined;
+						const thirdVal = parseFloat(rangeMatch[3]);
+
+						if (secondVal !== undefined) {
+							min = firstVal;
+							step = secondVal;
+							max = thirdVal;
+						} else {
+							min = firstVal;
+							max = thirdVal;
+						}
+
+						const remaining = commentTrimmed.replace(rangeMatch[0], '').trim();
+						if (remaining) {
+							label = remaining;
+							const unitMatch = /\(([^)]+)\)$/.exec(remaining);
+							if (unitMatch) {
+								unit = unitMatch[1];
+								label = remaining.replace(unitMatch[0], '').trim();
+							}
+						}
+					} else if (commentTrimmed) {
+						label = commentTrimmed;
+					}
+				}
+
+				if (min !== undefined || max !== undefined || label !== undefined || rawComment !== undefined) {
+					params[name] = {
+						value: parsed,
+						min,
+						max,
+						step,
+						label,
+						unit,
+						rawComment
+					};
+				} else {
+					params[name] = parsed;
+				}
 			}
 		}
 
-		// Optimization: if we're not in a tagged block, stop at the first module/function/block
 		if (!taggedMatch && /^\s*(module|function|if|for|include|use|\{|\[)/.test(line)) {
 			break; 
 		}
@@ -963,7 +1014,13 @@ export function extractOpenScadParameters(script: string): OpenScadParameters {
  */
 export function injectOpenScadParameters(script: string, parameters: OpenScadParameters): string {
 	const bindingLines = Object.entries(parameters)
-		.map(([k, v]) => `${k} = ${formatValue(v)};`)
+		.map(([k, v]) => {
+			const valStr = formatValue(v);
+			const comment = (v && typeof v === 'object' && 'rawComment' in v && (v as any).rawComment) 
+				? `  // ${(v as any).rawComment}` 
+				: '';
+			return `${k} = ${valStr};${comment}`;
+		})
 		.sort()
 		.join('\n');
 	
@@ -975,9 +1032,6 @@ export function injectOpenScadParameters(script: string, parameters: OpenScadPar
 		return script.replace(taggedRE, newBlock);
 	}
 
-	// If no block exists, prepend it to the top of the file
-	// But first, try to remove the raw variable assignments we might have found 
-	// to avoid double-definition warnings if the script had them naked at the top.
 	let cleanedScript = script;
 	Object.keys(parameters).forEach(key => {
 		const lineRE = new RegExp(`^\\s*${escapeRE(key)}\\s*=\\s*[^;]+;\\s*(\\/\\/.*)?$`, 'm');
@@ -1004,8 +1058,6 @@ function parseValue(raw: string): unknown {
 	// Array (simple [1, 2, 3])
 	if (v.startsWith('[') && v.endsWith(']')) {
 		try {
-			// This is a bit risky but for simple arrays it works
-			// We replace OpenSCAD style true/false with JS style
 			const jsStyle = v.replace(/true/g, 'true').replace(/false/g, 'false');
 			return JSON.parse(jsStyle);
 		} catch {
@@ -1017,11 +1069,15 @@ function parseValue(raw: string): unknown {
 }
 
 function formatValue(v: unknown): string {
-	if (typeof v === 'number') return v.toString();
-	if (typeof v === 'boolean') return v ? 'true' : 'false';
-	if (Array.isArray(v)) return `[${v.map(formatValue).join(', ')}]`;
-	if (typeof v === 'string') return `"${v}"`;
-	return JSON.stringify(v);
+	let actualVal = v;
+	if (v && typeof v === 'object' && 'value' in v) {
+		actualVal = (v as any).value;
+	}
+	if (typeof actualVal === 'number') return actualVal.toString();
+	if (typeof actualVal === 'boolean') return actualVal ? 'true' : 'false';
+	if (Array.isArray(actualVal)) return `[${actualVal.map(formatValue).join(', ')}]`;
+	if (typeof actualVal === 'string') return `"${actualVal}"`;
+	return JSON.stringify(actualVal);
 }
 
 function escapeRE(s: string) {

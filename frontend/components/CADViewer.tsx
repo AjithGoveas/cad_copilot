@@ -35,12 +35,14 @@ type CADViewerProps = {
     onHoverParameter?: (key: string | null) => void;
     isGenerating?: boolean;
     showExport?: boolean;
-    onStatusChange?: (status: { isCompiling: boolean; isExporting: boolean; isImported: boolean }) => void;
+    onStatusChange?: (status: { isCompiling: boolean; isExporting: boolean; isImported: boolean; error?: any }) => void;
     onShare?: () => void;
     onParameterUpdate?: (key: string, value: number) => void;
     targetPoint?: [number, number, number] | null;
     isDemoMode?: boolean;
     onSelectPrompt?: (prompt: string) => void;
+    isAutoRepairing?: boolean;
+    onRepair?: () => void;
 };
 
 const generateDxfWrapper = (originalCode: string, mode: 'silhouette' | 'section' | 'blueprint') => {
@@ -120,6 +122,8 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         targetPoint = null,
         isDemoMode = false,
         onSelectPrompt,
+        isAutoRepairing = false,
+        onRepair,
     },
     ref
 ) {
@@ -149,8 +153,8 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
 
     const displayStlUrls = useMemo(() => {
         if (importedStlUrl) {
-            const m = new Map<string, string>();
-            m.set('imported_part', importedStlUrl);
+            const m = new Map<string, { url: string; color?: string }>();
+            m.set('imported_part', { url: importedStlUrl });
             return m;
         }
         return stlUrls;
@@ -298,8 +302,9 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
             isCompiling: isRecompiling,
             isExporting,
             isImported,
+            error: engineError,
         });
-    }, [isRecompiling, isExporting, isImported]);
+    }, [isRecompiling, isExporting, isImported, engineError]);
 
     const handleExport = useCallback(
         async (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => {
@@ -644,7 +649,7 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                 </div>
             )}
 
-            {engineError && (
+            {engineError && !isAutoRepairing && (
                 <div className="absolute bottom-6 left-6 right-6 z-30">
                     <div className="glass flex items-center justify-between rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-4 shadow-2xl backdrop-blur-2xl animate-in slide-in-from-bottom-4 duration-500">
                         <div className="flex items-center gap-4">
@@ -656,12 +661,22 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                                 <p className="mt-1 text-xs text-red-200/60 font-medium">{engineError.message}</p>
                             </div>
                         </div>
-                        <button
-                            onClick={respawn}
-                            className="rounded-lg bg-red-500 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-white transition-all hover:bg-red-400 active:scale-95"
-                        >
-                            Respawn Kernel
-                        </button>
+                        <div className="flex gap-2">
+                            {onRepair && (
+                                <button
+                                    onClick={onRepair}
+                                    className="rounded-lg bg-[#007ACC] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-white transition-all hover:bg-[#005A9E] active:scale-95 shadow-md"
+                                >
+                                    Repair Code
+                                </button>
+                            )}
+                            <button
+                                onClick={respawn}
+                                className="rounded-lg bg-red-500 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-white transition-all hover:bg-red-400 active:scale-95"
+                            >
+                                Respawn Kernel
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

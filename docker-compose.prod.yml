@@ -44,6 +44,8 @@ services:
       - ./backend/.env
     ports:
       - "8000:8000"
+    volumes:
+      - cadvex_backend_logs_prod:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,3 +80,4 @@ services:
 
 volumes:
   cadvex_postgres_data_prod:
+  cadvex_backend_logs_prod:

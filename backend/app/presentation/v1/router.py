@@ -1,25 +1,63 @@
-"""CADVEX V2 - /api/v1 router."""
+"""CADVEX V2 - Clean Architecture Presentation Router Layer (Version v1)."""
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 import re
-from pathlib import Path
-from typing import Any
-
 import uuid
-import io
+from typing import Any
+import time
+
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from app.models.schemas import GenerateResponse, EditRequest, StepRequest, GCodeResponse, CAMJobRequest
-from app.services.csg_parser import CSGParser, export_to_step
-from app.services.llm_codegen import LLMCodegenService
-import time
+
+# Domain, Use Case, and Infrastructure layer imports
+from app.domain.models import ModelMetadata, GenerateResponse, StepRequest, GCodeResponse, CAMJobRequest, DxfExportRequest
+from app.domain.interfaces import ICADEngine, ICAMEngine
+from app.infrastructure.httpx_gateway import UniversalHTTPXGateway
+from app.infrastructure.prisma_repository import PrismaSessionRepository
+from app.infrastructure.cad import ConcreteCADEngine, ConcreteCAMEngine
+from app.application.use_cases import GenerateCadUseCase, EditCadUseCase, RepairCadUseCase
 
 router = APIRouter(tags=["cad"])
 
+# Instantiate and wire Clean Architecture components
+gateway = UniversalHTTPXGateway()
+repository = PrismaSessionRepository()
+cad_engine: ICADEngine = ConcreteCADEngine()
+cam_engine: ICAMEngine = ConcreteCAMEngine()
+
+generate_use_case = GenerateCadUseCase(gateway, repository)
+edit_use_case = EditCadUseCase(gateway, repository)
+repair_use_case = RepairCadUseCase(gateway, repository)
+
+
+# ---------------------------------------------------------------------------
+# Presentation request body validation schemas
+# ---------------------------------------------------------------------------
+class EditRequestSchema(BaseModel):
+    prompt: str
+    current_code: str
+    target_point: list[float] | None = None
+    model_metadata: ModelMetadata
+    fallback_metadata: ModelMetadata | None = None
+    session_id: str | None = None
+
+
+class RepairRequestSchema(BaseModel):
+    code: str
+    error: str
+    model_metadata: ModelMetadata
+    fallback_metadata: ModelMetadata | None = None
+    session_id: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Shape Cache and helper routines
+# ---------------------------------------------------------------------------
 class ShapeCache:
     _cache: dict[str, dict[str, Any]] = {}
 
@@ -75,85 +113,6 @@ def is_step_reference(csg_tree: Any) -> tuple[bool, str | None]:
                 pass
     return False, None
 
-
-def export_to_stl_bytes(shape) -> bytes:
-    import tempfile
-    from pathlib import Path
-    from build123d import export_stl
-    
-    bb = shape.bounding_box()
-    max_dim = max(
-        bb.max.X - bb.min.X,
-        bb.max.Y - bb.min.Y,
-        bb.max.Z - bb.min.Z
-    )
-    tolerance = max(0.001, min(0.5, max_dim * 0.002))
-    
-    temp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".stl", delete=False) as tf:
-            temp_path = Path(tf.name)
-            
-        export_stl(shape, str(temp_path), tolerance=tolerance, angular_tolerance=0.15)
-        
-        with open(temp_path, "rb") as f:
-            return f.read()
-    finally:
-        if temp_path and temp_path.exists():
-            temp_path.unlink(missing_ok=True)
-
-
-def export_to_dxf_bytes(shape, dxf_mode: str) -> bytes:
-    import tempfile
-    from pathlib import Path
-    from build123d import Plane, BuildSketch, project, ExportDXF, Location, Rotation, Compound, Mode, Face
-    
-    dxf_shape = None
-    if dxf_mode == "silhouette":
-        with BuildSketch(Plane.XY):
-            dxf_shape = project(shape.edges(), mode=Mode.PRIVATE)
-    elif dxf_mode == "section":
-        section_plane = Plane.XY.offset(0.01)
-        section_profile = shape.intersect(Face.make_rect(10000, 10000, section_plane))
-        with BuildSketch(Plane.XY):
-            dxf_shape = project(section_profile.edges(), mode=Mode.PRIVATE)
-    elif dxf_mode == "blueprint":
-        offset_dist = 120.0
-        with BuildSketch(Plane.XY):
-            top_view = project(shape.edges(), mode=Mode.PRIVATE)
-            iso_shape = Location((offset_dist, 0, 0)) * Rotation(0, 0, 45) * Rotation(54.7356, 0, 0) * shape
-            iso_view = project(iso_shape.edges(), mode=Mode.PRIVATE)
-            front_shape = Location((0, -offset_dist, 0)) * Rotation(90, 0, 0) * shape
-            front_view = project(front_shape.edges(), mode=Mode.PRIVATE)
-            right_shape = Location((offset_dist, -offset_dist, 0)) * Rotation(0, 0, 90) * Rotation(90, 0, 0) * shape
-            right_view = project(right_shape.edges(), mode=Mode.PRIVATE)
-            dxf_shape = Compound([top_view, iso_view, front_view, right_view])
-    else:
-        with BuildSketch(Plane.XY):
-            dxf_shape = project(shape.edges(), mode=Mode.PRIVATE)
-
-    temp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".dxf", delete=False) as tf:
-            temp_path = Path(tf.name)
-        
-        exporter = ExportDXF()
-        exporter.add_shape(dxf_shape)
-        exporter.write(str(temp_path))
-        
-        with open(temp_path, "rb") as f:
-            return f.read()
-    finally:
-        if temp_path and temp_path.exists():
-            temp_path.unlink(missing_ok=True)
-
-
-_ALLOWED_MIME_PREFIXES = ("image/",)
-_ALLOWED_MIME_EXACT   = {"application/pdf"}
-_DEFAULT_MODEL = os.getenv("GENAI_MODEL", "gemini-2.5-flash-lite")
-
-
-
 def _extract_parameters(script: str) -> dict[str, Any]:
     m = re.search(r"/\*\s*PARAMETERS_JSON\s*(\{.*?\})\s*\*/", script, re.S)
     if m:
@@ -166,9 +125,9 @@ def _extract_parameters(script: str) -> dict[str, Any]:
 
 def _resolve_mime(content_type: str, filename: str) -> str | None:
     ct = (content_type or "").lower().split(";")[0].strip()
-    if ct in _ALLOWED_MIME_EXACT:
+    if ct == "application/pdf":
         return ct
-    if any(ct.startswith(p) for p in _ALLOWED_MIME_PREFIXES):
+    if ct.startswith("image/"):
         return ct
     if filename.lower().endswith(".pdf"):
         return "application/pdf"
@@ -178,8 +137,6 @@ def _resolve_mime(content_type: str, filename: str) -> str | None:
 def _sanitize_script(script: str) -> str:
     if not script:
         return script
-    # Preserved: BOSL2 / MCAD includes are resolved in the browser worker VFS
-    # script = re.sub(r'include\s*<BOSL2/.*?>;?', '', script, flags=re.I)
 
     FN_CAP = 32
 
@@ -210,17 +167,33 @@ def _sanitize_script(script: str) -> str:
                 script,
                 count=1,
             )
-
     return script
 
-@router.post("/generate", response_model=GenerateResponse)
+
+# ---------------------------------------------------------------------------
+# FastAPI Route Handlers
+# ---------------------------------------------------------------------------
+@router.post("/generate", response_model=GenerateResponse, summary="Generate Parametric CAD Script", description="Generates a complete, stabilized OpenSCAD script from a natural language description and an optional blueprint drawing (PDF/Image) using vision audits and multi-vendor fallbacks.")
 async def generate(
     prompt: str = Form(...),
-    model_name: str = Form(_DEFAULT_MODEL, alias="model"),
+    model_metadata: str = Form(...),
+    fallback_metadata: str | None = Form(None),
     image: UploadFile = File(None),
     base_code: str | None = Form(None),
     selection_context: str | None = Form(None),
+    session_id: str | None = Form(None),
 ) -> GenerateResponse:
+    try:
+        model_metadata_parsed = ModelMetadata.model_validate_json(model_metadata)
+        fallback_metadata_parsed = None
+        if fallback_metadata:
+            fallback_metadata_parsed = ModelMetadata.model_validate_json(fallback_metadata)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"message": f"Invalid model_metadata or fallback_metadata payload: {exc}"}}
+        )
+
     image_bytes = None
     mime_type = None
 
@@ -234,33 +207,20 @@ async def generate(
         image_bytes = await image.read()
 
     try:
-        svc = LLMCodegenService(model=model_name)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail={"error": {"message": str(exc)}})
-
-    feature_map = {}
-    if image_bytes and mime_type:
-        try:
-            feature_map = await asyncio.to_thread(
-                svc.audit_blueprint, image_bytes, mime_type
-            )
-        except Exception:
-            pass
-
-    try:
-        script = await asyncio.to_thread(
-            svc.generate_script,
+        script = await generate_use_case.execute(
             prompt=prompt,
+            primary_metadata=model_metadata_parsed,
+            fallback_metadata=fallback_metadata_parsed,
             image_bytes=image_bytes,
             mime_type=mime_type,
-            feature_map=feature_map,
             base_code=base_code,
             selection_context=selection_context,
+            session_id=session_id,
         )
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"message": str(exc), "hint": "Check API key and quota."}},
+            detail={"error": {"message": str(exc), "hint": "Check API keys and quotas."}},
         )
 
     script = _sanitize_script(script)
@@ -271,24 +231,21 @@ async def generate(
     )
 
 
-@router.post("/edit", response_model=GenerateResponse)
-async def edit(request: EditRequest) -> GenerateResponse:
+@router.post("/edit", response_model=GenerateResponse, summary="Surgically Edit Active CAD Code", description="Applies surgical coordinate-injected changes to existing OpenSCAD code variables and geometries in-place based on chat prompts and target coordinates.")
+async def edit(request: EditRequestSchema) -> GenerateResponse:
     try:
-        svc = LLMCodegenService(model=request.model)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail={"error": {"message": str(exc)}})
-
-    try:
-        script = await asyncio.to_thread(
-            svc.edit_script,
+        script = await edit_use_case.execute(
             prompt=request.prompt,
             current_code=request.current_code,
+            primary_metadata=request.model_metadata,
+            fallback_metadata=request.fallback_metadata,
             target_point=request.target_point,
+            session_id=request.session_id,
         )
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail={"error": {"message": str(exc), "hint": "Check API key and quota."}},
+            detail={"error": {"message": str(exc), "hint": "Check API keys and quotas."}},
         )
 
     script = _sanitize_script(script)
@@ -299,21 +256,45 @@ async def edit(request: EditRequest) -> GenerateResponse:
     )
 
 
+@router.post("/repair", response_model=GenerateResponse, summary="Auto-Heal Syntax/Compile Errors", description="Executes a self-healing recovery pass on a failing OpenSCAD script using compiler traceback error logs.")
+async def repair(request: RepairRequestSchema) -> GenerateResponse:
+    try:
+        script = await repair_use_case.execute(
+            code=request.code,
+            error_message=request.error,
+            primary_metadata=request.model_metadata,
+            fallback_metadata=request.fallback_metadata,
+            session_id=request.session_id,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"message": str(exc)}},
+        )
+
+    script = _sanitize_script(script)
+
+    return GenerateResponse(
+        openscad_script=script,
+        parameters=_extract_parameters(script),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Backward Compatibility Utility Routes
+# ---------------------------------------------------------------------------
 def _process_export_step(csg_tree: str) -> bytes:
-    from app.services.csg_parser import CSGParser
-    from app.services.export_utils import build123d_to_step_bytes
-    
     is_ref, asset_id = is_step_reference(csg_tree)
     if is_ref and asset_id:
         shape = ShapeCache.get(asset_id)
         if shape is None:
             raise ValueError(f"STEP asset ID {asset_id} not found in cache or has expired.")
     else:
-        shape = CSGParser.parse(csg_tree)
-        
-    return build123d_to_step_bytes(shape)
+        shape = cad_engine.parse_csg(csg_tree)
+    return cad_engine.shape_to_step_bytes(shape)
 
-@router.post("/export-step")
+
+@router.post("/export-step", summary="Export CAD CSG to STEP bytes", description="Pipes compiled shape geometries directly into raw STEP file binary streams.")
 async def export_step_stream(request: StepRequest) -> StreamingResponse:
     try:
         step_bytes = await asyncio.to_thread(_process_export_step, request.csg_tree)
@@ -324,17 +305,10 @@ async def export_step_stream(request: StepRequest) -> StreamingResponse:
             headers={"Content-Disposition": "attachment; filename=model.step"}
         )
     except Exception as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc)
-        )
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def _process_gcode(cam_request_dict: dict, step_file_path: str | None, temp_path_str: str | None) -> dict:
-    from app.models.schemas import CAMJobRequest
-    from app.services.gcode_generator import GCodeGenerator
-    from app.services.csg_parser import CSGParser, export_to_step
-
     cam_request = CAMJobRequest(**cam_request_dict)
 
     is_ref, asset_id = is_step_reference(cam_request.csg_tree)
@@ -342,46 +316,26 @@ def _process_gcode(cam_request_dict: dict, step_file_path: str | None, temp_path
         shape = ShapeCache.get(asset_id)
         if shape is None:
             raise ValueError(f"STEP asset ID {asset_id} not found in cache or has expired.")
-        generator = GCodeGenerator(
-            controller=cam_request.machine_configuration.controller,
-            safe_z=cam_request.machine_configuration.safe_z,
-            resolution=cam_request.machine_configuration.resolution
-        )
-        return generator.generate(cam_request, step_path=shape)
+        return cam_engine.generate_gcode(cam_request, step_path=shape)
 
     if not cam_request.csg_tree and step_file_path:
         shape = ShapeCache.get(step_file_path)
         if shape is not None:
-            generator = GCodeGenerator(
-                controller=cam_request.machine_configuration.controller,
-                safe_z=cam_request.machine_configuration.safe_z,
-                resolution=cam_request.machine_configuration.resolution
-            )
-            return generator.generate(cam_request, step_path=shape)
+            return cam_engine.generate_gcode(cam_request, step_path=shape)
 
-        generator = GCodeGenerator(
-            controller=cam_request.machine_configuration.controller,
-            safe_z=cam_request.machine_configuration.safe_z,
-            resolution=cam_request.machine_configuration.resolution
-        )
-        return generator.generate(cam_request, step_path=step_file_path)
+        return cam_engine.generate_gcode(cam_request, step_path=step_file_path)
 
     if not cam_request.csg_tree:
         raise ValueError("Either 'csg_tree' or 'step_file_path' must be provided.")
 
-    shape = CSGParser.parse(cam_request.csg_tree)
+    shape = cad_engine.parse_csg(cam_request.csg_tree)
     if temp_path_str:
-        export_to_step(shape, temp_path_str)
+        cad_engine.export_step(shape, temp_path_str)
 
-    generator = GCodeGenerator(
-        controller=cam_request.machine_configuration.controller,
-        safe_z=cam_request.machine_configuration.safe_z,
-        resolution=cam_request.machine_configuration.resolution
-    )
-    return generator.generate(cam_request, step_path=temp_path_str)
+    return cam_engine.generate_gcode(cam_request, step_path=temp_path_str)
 
 
-@router.post("/gcode", response_model=GCodeResponse)
+@router.post("/gcode", response_model=GCodeResponse, summary="Generate CAM G-code Pathways", description="Performs 3D feature recognition (holes, slots, profiles) on raw shapes to construct optimized tool paths and output industrial G-code blocks.")
 async def generate_gcode(
     request: Request,
     file: UploadFile | None = File(None),
@@ -486,12 +440,10 @@ async def generate_gcode(
                 pass
 
 
-
-@router.get("/material-defaults")
+@router.get("/material-defaults", summary="Get Speeds & Feeds Defaults", description="Queries spindle speed, feed rate, plunge rate, and stepdown default limits for Delrin, Plywood, Acrylic, Steel, and Aluminum.")
 def get_material_defaults_endpoint(material: str, diameter: float) -> dict:
-    from app.services.materials_db import get_material_defaults
     try:
-        return get_material_defaults(material, diameter)
+        return cam_engine.get_material_defaults(material, diameter)
     except Exception as exc:
         raise HTTPException(
             status_code=400,
@@ -499,44 +451,7 @@ def get_material_defaults_endpoint(material: str, diameter: float) -> dict:
         )
 
 
-def _process_import_step(file_bytes: bytes) -> tuple[bytes, Any]:
-    import tempfile
-    from pathlib import Path
-    from build123d import import_step, export_stl
-
-    with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as temp_step:
-        temp_step.write(file_bytes)
-        temp_step_path = Path(temp_step.name)
-
-    temp_stl_path = temp_step_path.with_suffix(".stl")
-
-    try:
-        imported_shape = import_step(str(temp_step_path))
-
-        bb = imported_shape.bounding_box()
-        max_dim = max(
-            bb.max.X - bb.min.X,
-            bb.max.Y - bb.min.Y,
-            bb.max.Z - bb.min.Z
-        )
-        tolerance = max(0.001, min(0.5, max_dim * 0.002))
-
-        export_stl(imported_shape, str(temp_stl_path), tolerance=tolerance, angular_tolerance=0.15)
-
-        with open(temp_stl_path, "rb") as f:
-            stl_bytes = f.read()
-
-        return stl_bytes, imported_shape
-    finally:
-        for path in (temp_step_path, temp_stl_path):
-            try:
-                if path.exists():
-                    path.unlink()
-            except Exception:
-                pass
-
-
-@router.post("/import/step")
+@router.post("/import/step", summary="Import and Settle STEP Assets", description="Uploads raw STEP geometries, generates STL binary blocks for browser rendering, and caches shape objects in session memory.")
 async def import_step_endpoint(file: UploadFile = File(...)) -> StreamingResponse:
     if not file.filename.lower().endswith((".step", ".stp")):
         raise HTTPException(
@@ -546,7 +461,7 @@ async def import_step_endpoint(file: UploadFile = File(...)) -> StreamingRespons
 
     try:
         file_bytes = await file.read()
-        stl_bytes, shape = await asyncio.to_thread(_process_import_step, file_bytes)
+        stl_bytes, shape = await asyncio.to_thread(cad_engine.import_step_to_stl, file_bytes)
         asset_id = str(uuid.uuid4())
         ShapeCache.set(asset_id, shape)
         return StreamingResponse(
@@ -564,13 +479,13 @@ async def import_step_endpoint(file: UploadFile = File(...)) -> StreamingRespons
         )
 
 
-@router.post("/import/teardown/{asset_id}")
+@router.post("/import/teardown/{asset_id}", summary="Evict STEP Cache", description="Evicts and cleans up registered shape references from workspace memory.")
 async def import_teardown_endpoint(asset_id: str):
     ShapeCache.evict(asset_id)
     return {"status": "evicted"}
 
 
-@router.post("/export-stl")
+@router.post("/export-stl", summary="Export Cached Shape to STL", description="Retrieves registered shape assets from cache and generates raw STL files.")
 async def export_stl_endpoint(request: StepRequest) -> StreamingResponse:
     try:
         is_ref, asset_id = is_step_reference(request.csg_tree)
@@ -581,7 +496,7 @@ async def export_stl_endpoint(request: StepRequest) -> StreamingResponse:
         if shape is None:
             raise HTTPException(status_code=404, detail="STEP asset ID not found in cache.")
 
-        stl_bytes = await asyncio.to_thread(export_to_stl_bytes, shape)
+        stl_bytes = await asyncio.to_thread(cad_engine.shape_to_stl_bytes, shape)
         return StreamingResponse(
             io.BytesIO(stl_bytes),
             media_type="application/octet-stream",
@@ -593,11 +508,7 @@ async def export_stl_endpoint(request: StepRequest) -> StreamingResponse:
         raise HTTPException(status_code=500, detail=f"STL export failed: {exc}")
 
 
-class DxfExportRequest(BaseModel):
-    csg_tree: str
-    dxf_mode: str
-
-@router.post("/export-dxf")
+@router.post("/export-dxf", summary="Export Cached Shape to DXF", description="Projects registered shape assets to 2D sections or blueprints, exporting DXF files.")
 async def export_dxf_endpoint(request: DxfExportRequest) -> StreamingResponse:
     try:
         is_ref, asset_id = is_step_reference(request.csg_tree)
@@ -608,7 +519,7 @@ async def export_dxf_endpoint(request: DxfExportRequest) -> StreamingResponse:
         if shape is None:
             raise HTTPException(status_code=404, detail="STEP asset ID not found in cache.")
 
-        dxf_bytes = await asyncio.to_thread(export_to_dxf_bytes, shape, request.dxf_mode)
+        dxf_bytes = await asyncio.to_thread(cad_engine.shape_to_dxf_bytes, shape, request.dxf_mode)
         return StreamingResponse(
             io.BytesIO(dxf_bytes),
             media_type="application/octet-stream",

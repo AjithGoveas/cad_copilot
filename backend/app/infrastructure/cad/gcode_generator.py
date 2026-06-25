@@ -18,7 +18,7 @@ from OCP.BRepExtrema import BRepExtrema_DistShapeShape
 # ---------------------------------------------------------------------------
 # Import actual schemas
 # ---------------------------------------------------------------------------
-from app.models.schemas import CAMJobRequest, ToolModel, OperationModel
+from app.domain.models import CAMJobRequest, ToolModel, OperationModel
 
 # ==============================================================================
 # BACKWARDS COMPATIBILITY DATA STRUCTURES

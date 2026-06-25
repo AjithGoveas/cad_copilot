@@ -1,7 +1,13 @@
 /// <reference lib="webworker" />
 
 type WarmupRequest      = { type: 'warmup' };
-type CompileRequest     = { type: 'compile'; id: number; script: string };
+type CompileRequest     = { 
+    type: 'compile'; 
+    id: number; 
+    script: string; 
+    color?: string;
+    partId?: string;
+};
 type ExportRequest      = { 
     type: 'export'; 
     id: number; 
@@ -18,6 +24,7 @@ type PartData = {
     id: string;
     buffer: ArrayBuffer;
     durationMs: number;
+    color?: string;
 };
 
 type CompiledMessage = { 
@@ -33,7 +40,7 @@ type CsgCompiledMessage     = { type: 'csg-compiled'; id: number; csgTree: strin
 type ErrorMessage = {
     type: 'error';
     id?: number;
-    errorType: 'OutOfBounds' | 'CompileFailure' | 'Timeout' | 'Unknown';
+    errorType: 'OutOfBounds' | 'CompileFailure' | 'Timeout' | 'Unknown' | 'Not3D';
     message: string;
     details: string; 
 };
@@ -79,7 +86,7 @@ async function ensureEngine(forceReload = false): Promise<OpenScadInstance> {
                 throw new Error('openscad-wasm: createOpenSCAD function not found.');
             }
 
-            return mod.createOpenSCAD({
+            const engine = await mod.createOpenSCAD({
                 print: (_text: string) => {},
                 printErr: (text: string) => {
                     if (text.includes('localization')) return;
@@ -89,12 +96,51 @@ async function ensureEngine(forceReload = false): Promise<OpenScadInstance> {
 
                     stderrCapture.push(text);
                 },
-                // High-performance allocation: Pre-allocating 1GB avoids runtime WASM memory resizing 
-                // penalties when building complex geometries or executing heavy BOSL2 operations.
-                INITIAL_MEMORY: 1024 * 1024 * 1024,
+                // High-performance allocation: Pre-allocating 256MB makes worker instantiation fast
+                // while ALLOW_MEMORY_GROWTH allows scaling up to 2GB dynamically on demand.
+                INITIAL_MEMORY: 256 * 1024 * 1024,
                 MAXIMUM_MEMORY: 2048 * 1024 * 1024,
                 ALLOW_MEMORY_GROWTH: 1,
             });
+
+            // Set up font configuration dynamically to avoid crashes on 3D text modules
+            try {
+                const instance = engine.getInstance();
+                const FS = instance.FS;
+                const fontsConf = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n<fontconfig></fontconfig>`;
+                
+                const createDir = (path: string) => {
+                    const parts = path.split('/');
+                    let current = '';
+                    for (const p of parts) {
+                        if (!p) continue;
+                        current += '/' + p;
+                        try {
+                            if (!FS.analyzePath(current).exists) {
+                                FS.mkdir(current);
+                            }
+                        } catch (e) {}
+                    }
+                };
+
+                createDir('/fonts');
+                FS.writeFile('/fonts/fonts.conf', fontsConf);
+                
+                // Fetch default font from next server assets if available
+                fetch('/Geist-Regular.ttf')
+                    .then(res => {
+                        if (res.ok) return res.arrayBuffer();
+                        throw new Error('Font file not found');
+                    })
+                    .then(buf => {
+                        FS.writeFile('/fonts/Geist-Regular.ttf', new Uint8Array(buf));
+                    })
+                    .catch(() => {});
+            } catch (e) {
+                console.warn('[Worker] Font initialization skipped:', e);
+            }
+
+            return engine;
         })();
     }
     return enginePromise;
@@ -103,6 +149,9 @@ async function ensureEngine(forceReload = false): Promise<OpenScadInstance> {
 function classifyError(message: string, details: string): ErrorMessage['errorType'] {
     const combined = `${message} ${details}`.toLowerCase();
 
+    if (combined.includes('not a 3d object') || combined.includes('not a 3d shape') || combined.includes('not a 3d')) {
+        return 'Not3D';
+    }
     if (combined.includes('cgal') || combined.includes('non-manifold') || combined.includes('z-fighting') || combined.includes('assertion') || combined.includes('degenerate')) {
         return 'CompileFailure';
     }
@@ -217,6 +266,36 @@ async function loadLibraryZip(fs: FS, libName: string): Promise<void> {
     }
 
     const promise = (async () => {
+        let cacheAvailable = false;
+        try {
+            cacheAvailable = typeof caches !== 'undefined';
+        } catch (e) {}
+
+        if (cacheAvailable) {
+            try {
+                const cache = await caches.open('scad-libraries');
+                const cachedKeys = await cache.keys();
+                const libPrefix = `http://scad-library-cache/${libName}/`;
+                const cachedFiles = cachedKeys.filter(req => req.url.startsWith(libPrefix));
+
+                if (cachedFiles.length > 0) {
+                    for (const req of cachedFiles) {
+                        const res = await cache.match(req);
+                        if (res) {
+                            const buffer = await res.arrayBuffer();
+                            const fileData = new Uint8Array(buffer);
+                            const normalizedPath = req.url.substring(`http://scad-library-cache/`.length);
+                            writeToFs(fs, normalizedPath, fileData);
+                        }
+                    }
+                    loadedLibraries.add(libName);
+                    return;
+                }
+            } catch (cacheErr) {
+                console.warn('[Worker] Cache lookup failed, falling back to download:', cacheErr);
+            }
+        }
+
         const fflateUrl = 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/+esm';
         const { unzipSync } = await import(/* webpackIgnore: true */ fflateUrl);
 
@@ -230,6 +309,13 @@ async function loadLibraryZip(fs: FS, libName: string): Promise<void> {
         const zipData = new Uint8Array(arrayBuffer);
         const unzipped = unzipSync(zipData) as Record<string, Uint8Array>;
 
+        let cacheToWrite: any = null;
+        if (cacheAvailable) {
+            try {
+                cacheToWrite = await caches.open('scad-libraries');
+            } catch (e) {}
+        }
+
         for (const [filePath, fileData] of Object.entries(unzipped)) {
             if (filePath.endsWith('/') || fileData.length === 0) {
                 continue;
@@ -240,18 +326,19 @@ async function loadLibraryZip(fs: FS, libName: string): Promise<void> {
                 normalizedPath = libName + '/' + filePath;
             }
 
-            const parts = normalizedPath.split('/');
-            let currentDir = '';
-            for (let i = 0; i < parts.length - 1; i++) {
-                currentDir += '/' + parts[i];
+            writeToFs(fs, normalizedPath, fileData);
+
+            if (cacheToWrite) {
                 try {
-                    if (!fs.analyzePath(currentDir).exists) {
-                        fs.mkdir(currentDir);
-                    }
+                    const cacheUrl = `http://scad-library-cache/${normalizedPath}`;
+                    await cacheToWrite.put(
+                        new Request(cacheUrl),
+                        new Response(fileData as any, {
+                            headers: { 'Content-Type': 'application/octet-stream' }
+                        })
+                    );
                 } catch (e) {}
             }
-
-            fs.writeFile('/' + normalizedPath, fileData);
         }
 
         loadedLibraries.add(libName);
@@ -265,6 +352,20 @@ async function loadLibraryZip(fs: FS, libName: string): Promise<void> {
     }
 }
 
+function writeToFs(fs: FS, normalizedPath: string, fileData: Uint8Array) {
+    const parts = normalizedPath.split('/');
+    let currentDir = '';
+    for (let i = 0; i < parts.length - 1; i++) {
+        currentDir += '/' + parts[i];
+        try {
+            if (!fs.analyzePath(currentDir).exists) {
+                fs.mkdir(currentDir);
+            }
+        } catch (e) {}
+    }
+    fs.writeFile('/' + normalizedPath, fileData);
+}
+
 async function resolveScriptLibraries(fs: FS, script: string): Promise<void> {
     const cleanScript = script.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
     const includeRegex = /(?:include|use)\s*<([^>]+)>/g;
@@ -275,6 +376,8 @@ async function resolveScriptLibraries(fs: FS, script: string): Promise<void> {
         const libraryPath = match[1];
         if (libraryPath.startsWith('BOSL2/')) {
             loads.push(loadLibraryZip(fs, 'BOSL2'));
+        } else if (libraryPath.startsWith('BOSL/')) {
+            loads.push(loadLibraryZip(fs, 'BOSL'));
         } else if (libraryPath.startsWith('MCAD/')) {
             loads.push(loadLibraryZip(fs, 'MCAD'));
         }
@@ -324,8 +427,8 @@ async function exportToFile(
         // --enable=manifold uses the highly parallelized, faster mesh evaluation kernel instead of old CGAL operations
         // Manifold kernel does not support 2D projections (dxf blueprint mode), so we bypass it to prevent CGAL fallback overhead.
         const args = format === 'dxf' && dxfMode === 'blueprint'
-            ? ['--enable=fast-csg', '-o', outputPath, INPUT_PATH]
-            : ['--enable=manifold', '--enable=fast-csg', '-o', outputPath, INPUT_PATH];
+            ? ['--enable=fast-csg', '--enable=lazy-union', '-o', outputPath, INPUT_PATH]
+            : ['--enable=manifold', '--enable=fast-csg', '--enable=lazy-union', '-o', outputPath, INPUT_PATH];
         const exitCode = instance.callMain(args);
 
         if (exitCode !== 0 || !fs.analyzePath(outputPath).exists) {
@@ -369,17 +472,95 @@ async function exportToFile(
     }
 }
 
+function getUniqueColors(script: string): string[] {
+    const colorRegex = /\bcolor\s*\(\s*"([^"]+)"\s*\)/g;
+    const colors = new Set<string>();
+    let match;
+    while ((match = colorRegex.exec(script)) !== null) {
+        colors.add(match[1]);
+    }
+    return Array.from(colors);
+}
+
+function prepareMultiColorScript(script: string, colors: string[]): string {
+    let rewritten = script;
+    for (const color of colors) {
+        const escapedColor = color.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const re = new RegExp(`\\bcolor\\s*\\(\\s*"${escapedColor}"\\s*\\)`, 'g');
+        rewritten = rewritten.replace(re, `if (RENDER_COLOR == "all" || RENDER_COLOR == "${color}") color("${color}")`);
+    }
+    return rewritten;
+}
+
+async function compileSingleColorOrAll(
+    script: string,
+    color?: string,
+    partId?: string
+): Promise<{ parts: PartData[]; durationMs: number }> {
+    const started = performance.now();
+    const colors = getUniqueColors(script);
+
+    try {
+        if (color && colors.includes(color)) {
+            const rewritten = prepareMultiColorScript(script, colors);
+            const partScript = `RENDER_COLOR = "${color}";\n${rewritten}`;
+            const { buffer, durationMs } = await exportToFile(partScript, 'stl');
+            return {
+                parts: [{
+                    id: partId || `part_${color}`,
+                    buffer,
+                    durationMs,
+                    color
+                }],
+                durationMs: Math.round(performance.now() - started)
+            };
+        } else {
+            return compileToParts(script);
+        }
+    } catch (e: any) {
+        throw Object.assign(new Error(`Geometry Engine Error: ${e.message}`), {
+            details: e.details || 'The OpenSCAD engine produced no geometry.',
+            classified: e.classified || 'CompileFailure'
+        });
+    }
+}
+
 async function compileToParts(
     script: string
 ): Promise<{ parts: PartData[]; durationMs: number }> {
     const started = performance.now();
+    const colors = getUniqueColors(script);
 
     try {
-        const { buffer, durationMs } = await exportToFile(script, 'stl');
-        return {
-            parts: [{ id: 'part_root', buffer, durationMs }],
-            durationMs: Math.round(performance.now() - started)
-        };
+        if (colors.length <= 1) {
+            const { buffer, durationMs } = await exportToFile(script, 'stl');
+            return {
+                parts: [{ 
+                    id: 'part_root', 
+                    buffer, 
+                    durationMs,
+                    color: colors.length === 1 ? colors[0] : undefined
+                }],
+                durationMs: Math.round(performance.now() - started)
+            };
+        } else {
+            const rewritten = prepareMultiColorScript(script, colors);
+            const compilePromises = colors.map(async (color) => {
+                const partScript = `RENDER_COLOR = "${color}";\n${rewritten}`;
+                const { buffer, durationMs } = await exportToFile(partScript, 'stl');
+                return {
+                    id: `part_${color}`,
+                    buffer,
+                    durationMs,
+                    color
+                };
+            });
+            const parts = await Promise.all(compilePromises);
+            return {
+                parts,
+                durationMs: Math.round(performance.now() - started)
+            };
+        }
     } catch (e: any) {
         throw Object.assign(new Error(`Geometry Engine Error: ${e.message}`), {
             details: e.details || 'The OpenSCAD engine produced no geometry.',
@@ -409,7 +590,7 @@ async function compileCsg(
 
         fs.writeFile(INPUT_PATH, script);
 
-        const exitCode = instance.callMain(['--enable=manifold', '--enable=fast-csg', '-o', OUTPUT_PATH, INPUT_PATH]);
+        const exitCode = instance.callMain(['--enable=manifold', '--enable=fast-csg', '--enable=lazy-union', '-o', OUTPUT_PATH, INPUT_PATH]);
 
         if (exitCode !== 0 || !fs.analyzePath(OUTPUT_PATH).exists) {
             const details = stderrCapture.join('\n');
@@ -455,7 +636,7 @@ workerScope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
             case 'compile': {
                 try {
-                    const result = await compileToParts(data.script);
+                    const result = await compileSingleColorOrAll(data.script, data.color, data.partId);
                     workerScope.postMessage(
                         {
                             type: 'compiled',

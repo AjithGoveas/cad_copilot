@@ -1,57 +1,29 @@
-# ⚙️ CADVEX AI Engine (FastAPI Backend)
+# ⚙️ CADVEX AI Engine (FastAPI Clean Architecture Backend)
 
-The Python FastAPI backend service that orchestrates the machine-intelligence layer of CADVEX. It converts natural language prompts, hand-drawn sketches, and blueprint drawings (PDF/images) into clean, parameterized OpenSCAD CAD scripts utilizing the **Google Gemini API**.
+The Python FastAPI backend service that orchestrates the machine-intelligence layer of CADVEX. It converts natural language prompts, hand-drawn sketches, and blueprint drawings (PDF/images) into clean, parameterized OpenSCAD CAD scripts utilizing multiple LLM vendors (Google, OpenAI, Anthropic, DeepSeek, and local Ollama) via a vendor-agnostic Frontend-Driven Metadata configuration.
+
+It is built adhering strictly to the **Clean Architecture (Layered Architecture)** principles and the **Repository/Gateway Patterns**, guaranteeing zero dependency on concrete SDK libraries or database pools inside the domain logic.
 
 ---
 
-## 🏗️ Backend Service Architecture
+## 🏗️ Clean Layered Architecture Diagram
 
-The service acts as a stateless, high-performance API endpoint that isolates heavy LLM context parsing, image reasoning, and codegen sanitization.
+The service acts as a stateless, high-performance API endpoint divided into inward-pointing layers:
 
 ```text
-               ┌──────────────────────────────────────────────┐
-               │              FastAPI Router                  │ (router.py)
-               └──────────────────────┬───────────────────────┘
-                                      │
-                      ┌───────────────┴───────────────┐
-                      ▼                               ▼
-             ┌─────────────────┐             ┌─────────────────┐
-             │ POST /generate  │             │   POST /edit    │
-             └────────┬────────┘             └────────┬────────┘
-                      │                               │
-                      ▼                               ▼
-             ┌─────────────────┐             ┌─────────────────┐
-             │  Stage 1 Audit  │             │   Target Coord  │
-             │  Stage 2 Code   │             │   Injected Code │
-             └────────┬────────┘             └────────┬────────┘
-                      │                               │
-                      └───────────────┬───────────────┘
-                                      ▼
-                             ┌─────────────────┐
-                             │  Gemini SDK     │ (llm_codegen.py)
-                             └────────┬────────┘
-                                      │
-                                      ▼
-                             ┌─────────────────┐
-                             │  Regex Sanitizer│ (Manifold Stability Guards)
-                             └─────────────────┘
+       Presentation (v1/router.py) ➔ Application (use_cases/) ➔ Domain (models/ & interfaces/)
+            │                                                      ▲
+            ▼                                                      │
+       Infrastructure (httpx_gateway.py & prisma_repository.py) ───┘
 ```
 
-### 1. Two-Stage Generation Pipeline (`/generate`)
-To ensure high accuracy when translating raw files (sketches/PDF blueprints) to 3D code, the engine divides generation into two logical LLM calls:
-- **Stage 1: Blueprint Audit**: The drawing file (PDF/Image) is uploaded via the **Gemini Files API** and analyzed using Gemini Vision with `AUDIT_INSTRUCTION`. It extracts a normalized JSON feature-map detailing dimensions, coordinate systems, stack order, and references, checking confidence ratings. Both the uploaded file reference and audit output are cached in an **MD5-keyed cache** (`_BLUEPRINT_CACHE`) to bypass redundant visual audits.
-- **Stage 2: Script Synthesis**: The feature-map is combined with the user's prompt and fed into Gemini Text with `SYSTEM_INSTRUCTION`. The LLM synthesizes a clean, standard OpenSCAD script conforming to parameter blocks, reusing the cached Gemini file reference.
-
-### 2. Isolated Surgical Refinement (`/edit`)
-Editing existing code presents different context requirements than creating a model from scratch. To prevent prompt dilution, editing is decoupled:
-- **State Constraints**: Takes the current active code and prompt. The model is guided by `EDIT_SYSTEM_PROMPT` to surgically modify existing modules, keeping parameter headers (`// PARAMETERS_START/END`) intact, and returning the entire updated file.
-- **Spatial Injection**: If click-coordinates are passed, the backend automatically formats and injects them as an absolute spatial boundary override: `[System Context: The user clicked X, Y, Z. Use as origin/target]`.
-
-### 3. Manifold Stability Safety Guards
-LLM-generated code can occasionally contain syntax errors or unstable boolean geometries. Before returning code to the client, a regular-expression safety net is run:
-- **$fn Cap**: Caps any resolution setting (`$fn = N`) that exceeds `32` down to `32` to prevent browser freezes in the client's WebAssembly thread.
-- **$fn Injection**: If the model forgot to declare `$fn`, `"$fn = 32;"` is automatically prepended.
-- **Epsilon Injection**: If a subtractive operation (`difference()`) is found without an `eps` variable, `eps = 0.02;` is injected to prevent co-planar face z-fighting crashes.
+1. **Enterprise Domain Layer (`app/domain/`)**: Pure entity declarations (`ModelMetadata`, `Session`, `HistoryItem`) and technology-agnostic abstract contracts (`ISessionRepository`, `ILLMProviderGateway`, `ICADEngine`, `ICAMEngine`).
+2. **Application Interactor Layer (`app/application/`)**: Encapsulates use-case orchestrators (`GenerateCadUseCase`, `EditCadUseCase`, `RepairCadUseCase`). Implements retry mechanisms, prompt budgeting, and normalization.
+3. **Infrastructure Adapters Layer (`app/infrastructure/`)**: Concrete adapter bindings:
+   - `UniversalHTTPXGateway`: Thread-safe HTTPX connection pool executing REST requests to LLM providers without vendor SDK packages.
+   - `PrismaSessionRepository`: Simulates Prisma 7 connection manager, writing transactional logs directly to `backend/logs/prisma_repository.log`.
+   - `cad/`: Geometry engines wrapping `build123d` and OpenCascade `OCP`.
+4. **Presentation API Layer (`app/presentation/`)**: Controller router (`presentation/v1/router.py`) mapping requests to use-case executions. Completely decoupled from third-party CAD libraries.
 
 ---
 
@@ -60,128 +32,118 @@ LLM-generated code can occasionally contain syntax errors or unstable boolean ge
 ```text
 backend/
 ├── app/
-│   ├── api/
-│   │   └── v1/
-│   │       ├── __init__.py
-│   │       └── router.py      # API Endpoint handlers (/generate, /edit)
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── schemas.py         # Pydantic Request/Response validation models
-│   ├── services/
-│   │   ├── __init__.py
-│   │   └── llm_codegen.py     # GenAI Client, system prompts, and regex normalization
 │   ├── __init__.py
-│   └── main.py                # FastAPI Application startup and CORS configuration
-├── logs/                      # Service runtime logs
-├── outputs/                   # Standard folder for generated STEP/STL assets
-├── scripts/
-│   └── validate.py            # CLI script to test blueprint audits and codegen locally
-├── requirements.txt           # Python library dependencies
-└── .env.example               # Environment variables configuration template
+│   ├── main.py                # FastAPI startup entry point & CORS configuration
+│   ├── domain/                # 1. Pure Enterprise Domain Layer
+│   │   ├── __init__.py
+│   │   ├── models/            # Sub-modularized Domain Models
+│   │   │   ├── __init__.py
+│   │   │   ├── generation_models.py
+│   │   │   ├── gcode_models.py
+│   │   │   └── step_models.py
+│   │   └── interfaces/        # Agnostic abstract contracts
+│   │       ├── __init__.py
+│   │       ├── repository_interfaces.py
+│   │       ├── gateway_interfaces.py
+│   │       └── cad_interfaces.py
+│   ├── application/           # 2. Application Layer
+│   │   ├── __init__.py
+│   │   └── use_cases/         # Sub-modularized Use Cases package
+│   │       ├── __init__.py
+│   │       ├── base_use_case.py
+│   │       ├── generate_cad_use_case.py
+│   │       ├── edit_cad_use_case.py
+│   │       └── repair_cad_use_case.py
+│   ├── infrastructure/        # 3. Infrastructure Layer
+│   │   ├── __init__.py
+│   │   ├── httpx_gateway.py   # Raw HTTPX provider gateway
+│   │   ├── prisma_repository.py # Simulated Prisma 7 connection manager repository
+│   │   └── cad/               # Concrete CAD/CAM implementations
+│   │       ├── __init__.py
+│   │       ├── csg_parser.py
+│   │       ├── export_utils.py
+│   │       ├── gcode_generator.py
+│   │       ├── materials_db.py
+│   │       ├── cad_engine.py
+│   │       └── cam_engine.py
+│   └── presentation/          # 4. Presentation Layer
+│       ├── __init__.py
+│       └── v1/                # Versioned presentation package
+│           ├── __init__.py
+│           └── router.py      # FastAPI v1 routers (no build123d dependencies)
 ```
 
 ---
 
-## 🔌 API Reference & Schema Definitions
+## 🔌 API Reference (Version v1)
+
+All generation and editing routes support cascading fallback retries: if the primary reasoning model hits limits (e.g. status code 5xx, 429, or timeout), it automatically retries with the client's `fallback_metadata` block.
 
 ### 1. `POST /api/v1/generate`
-Used to generate new models from scratch.
-
-* **Content-Type**: `multipart/form-data`
-* **Parameters**:
-  * `prompt` (Form Parameter, Required): Sizing/functional request.
-  * `model` (Form Parameter, Optional): Model override (defaults to `gemini-3.1-flash-lite`).
-  * `image` (File Upload, Optional): PDF blueprint or blueprint drawing (PNG, JPEG).
-* **Response** (`GenerateResponse`):
-  ```json
-  {
-    "openscad_script": "/* planning and code */",
-    "parameters": {
-      "base_height": 20.0,
-      "bore_diameter": 10.0
-    }
-  }
-  ```
+Generates a parametric OpenSCAD script from blueprints (PDF/Image) or descriptions.
+- **Content-Type**: `multipart/form-data`
+- **Body Parameters**:
+  - `prompt` (Form string, Required): Geometry/functional request.
+  - `model_metadata` (Form JSON string, Required): Primary model configurations.
+  - `fallback_metadata` (Form JSON string, Optional): Failover model configurations.
+  - `image` (File, Optional): Blueprint drawing file (PNG/JPEG/PDF).
+  - `session_id` (Form string, Optional): Unique active workspace identifier.
 
 ### 2. `POST /api/v1/edit`
-Surgically edits active code.
-
-* **Content-Type**: `application/json`
-* **JSON Request Body** (`EditRequest`):
+Surgically edits active code based on text instructions and coordinate boundaries.
+- **Content-Type**: `application/json`
+- **Request Body** (`EditRequestSchema`):
   ```json
   {
-    "prompt": "Increase the shaft height",
-    "current_code": "$fn = 32;\nbase_height = 20;\n...",
-    "target_point": [0.0, 0.0, 20.0],
-    "model": "gemini-3.1-flash-lite"
-  }
-  ```
-* **Response** (`GenerateResponse`):
-  ```json
-  {
-    "openscad_script": "/* Updated OpenSCAD code */",
-    "parameters": {
-      "base_height": 20.0,
-      "bore_diameter": 10.0,
-      "shaft_height": 40.0
-    }
+    "prompt": "increase base plate depth",
+    "current_code": "$fn = 32;\n...",
+    "target_point": [10.5, 0.0, 15.0],
+    "model_metadata": { "id": "gemini-2.5-flash", ... },
+    "fallback_metadata": null,
+    "session_id": "session-123"
   }
   ```
 
-### 3. `GET /health`
-* **Response**: `{"status": "ok", "version": "2.0.0"}`
+### 3. `POST /api/v1/repair`
+Executes syntax healing and self-recovery passes on compilation errors.
+- **Content-Type**: `application/json`
+
+### 4. `POST /api/v1/export-step`
+Transforms the provided CSG script to raw STEP file bytes and streams it.
+- **Content-Type**: `application/json`
+
+### 5. `POST /api/v1/export-stl`
+Converts cached step shape references to raw STL bytes.
+
+### 6. `POST /api/v1/export-dxf`
+Projects cached shape references to blueprint views (silhouette, section, or blueprint) and exports as DXF.
+
+### 7. `POST /api/v1/gcode`
+Processes a CAMJobRequest to analyze features (holes, slots, profiles) and generates G-code lines along with toolpath coordinates.
+
+### 8. `GET /api/v1/material-defaults`
+Retrieves spindle speed, feed rate, plunge rate, and stepdown defaults for tool diameters in Delrin, Plywood, Acrylic, Mild Steel, and Aluminum.
 
 ---
 
 ## 🛠️ Installation & Setup
 
-### 1. Configure the Environment
-Ensure you have Python 3.11+ installed. Create a virtual environment and load the dependencies:
-```bash
-python -m venv .venv
-
-# Activate venv:
-# Windows (PowerShell)
-.venv\Scripts\Activate.ps1
-# macOS/Linux
-# source .venv/bin/activate
-
-pip install -r requirements.txt
-```
-
-### 2. Set Up Local Environment Variables
-Create a `.env` file from the provided example:
-```bash
-cp .env.example .env
-```
-Fill in your Google AI key:
-```env
-GOOGLE_API_KEY=AIzaSy...
-GENAI_MODEL=gemini-3.1-flash-lite
-```
-
-### 3. Run the Development Server
-```bash
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-Test the setup by curling `http://127.0.0.1:8000/health`.
-
----
-
-## 💻 Tech Stack & Dependencies
-
-* **fastapi & uvicorn**: ASGI web server routing and execution.
-* **google-genai**: Official Google GenAI SDK interfacing with Gemini 3.1/3.5 models.
-* **pydantic**: Request/Response models parsing.
-* **python-dotenv**: Environment configuration manager.
-
----
-
-## 🔮 Backend Roadmap
-
-Future backend features currently planned:
-
-- **[x] OpenCASCADE STEP conversion service**: A FastAPI service routing compiled CSG nodes to STEP file configurations.
-- **[/] Local G-Code compilation**: Lightweight parser transforming OpenSCAD coordinates to sliced extrusion lines.
-- **[ ] Offline LLM / Ollama Connector**: Integration of local models (e.g. Qwen-Coder-32B) for offline blueprint auditing.
-- **[ ] Multi-Part Assembly Parser**: Engine capability to coordinate multiple separate files under a parent assembly manifest.
+1. **Configure Environment**:
+   ```bash
+   python -m venv .venv
+   .venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
+   ```
+2. **Local Environment Variables (`.env`)**:
+   Create a `.env` file from the example:
+   ```env
+   GOOGLE_API_KEY=...
+   DEEPSEEK_API_KEY=...
+   ANTHROPIC_API_KEY=...
+   OPENAI_API_KEY=...
+   OLLAMA_HOST=...
+   ```
+3. **Run Development Server**:
+   ```bash
+   uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+   ```

@@ -1,93 +1,59 @@
-# LLM Codegen Service Specification
+# LLM Codegen and Use Cases Specification
 
-The `LLMCodegenService` class manages GenAI API execution, prompt templates, code formatting filters, file uploading caching, and integration with the Gemini Files API.
-
----
-
-## 1. Prompt Engineering Pipeline
-
-The service utilizes three isolated system instruction sets to configure Gemini's generation parameters:
-
-### 1.1 `AUDIT_INSTRUCTION` (Vision Audit)
-* **Goal**: Analyze 2D technical drawings (image or PDF blueprint).
-* **Constraints**: Specifies Z-axis stacking guidelines and datum coordinate setup.
-* **Output**: Strictly JSON conforming to a schema.
-
-### 1.2 `SYSTEM_INSTRUCTION` (Scratch Generation)
-* **Goal**: Synthesize OpenSCAD code.
-* **Key Guidelines**:
-  1. Manifold Stability: Mandates `$fn = 32` and clean boolean geometry.
-  2. Parametric Stacking: All heights and offsets must be derived variables, not hardcoded values.
-  3. Epsilon Protocol: Explicitly details the use of `eps = 0.01` to offset cutting cylinders and cubes to pierce manifolds cleanly.
-  4. Block Structure: Mandates variables inside `// PARAMETERS_START/END` comments and assembly calling inside `part_root()`.
-
-### 1.3 `EDIT_SYSTEM_PROMPT` (Surgical Refinement)
-* **Goal**: Modify existing OpenSCAD code.
-* **Key Guidelines**:
-  - Focuses on modification in place.
-  - Instructs the LLM to retain the active variables blocks and module schemas, appending or removing lines selectively.
-  - Mandates outputting the entire updated file rather than partial snippets.
+The application logic layer consists of modular Use Case Interactors (`GenerateCadUseCase`, `EditCadUseCase`, and `RepairCadUseCase`) and the `UniversalHTTPXGateway` connection pool adapter.
 
 ---
 
-## 2. API Method Definitions
+## 1. Use Case Interactors (`app/application/use_cases/`)
 
-### `upload_file_to_gemini(file_bytes: bytes, mime_type: str, filename: str) -> Any`
-Uploads raw file bytes to the Gemini Files API via a temporary file on the host filesystem.
-* **Parameters**:
-  * `file_bytes`: Binary contents of the document.
-  * `mime_type`: Content type (e.g. `application/pdf`, `image/png`).
-  * `filename`: Base name of the file to resolve file extension correctly.
-* **Returns**: Gemini file object representation, after polling until status is `ACTIVE`.
+### 1.1 `GenerateCadUseCase`
+Orchestrates the generation of parametric OpenSCAD scripts from user descriptions and optional blueprint uploads (PDF/Image).
+- **Stage 1: Blueprint Audit**:
+  - The blueprint is uploaded to LLM vision endpoints.
+  - Returns a detailed JSON feature map representing boundary coordinates, features, and tolerances.
+  - Implements an MD5 hash cache (`_BLUEPRINT_CACHE`) to bypass visual analysis for duplicate uploads.
+- **Stage 2: Script Synthesis**:
+  - Combines the user prompt and the Stage 1 feature map into a detailed context.
+  - Sends the request to the LLM backend to synthesize compile-safe OpenSCAD code.
+- **Cascading Fallbacks**:
+  - If a request fails due to status code `5xx` or `429` (rate limits) or a connection timeout, the use case catches the exception and retries the prompt using the client-provided `fallback_metadata` block.
 
-### `audit_blueprint(image_bytes: bytes, mime_type: str, filename: str = "blueprint.pdf") -> dict`
-Analyzes technical drawing files, checking an in-memory MD5 cache first.
-* **Parameters**:
-  * `image_bytes`: Binary data of PNG, JPEG, or PDF drawing.
-  * `mime_type`: File content type.
-  * `filename`: The name of the file.
-* **Returns**: A JSON dictionary matching the feature-map schema.
+### 1.2 `EditCadUseCase`
+Orchestrates surgical edits to existing OpenSCAD source code:
+- Takes the current active source code, target click coordinates, and user instruction.
+- Contextually formats the 3D target coordinates (`[System Context: The user clicked X, Y, Z. Use as origin/target]`) and injects it alongside the instruction.
+- Instructs the LLM via `EDIT_SYSTEM_PROMPT` to surgically modify code variables and structures, keeping parameters headers (`// PARAMETERS_START`) intact.
 
-### `generate_script(prompt: str, image_bytes: Optional[bytes] = None, mime_type: Optional[str] = None, feature_map: Optional[dict] = None, base_code: Optional[str] = None, selection_context: Optional[str] = None, filename: str = "blueprint.pdf") -> str`
-Generates a parametric OpenSCAD script from scratch or refines an existing one.
-* **Parameters**:
-  * `prompt`: Sizing or topology request.
-  * `image_bytes` & `mime_type`: Optional blueprint file.
-  * `feature_map`: Pre-audited JSON model from Stage 1.
-  * `base_code`: Existing OpenSCAD code if doing refinement.
-  * `selection_context`: Target coordinates context metadata.
-  * `filename`: Name of the file.
-* **Returns**: Clean, parameterized OpenSCAD code.
-
-### `edit_script(prompt: str, current_code: str, target_point: Optional[list[float]]) -> str`
-Surgically edits active code.
-* **Parameters**:
-  * `prompt`: Refinement instruction.
-  * `current_code`: Current script contents.
-  * `target_point`: Target coordinates vector.
-* **Returns**: Updated OpenSCAD code.
+### 1.3 `RepairCadUseCase`
+Acts as a syntax self-healing pass:
+- Triggered when the WebAssembly thread fails to compile a script.
+- Sends the faulty script and compilation error trace to the LLM with `REPAIR_SYSTEM_PROMPT` to receive a corrected version of the code.
 
 ---
 
-## 3. In-Memory Cache Schema (`_BLUEPRINT_CACHE`)
+## 2. Infrastructure Gateway (`app/infrastructure/httpx_gateway.py`)
 
-A global dictionary stores up to 50 parsed files:
-```python
-_BLUEPRINT_CACHE = {
-    "<MD5_HASH>": {
-        "feature_map": { ... },     # Stage 1 Audit JSON output
-        "gemini_file": file_object, # Uploaded Gemini File handle
-        "mime_type": "..."          # Resolved mime type
-    }
-}
-```
+The `UniversalHTTPXGateway` implements the `ILLMProviderGateway` domain contract. It maintains a thread-safe connection pool utilizing raw HTTP REST queries, eliminating heavy SDK packages from the service.
+
+### Supported Vendors & Payloads:
+1. **Google (Gemini REST)**:
+   - Endpoint: `https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}`
+   - Support for multimodal inline image blocks and custom `responseMimeType: "application/json"`.
+2. **OpenAI / DeepSeek (Chat Completions)**:
+   - Endpoint: `https://api.openai.com/v1/chat/completions` or `https://api.deepseek.com/chat/completions`
+   - Maps inputs to standard messages payloads (`system`, `user`).
+3. **Anthropic (Messages API)**:
+   - Endpoint: `https://api.anthropic.com/v1/messages`
+   - Incorporates custom system parameter fields and message components.
+4. **Ollama (Local Models)**:
+   - Endpoint: `{ollama_host}/api/chat`
+   - Enables offline coding using models like `qwen2.5-coder`.
 
 ---
 
-## 4. Code Normalization
+## 3. Code Normalization & Safety Filters
 
-Gemini responses can sometimes contain markdown formatting blocks or conversational prefaces. The service runs `_normalize_script` to extract code content:
-
-1. **Markdown Fences Extraction**: Extracts scripts wrapped in ` ```scad ` or ` ```openscad ` fences.
-2. **Fast-Forward Regex**: Searches for common OpenSCAD starting tokens (e.g. `// PARAMETERS_START`, `$fn =`, `module`) and slices away any text preceding them.
-3. **Trim**: Trims trailing whitespace and ticks.
+Before returning any code to the presentation router, the Use Case base class (`UseCaseBase`) runs sanitization filters to ensure manifold stability:
+1. **Markdown Fences Extraction**: Extracts clean code blocks wrapped in ` ```scad ` or ` ```openscad ` fences.
+2. **Resolution Cap (`$fn`)**: Locates `$fn = N` declarations. If `N` exceeds `32`, it is capped down to `32` to avoid blocking the WebAssembly thread in the browser. If `$fn` is missing, `$fn = 32;` is automatically prepended.
+3. **Epsilon Offset (`eps`)**: Subtractive boolean operations (`difference()`) require cylinder/cube volumes to pierce manifold boundaries cleanly. If missing, `eps = 0.02;` is injected and applied to offsets to prevent co-planar face z-fighting compiler crashes.

@@ -14,7 +14,7 @@ import styles from './Viewport.module.css';
 type Selection = { id: string; point: [number, number, number] };
 
 type Props = {
-    stlUrls: Map<string, string>; statusText: string; isCompiling: boolean;
+    stlUrls: Map<string, { url: string; color?: string }>; statusText: string; isCompiling: boolean;
     selection?: Selection | null; onMeshClick?: (id: string | null, point: [number, number, number] | null) => void;
     annotations?: Record<string, any>; activeFeatureId?: string | null;
     onSelectParameter?: (key: string | null) => void; onHoverParameter?: (key: string | null) => void;
@@ -33,6 +33,66 @@ export const Viewport = memo(function Viewport({
     const [geometryScale, setGeometryScale] = useState<number>(1.0);
     const [geometrySize, setGeometrySize] = useState<[number, number, number]>([10, 10, 10]);
     const [quickEdit, setQuickEdit] = useState<{ key: string; point: [number, number, number] } | null>(null);
+
+    const [optimisticScale, setOptimisticScale] = useState<[number, number, number]>([1, 1, 1]);
+
+    useEffect(() => {
+        const handlePreview = (e: Event) => {
+            const customEvent = e as CustomEvent<{ key: string; value: number }>;
+            const { key, value } = customEvent.detail;
+            
+            if (annotations && annotations[key]) {
+                const annotation = annotations[key];
+                let dirX = 0, dirY = 0, dirZ = 0;
+                
+                if (annotation.p1 && annotation.p2) {
+                    const dx = annotation.p2[0] - annotation.p1[0];
+                    const dy = annotation.p2[1] - annotation.p1[1];
+                    const dz = annotation.p2[2] - annotation.p1[2];
+                    const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                    if (len > 0.001) {
+                        dirX = dx / len;
+                        dirY = dy / len;
+                        dirZ = dz / len;
+                    }
+                } else if (annotation.axis) {
+                    const ax = annotation.axis[0];
+                    const ay = annotation.axis[1];
+                    const az = annotation.axis[2];
+                    const len = Math.sqrt(ax*ax + ay*ay + az*az);
+                    if (len > 0.001) {
+                        dirX = ax / len;
+                        dirY = ay / len;
+                        dirZ = az / len;
+                    }
+                } else {
+                    dirX = 1;
+                }
+
+                const originalValue = annotation.value || 1.0;
+                if (originalValue > 0.001) {
+                    const ratio = value / originalValue;
+                    let scaleX = 1;
+                    let scaleY = 1;
+                    let scaleZ = 1;
+                    
+                    if (Math.abs(dirX) > 0.8) scaleX = ratio;
+                    else if (Math.abs(dirY) > 0.8) scaleY = ratio;
+                    else if (Math.abs(dirZ) > 0.8) scaleZ = ratio;
+                    else scaleX = ratio;
+
+                    setOptimisticScale([scaleX, scaleY, scaleZ]);
+                }
+            }
+        };
+
+        window.addEventListener('cad-parameter-preview', handlePreview);
+        return () => window.removeEventListener('cad-parameter-preview', handlePreview);
+    }, [annotations]);
+
+    useEffect(() => {
+        setOptimisticScale([1, 1, 1]);
+    }, [stlUrls, isCompiling]);
 
     const [loadingStep, setLoadingStep] = useState(0);
     const loadingSteps = useMemo(() => [
@@ -114,13 +174,15 @@ export const Viewport = memo(function Viewport({
                                 [center.x, center.y, center.z], [width, height, depth], 1.0
                             )}
                         >
-                            {Array.from(stlUrls.entries()).map(([id, url]) => (
-                                <StlMesh
-                                    key={id} id={id} url={url}
-                                    isSelected={selection?.id === id}
-                                    onMeshClick={(pt) => handleMeshClick(id, pt)}
-                                />
-                            ))}
+                            <group scale={optimisticScale}>
+                                {Array.from(stlUrls.entries()).map(([id, entry]) => (
+                                    <StlMesh
+                                        key={id} id={id} url={entry.url} color={entry.color}
+                                        isSelected={selection?.id === id}
+                                        onMeshClick={(pt) => handleMeshClick(id, pt)}
+                                    />
+                                ))}
+                            </group>
                         </Center>
 
                         {annotations && (

@@ -13,13 +13,31 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1.router import router as v1_router
+from app.presentation.v1.router import router as v1_router
+
+from fastapi.openapi.docs import get_swagger_ui_html
 
 app = FastAPI(
-    title="CADVEX V2",
+    title="⚙️ CADVEX AI Engine API",
+    description="""
+    Simple CAD & CAM Generation Workstation.
+    
+    This API converts text descriptions, sketches, and engineering drawings into 3D CAD scripts (OpenSCAD) and CNC toolpaths (G-code). 
+    
+    Key Features:
+    - 3D CAD Generation (automated conversion from drawings),
+    - Surgical CAD Edits (modify geometries using viewport coordinate targets),
+    - CNC G-code Processing (direct 3D shape feature analysis),
+    - Cascading Retries (resilient fallbacks across multiple AI models).
+    """,
     version="2.0.0",
-    docs_url="/docs",
-    redoc_url=None,
+    contact={
+        "name": "Ajith Goveas",
+        "email": "ajith.goveas@datavex.ai",
+    },
+    docs_url='/docs',
+    redoc_url='/redoc',
+    app_name="CADVEX V2" if False else None,
 )
 
 app.add_middleware(

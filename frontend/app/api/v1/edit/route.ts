@@ -3,13 +3,16 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { createPatch } from 'diff';
+import { getModelById } from '@/lib/models-registry';
 
 const PYTHON_BACKEND_URL = process.env.FASTAPI_URL;
 
 function extractParameters(code: string): Record<string, any> {
     const params: Record<string, any> = {};
     const lines = code.split('\n');
-    const paramRegex = /^([a-zA-Z0-9_]+)\s*=\s*([^;]+);/i;
+
+    // Regex to match: name = value; // optional comment (possibly containing ranges)
+    const paramRegex = /^([a-zA-Z0-9_]+)\s*=\s*([^;]+);\s*(?:\/\/\s*(.*))?/i;
 
     for (const line of lines) {
         const trimmed = line.trim();
@@ -17,15 +20,67 @@ function extractParameters(code: string): Record<string, any> {
 
         const match = trimmed.match(paramRegex);
         if (match) {
-            const [, name, rawValue] = match;
+            const [, name, rawValue, comment] = match;
             let val: any = rawValue.trim();
 
+            // Basic type conversion
             if (val.toLowerCase() === 'true') val = true;
             else if (val.toLowerCase() === 'false') val = false;
             else if (!isNaN(Number(val))) val = Number(val);
             else if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
 
-            params[name] = val;
+            // Parse comment for rich parameter details
+            let min: number | undefined;
+            let max: number | undefined;
+            let step: number | undefined;
+            let label: string | undefined;
+            let unit: string | undefined;
+            let rawComment: string | undefined = comment ? comment.trim() : undefined;
+
+            if (comment) {
+                const commentTrimmed = comment.trim();
+                const rangeMatch = /\[\s*(-?\d+(?:\.\d+)?)\s*:\s*(?:(-?\d+(?:\.\d+)?)\s*:\s*)?(-?\d+(?:\.\d+)?)\s*\]/.exec(commentTrimmed);
+                if (rangeMatch) {
+                    const firstVal = parseFloat(rangeMatch[1]);
+                    const secondVal = rangeMatch[2] ? parseFloat(rangeMatch[2]) : undefined;
+                    const thirdVal = parseFloat(rangeMatch[3]);
+
+                    if (secondVal !== undefined) {
+                        min = firstVal;
+                        step = secondVal;
+                        max = thirdVal;
+                    } else {
+                        min = firstVal;
+                        max = thirdVal;
+                    }
+
+                    let remaining = commentTrimmed.replace(rangeMatch[0], '').trim();
+                    if (remaining) {
+                        label = remaining;
+                        const unitMatch = /\(([^)]+)\)$/.exec(remaining);
+                        if (unitMatch) {
+                            unit = unitMatch[1];
+                            label = remaining.replace(unitMatch[0], '').trim();
+                        }
+                    }
+                } else if (commentTrimmed) {
+                    label = commentTrimmed;
+                }
+            }
+
+            if (min !== undefined || max !== undefined || label !== undefined || rawComment !== undefined) {
+                params[name] = {
+                    value: val,
+                    min,
+                    max,
+                    step,
+                    label,
+                    unit,
+                    rawComment
+                };
+            } else {
+                params[name] = val;
+            }
         }
     }
     return params;
@@ -53,12 +108,23 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Current code is required' }, { status: 400 });
         }
 
+        const activeModelMetadata = getModelById(model) || getModelById('gemini-3.5-flash');
+        if (!activeModelMetadata) {
+            return NextResponse.json({ error: 'Selected model not found' }, { status: 400 });
+        }
+
+        let fallbackModelMetadata = null;
+        if (activeModelMetadata.fallbackModelId) {
+            fallbackModelMetadata = getModelById(activeModelMetadata.fallbackModelId) || null;
+        }
+
         // Map camelCase fields to FastAPI Pydantic snake_case fields
         const payload = {
             prompt,
             current_code: currentCode,
             target_point: targetPoint || null,
-            model: model || undefined,
+            model_metadata: activeModelMetadata,
+            fallback_metadata: fallbackModelMetadata,
         };
 
         const backendRes = await fetch(`${PYTHON_BACKEND_URL}/edit`, {

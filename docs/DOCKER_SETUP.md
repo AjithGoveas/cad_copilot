@@ -104,9 +104,10 @@ docker compose -f docker-compose.prod.yml up --build -d
 To prevent anonymous volume leakage and disk bloat, development caching uses named Docker volumes.
 
 ### Persistent Named Volumes List:
-* `cadvex_postgres_data`: Stores database tables and structures.
-* `cadvex_backend_venv`: Caches python virtual environments inside the container.
+* `cadvex_postgres_data` / `cadvex_postgres_data_prod`: Stores database tables and structures.
+* `cadvex_backend_venv`: Caches python virtual environments inside the development container.
 * `cadvex_backend_pycache`: Caches compiled python bytecode.
+* `cadvex_backend_logs` / `cadvex_backend_logs_prod`: Exposes and persists transaction log files (`/app/logs/prisma_repository.log`) on the host system.
 * `cadvex_frontend_node_modules`: Caches node library dependencies.
 * `cadvex_frontend_next`: Caches Next.js build chunks.
 

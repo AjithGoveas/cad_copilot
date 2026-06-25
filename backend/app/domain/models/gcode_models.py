@@ -1,33 +1,7 @@
-"""Pydantic schemas for the CADVEX API."""
 from __future__ import annotations
 from typing import Any, Literal
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-
-class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class GenerateResponse(StrictModel):
-    """Payload returned after a successful two-stage generation run."""
-    openscad_script: str
-    parameters: dict[str, Any] = Field(default_factory=dict)
-
-
-class EditRequest(StrictModel):
-    """Payload sent to request surgical editing of existing code."""
-    prompt: str
-    current_code: str
-    target_point: list[float] | None = None
-    model: str = "gemini-2.5-flash-lite"
-
-
-
-
-class StepRequest(StrictModel):
-    """Payload containing compiled CSG tree to convert to STEP."""
-    csg_tree: str
-
+from pydantic import Field, model_validator
+from .generation_models import StrictModel
 
 class StockConfiguration(StrictModel):
     stock_type: Literal["block", "cylinder"]
@@ -38,18 +12,15 @@ class StockConfiguration(StrictModel):
     inner_diameter: float | None = 0.0
     length_z: float | None = None
 
-
 class MachineConfigModel(StrictModel):
     controller: str = Field(default="fanuc", description="CNC Controller dialect")
     safe_z: float = Field(default=5.0, ge=0.0, description="Safe clearance height Z in mm")
     coolant_active: bool = Field(default=True, description="Enable flood coolant M8/M9 commands")
     resolution: float = Field(default=0.5, gt=0.0, description="Path interpolation resolution")
 
-
 # Backwards compatibility alias
 class MachineConfiguration(MachineConfigModel):
     pass
-
 
 class ToolModel(StrictModel):
     number: int = Field(..., ge=1, description="Tool identification number")
@@ -62,7 +33,6 @@ class ToolModel(StrictModel):
     plunge_rate: float = Field(..., gt=0.0, description="Plunge feed rate in mm/min")
     description: str = Field(default="Endmill", description="Tool description")
     flute_length: float | None = Field(default=25.0, description="Length of tool cutting flutes in mm")
-
 
 class OperationModel(StrictModel):
     name: str = Field(..., description="Operation name")
@@ -86,7 +56,6 @@ class OperationModel(StrictModel):
                 data["corner_slowdown_factor"] = data["corner_slowdown"]
         return data
 
-
 class CAMJobRequest(StrictModel):
     """CAM Job Request payload containing compiled CSG or STEP path and CAM configuration."""
     csg_tree: str | None = Field(default=None, description="Optional compiled CSG tree string")
@@ -107,19 +76,15 @@ class CAMJobRequest(StrictModel):
                 )
         return self
 
-
-# Backwards compatibility layer
+# Backwards compatibility layers
 class ToolSchema(ToolModel):
     pass
-
 
 class OperationSchema(OperationModel):
     pass
 
-
 class GCodeRequest(CAMJobRequest):
     pass
-
 
 class GCodeResponse(StrictModel):
     """Payload containing generated G-code program and 3D toolpath lines."""

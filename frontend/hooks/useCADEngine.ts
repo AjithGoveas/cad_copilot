@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-export type EngineErrorType = 'OutOfBounds' | 'CompileFailure' | 'Timeout' | 'Unknown';
+export type EngineErrorType = 'OutOfBounds' | 'CompileFailure' | 'Timeout' | 'Unknown' | 'Not3D';
 
 export type EngineError = {
     errorType: EngineErrorType;
@@ -27,54 +27,180 @@ const STATUS_LABELS: Record<EngineStatus, string> = {
     error:      'Kernel Exception',
 };
 
-let globalWorker: Worker | null = null;
-const globalListeners = new Set<(e: MessageEvent) => void>();
-const globalErrorListeners = new Set<(e: ErrorEvent) => void>();
+type WorkerMessageListener = (e: MessageEvent) => void;
+type WorkerErrorListener = (e: ErrorEvent) => void;
 
-function getGlobalWorker(): Worker {
-    if (typeof window === 'undefined') {
-        throw new Error('Worker cannot be created on server side');
+class WorkerPoolManager {
+    private poolSize: number;
+    private workers: {
+        worker: Worker;
+        isBusy: boolean;
+        currentTaskId: number | null;
+    }[] = [];
+    private nextWorkerIndex = 0;
+    
+    private listeners = new Set<WorkerMessageListener>();
+    private errorListeners = new Set<WorkerErrorListener>();
+
+    constructor() {
+        this.poolSize = typeof navigator !== 'undefined'
+            ? Math.max(2, Math.min(4, navigator.hardwareConcurrency || 4))
+            : 2;
     }
 
-    if (!globalWorker) {
-        globalWorker = new Worker(
+    init() {
+        if (typeof window === 'undefined' || this.workers.length > 0) return;
+        for (let i = 0; i < this.poolSize; i++) {
+            this.spawn(i);
+        }
+    }
+
+    private spawn(index: number) {
+        const worker = new Worker(
             new URL('../workers/cad-worker.ts', import.meta.url),
             { type: 'module' }
         );
-
-        globalWorker.onmessage = (e: MessageEvent) => {
-            globalListeners.forEach(listener => {
-                try { listener(e); }
-                catch { }
+        
+        worker.onmessage = (e) => {
+            if (e.data.type === 'ready') {
+                return;
+            }
+            
+            if (e.data.type === 'compiled' || e.data.type === 'exported' || e.data.type === 'csg-compiled' || e.data.type === 'error') {
+                this.releaseWorker(worker);
+            }
+            
+            this.listeners.forEach(l => {
+                try { l(e); } catch (err) {}
             });
         };
 
-        globalWorker.onerror = (e: ErrorEvent) => {
-            globalErrorListeners.forEach(listener => {
-                try { listener(e); }
-                catch { }
+        worker.onerror = (e) => {
+            const idx = this.workers.findIndex(w => w?.worker === worker);
+            if (idx !== -1) {
+                worker.terminate();
+                this.spawn(idx);
+            }
+            this.errorListeners.forEach(l => {
+                try { l(e); } catch (err) {}
             });
         };
 
-        globalWorker.postMessage({ type: 'warmup' });
+        worker.postMessage({ type: 'warmup' });
+        
+        this.workers[index] = {
+            worker,
+            isBusy: false,
+            currentTaskId: null
+        };
     }
-    return globalWorker;
+
+    addListener(l: WorkerMessageListener) {
+        this.listeners.add(l);
+    }
+
+    removeListener(l: WorkerMessageListener) {
+        this.listeners.delete(l);
+    }
+
+    addErrorListener(l: WorkerErrorListener) {
+        this.errorListeners.add(l);
+    }
+
+    removeErrorListener(l: WorkerErrorListener) {
+        this.errorListeners.delete(l);
+    }
+
+    terminateAll() {
+        this.workers.forEach(w => {
+            if (w) w.worker.terminate();
+        });
+        this.workers = [];
+    }
+
+    cancelObsoleteTasks(latestRequestId: number) {
+        this.workers.forEach((w, index) => {
+            if (w && w.isBusy && w.currentTaskId !== null && w.currentTaskId < latestRequestId) {
+                w.worker.terminate();
+                this.spawn(index);
+            }
+        });
+    }
+
+    getWorker(taskId: number): Worker {
+        this.init();
+        
+        // Find an idle worker
+        const idleEntry = this.workers.find(w => w && !w.isBusy);
+        if (idleEntry) {
+            idleEntry.isBusy = true;
+            idleEntry.currentTaskId = taskId;
+            return idleEntry.worker;
+        }
+
+        // If all busy, terminate the worker at nextWorkerIndex and respawn it
+        const index = this.nextWorkerIndex;
+        this.nextWorkerIndex = (this.nextWorkerIndex + 1) % this.poolSize;
+
+        const entry = this.workers[index];
+        if (entry) {
+            entry.worker.terminate();
+        }
+        this.spawn(index);
+
+        const newEntry = this.workers[index];
+        newEntry.isBusy = true;
+        newEntry.currentTaskId = taskId;
+        return newEntry.worker;
+    }
+
+    private releaseWorker(worker: Worker) {
+        const entry = this.workers.find(w => w && w.worker === worker);
+        if (entry) {
+            entry.isBusy = false;
+            entry.currentTaskId = null;
+        }
+    }
 }
 
-function terminateGlobalWorker() {
-    if (globalWorker) {
-        globalWorker.terminate();
-        globalWorker = null;
+let poolManager: WorkerPoolManager | null = null;
+function getPoolManager(): WorkerPoolManager {
+    if (typeof window === 'undefined') {
+        throw new Error('WorkerPoolManager cannot be accessed on server side');
     }
+    if (!poolManager) {
+        poolManager = new WorkerPoolManager();
+    }
+    return poolManager;
+}
+
+function getUniqueColors(script: string): string[] {
+    const colorRegex = /\bcolor\s*\(\s*"([^"]+)"\s*\)/g;
+    const colors = new Set<string>();
+    let match;
+    while ((match = colorRegex.exec(script)) !== null) {
+        colors.add(match[1]);
+    }
+    return Array.from(colors);
+}
+
+function prepareMultiColorScript(script: string, colors: string[]): string {
+    let rewritten = script;
+    for (const color of colors) {
+        const escapedColor = color.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const re = new RegExp(`\\bcolor\\s*\\(\\s*"${escapedColor}"\\s*\\)`, 'g');
+        rewritten = rewritten.replace(re, `if (RENDER_COLOR == "all" || RENDER_COLOR == "${color}") color("${color}")`);
+    }
+    return rewritten;
 }
 
 export function useCADEngine({
     script,
     enabled    = true,
-    debounceMs = 600,
+    debounceMs = 300,
 }: CADEngineConfig) {
 
-    const [stlUrls,     setStlUrls]     = useState<Map<string, string>>(new Map());
+    const [stlUrls,     setStlUrls]     = useState<Map<string, { url: string; color?: string }>>(new Map());
     const [status,      setStatus]      = useState<EngineStatus>('idle');
     const [engineError, setEngineError] = useState<EngineError | null>(null);
     const [isExporting, setIsExporting] = useState(false);
@@ -86,10 +212,17 @@ export function useCADEngine({
         reject: (reason?: any) => void 
     }>>(new Map());
 
-    const activeUrlsRef = useRef<Map<string, string>>(new Map());
+    const activeUrlsRef = useRef<Map<string, { url: string; color?: string }>>(new Map());
     useEffect(() => {
         activeUrlsRef.current = stlUrls;
     }, [stlUrls]);
+
+    const compilationPartsRef = useRef<{
+        requestId: number;
+        expectedCount: number;
+        parts: { id: string; buffer: ArrayBuffer; color?: string }[];
+        hasError: boolean;
+    } | null>(null);
 
     const flushPendingRequests = useCallback((reason: string) => {
         pendingRequestsRef.current.forEach(({ reject }) => reject(new Error(reason)));
@@ -97,13 +230,10 @@ export function useCADEngine({
     }, []);
 
     const terminateWorker = useCallback(() => {
-        terminateGlobalWorker();
-        flushPendingRequests('Worker terminated.');
+        const pm = getPoolManager();
+        pm.terminateAll();
+        flushPendingRequests('Worker pool terminated.');
     }, [flushPendingRequests]);
-
-    const getWorker = useCallback(() => {
-        return getGlobalWorker();
-    }, []);
 
     useEffect(() => {
         const handleMessage = (e: MessageEvent) => {
@@ -111,7 +241,10 @@ export function useCADEngine({
             
             if (data.type === 'ready') return;
 
-            if (data.type === 'error' && !data.id) {
+            if (data.type === 'error' && (!data.id || data.id === lastRequestIdRef.current)) {
+                if (compilationPartsRef.current && compilationPartsRef.current.requestId === data.id) {
+                    compilationPartsRef.current.hasError = true;
+                }
                 setEngineError({
                     errorType: data.errorType ?? 'Unknown',
                     message:   data.message   ?? 'Unknown engine error.',
@@ -131,17 +264,27 @@ export function useCADEngine({
             }
 
             if (data.type === 'compiled' && data.id === lastRequestIdRef.current) {
-                setStlUrls(prev => {
-                    prev.forEach(url => URL.revokeObjectURL(url));
+                const state = compilationPartsRef.current;
+                if (state && state.requestId === data.id && !state.hasError) {
+                    state.parts.push(...data.parts);
                     
-                    const next = new Map<string, string>();
-                    data.parts.forEach((p: { id: string; buffer: ArrayBuffer }) => {
-                        const blob = new Blob([p.buffer], { type: 'model/stl' });
-                        next.set(p.id, URL.createObjectURL(blob));
-                    });
-                    return next;
-                });
-                setStatus('ready');
+                    if (state.parts.length >= state.expectedCount) {
+                        setStlUrls(prev => {
+                            prev.forEach(item => URL.revokeObjectURL(item.url));
+                            
+                            const next = new Map<string, { url: string; color?: string }>();
+                            state.parts.forEach((p) => {
+                                const blob = new Blob([p.buffer], { type: 'model/stl' });
+                                next.set(p.id, {
+                                    url: URL.createObjectURL(blob),
+                                    color: p.color
+                                });
+                             });
+                            return next;
+                        });
+                        setStatus('ready');
+                    }
+                }
             }
         };
 
@@ -155,25 +298,59 @@ export function useCADEngine({
             terminateWorker();
         };
 
-        globalListeners.add(handleMessage);
-        globalErrorListeners.add(handleError);
+        const pm = getPoolManager();
+        pm.addListener(handleMessage);
+        pm.addErrorListener(handleError);
 
         return () => {
-            globalListeners.delete(handleMessage);
-            globalErrorListeners.delete(handleError);
+            pm.removeListener(handleMessage);
+            pm.removeErrorListener(handleError);
         };
     }, [terminateWorker]);
 
     const executeCompile = useCallback((codeToCompile: string) => {
-        const worker = getWorker();
+        const pm = getPoolManager();
         const requestId = Date.now();
         lastRequestIdRef.current = requestId;
 
         setStatus('compiling');
         setEngineError(null);
 
-        worker.postMessage({ type: 'compile', script: codeToCompile, id: requestId });
-    }, [getWorker]);
+        pm.cancelObsoleteTasks(requestId);
+
+        const colors = getUniqueColors(codeToCompile);
+
+        if (colors.length <= 1) {
+            compilationPartsRef.current = {
+                requestId,
+                expectedCount: 1,
+                parts: [],
+                hasError: false
+            };
+            const worker = pm.getWorker(requestId);
+            worker.postMessage({ type: 'compile', script: codeToCompile, id: requestId });
+        } else {
+            compilationPartsRef.current = {
+                requestId,
+                expectedCount: colors.length,
+                parts: [],
+                hasError: false
+            };
+
+            const rewritten = prepareMultiColorScript(codeToCompile, colors);
+            colors.forEach(color => {
+                const partScript = `RENDER_COLOR = "${color}";\n${rewritten}`;
+                const worker = pm.getWorker(requestId);
+                worker.postMessage({
+                    type: 'compile',
+                    script: partScript,
+                    color,
+                    partId: `part_${color}`,
+                    id: requestId
+                });
+            });
+        }
+    }, []);
 
     const exportModel = useCallback(async (
         format: 'stl' | 'dxf',
@@ -185,13 +362,14 @@ export function useCADEngine({
         const codeToProcess = customScript || script;
         if (!codeToProcess) throw new Error('No script available to export');
 
-        const worker = getWorker();
+        const pm = getPoolManager();
         const requestId = Date.now();
+        const worker = pm.getWorker(requestId);
 
         setIsExporting(true);
 
         try {
-            return await new Promise<ArrayBuffer>((resolve, reject) => {
+             return await new Promise<ArrayBuffer>((resolve, reject) => {
                 pendingRequestsRef.current.set(requestId, {
                     resolve: (data) => resolve(data.data),
                     reject
@@ -208,7 +386,7 @@ export function useCADEngine({
         } finally {
             setIsExporting(false);
         }
-    }, [script, getWorker, terminateWorker]);
+    }, [script, terminateWorker]);
 
     const compileCsgTree = useCallback(async (customScript?: string): Promise<string> => {
         terminateWorker();
@@ -216,8 +394,9 @@ export function useCADEngine({
         const codeToProcess = customScript || script;
         if (!codeToProcess) throw new Error('No script available to compile CSG');
 
-        const worker = getWorker();
+        const pm = getPoolManager();
         const requestId = Date.now();
+        const worker = pm.getWorker(requestId);
 
         setIsExporting(true);
 
@@ -237,7 +416,7 @@ export function useCADEngine({
         } finally {
             setIsExporting(false);
         }
-    }, [script, getWorker, terminateWorker]);
+    }, [script, terminateWorker]);
 
     const rebuild = useCallback(() => {
         if (!script) return;
@@ -262,7 +441,7 @@ export function useCADEngine({
     useEffect(() => {
         return () => {
             flushPendingRequests('Component unmounted');
-            activeUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+            activeUrlsRef.current.forEach(item => URL.revokeObjectURL(item.url));
         };
     }, [flushPendingRequests]);
 

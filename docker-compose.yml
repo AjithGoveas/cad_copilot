@@ -31,6 +31,7 @@ services:
       - ./backend:/app
       - cadvex_backend_venv:/app/.venv
       - cadvex_backend_pycache:/app/app/__pycache__
+      - cadvex_backend_logs:/app/logs
     ports:
       - "8000:8000"
     depends_on:
@@ -72,5 +73,6 @@ volumes:
   cadvex_postgres_data:
   cadvex_backend_venv:
   cadvex_backend_pycache:
+  cadvex_backend_logs:
   cadvex_frontend_node_modules:
   cadvex_frontend_next:

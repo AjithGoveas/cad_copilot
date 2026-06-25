@@ -12,10 +12,9 @@ Detailed technical specifications, request flows, and internal mechanisms of CAD
 * **BFF (Backend-For-Frontend)**: Provides proxy endpoints mapping client JSON requests to python FastAPI schemas and handles prisma database persistence.
 
 ### 1.2 `backend` (FastAPI Application)
-* **LLM Service**: Connects to the Google GenAI SDK.
-* **Blueprint Auditor**: Stage 1 Vision parser compiling dimensions into feature-maps.
-* **Codegen Engine**: Stage 2 Script creator compiling structured code.
-* **Refinement Engine**: Stage 3 isolated script editor managing surgical edits.
+* **HTTPX Client Gateway**: Manages raw HTTP REST connection pool calls to Google, OpenAI, DeepSeek, Anthropic, and Ollama.
+* **Orchestration Use Cases**: Interactors (`GenerateCadUseCase`, `EditCadUseCase`, `RepairCadUseCase`) executing the multi-stage visual audits, code synthesis, spatial injection edits, and compile recovery.
+* **CAD/CAM Concrete Engines**: Low-level parsing (`csg_parser.py`, `gcode_generator.py`) and file formatting adapters (`cad_engine.py`, `cam_engine.py`) wrapped in Clean Architecture interfaces.
 
 ---
 
@@ -24,12 +23,13 @@ Detailed technical specifications, request flows, and internal mechanisms of CAD
 ### 2.1 Generation Flow (`POST /api/v1/generate`)
 1. User uploads a file (PDF/Image) and description in the UI.
 2. Next.js proxy route `/api/v1/generate` logs a `Project` entry in PostgreSQL via Prisma.
-3. Next.js forwards the `FormData` to the FastAPI backend's `/api/v1/generate` endpoint, **preserving the original filename** (to ensure correct mime detection by FastAPI/Gemini uploader).
-4. FastAPI checks the MD5-keyed global `_BLUEPRINT_CACHE`:
+3. Next.js forwards the `FormData` to the FastAPI backend's `/api/v1/generate` endpoint, along with the `model_metadata` and optional `fallback_metadata` JSON configurations.
+4. FastAPI validates the payload and invokes `GenerateCadUseCase`.
+5. The use case checks the MD5-keyed global `_BLUEPRINT_CACHE`:
    - **Cache Hit**: Returns the pre-audited Stage 1 feature map instantly.
-   - **Cache Miss**: Uploads the file via the Gemini Files API, waits until it is `ACTIVE`, runs the Stage 1 visual analysis, and caches the resulting feature map.
-5. FastAPI calls Gemini Codegen to generate OpenSCAD code (reusing the uploaded file reference).
-6. FastAPI returns the OpenSCAD script and parsed top-level parameters to Next.js.
+   - **Cache Miss**: Uploads the drawing to visual LLM endpoints, waits for active processing, runs the Stage 1 vision analysis, and caches the feature map.
+6. The use case calls the `UniversalHTTPXGateway` to synthesize OpenSCAD code. If the request encounters rate limits or errors, it falls back to compile the prompt via `fallback_metadata`.
+7. FastAPI returns the generated OpenSCAD script and parsed top-level parameters to Next.js.
 7. Next.js updates the database record with the generated script and returns the payload to the browser.
 8. The browser registers the script and compiles the geometry locally using the Web Worker.
 

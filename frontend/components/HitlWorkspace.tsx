@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { Target, AlertCircle } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { extractOpenScadParameters, injectOpenScadParameters } from '@/lib/openscadParameters';
+import { MODEL_REGISTRY } from '@/lib/models-registry';
 
 export type Message = {
     id: string;
@@ -28,24 +29,14 @@ type Selection = {
     point: [number, number, number];
 };
 
-const MODEL_OPTIONS = [
-    // ── Thinking models (primary) ─────────────────────────────────────────
-    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', badge: 'thinking' },
-    { id: 'gemini-2.5-flash',      name: 'Gemini 2.5 Flash',      badge: 'thinking' },
-    { id: 'gemini-2.5-pro',        name: 'Gemini 2.5 Pro',        badge: 'thinking' },
-    { id: 'gemini-3.5-flash',      name: 'Gemini 3.5 Flash',      badge: 'thinking' },
-    { id: 'gemini-3.5-pro',        name: 'Gemini 3.5 Pro',        badge: 'thinking' },
-    // ── Fallback (simple / non-reasoning) ────────────────────────────────
-    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', badge: 'fast' },
-];
-
 
 export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDemoMode?: boolean; sessionId?: string }) {
     const router = useRouter();
 
     // ── Session SWR Fetcher ──────────────────────────────────────────────────
+    const shouldFetch = sessionId && !sessionId.startsWith('temp-');
     const { data: sessionData, error: sessionError, isLoading: isLoadingSession } = useSWR(
-        sessionId ? `/api/history/session/${sessionId}` : null,
+        shouldFetch ? `/api/history/session/${sessionId}` : null,
         async (url) => {
             const res = await fetch(url);
             if (!res.ok) throw new Error('Failed to fetch session timeline.');
@@ -61,7 +52,8 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
     // ── State ────────────────────────────────────────────────────────────────
     const [prompt, setPrompt] = useState('');
     const [messages, setMessages] = useState<Message[]>([]);
-    const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0].id);
+    const [selectedModel, setSelectedModel] = useState(MODEL_REGISTRY[0].id);
+    const [activeSessionId, setActiveSessionId] = useState<string | undefined>(sessionId);
 
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
@@ -75,9 +67,15 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
     const [targetPoint, setTargetPoint] = useState<[number, number, number] | null>(null);
 
     const modelValueOptions = useMemo(() =>
-        MODEL_OPTIONS.map(m => ({ value: m.id, label: m.name, badge: m.badge })),
+        MODEL_REGISTRY.map(m => ({ value: m.id, label: m.name, badge: m.badge })),
     []);
 
+    const failedGenerationRef = useRef(false);
+
+    // Sync activeSessionId with external sessionId prop updates
+    useEffect(() => {
+        setActiveSessionId(sessionId);
+    }, [sessionId]);
 
     // ── Demo Limits State ─────────────────────────────────────────────────────
     const [promptCount, setPromptCount] = useState(0);
@@ -87,11 +85,16 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
     // Reset workspace on session departure
     useEffect(() => {
         if (!sessionId) {
+            if (failedGenerationRef.current) {
+                failedGenerationRef.current = false;
+                return;
+            }
             setMessages([]);
             setCadScript('');
             setParameters({});
             setShareToken(null);
             setTargetPoint(null);
+            setActiveSessionId(undefined);
         }
     }, [sessionId]);
 
@@ -103,10 +106,12 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
             
             items.forEach((item: any) => {
                 if (item.prompt) {
+                    const meta = item.metaData as { attachment?: { name: string } } | null;
                     reconstructedMessages.push({
                         id: `user-${item.id}`,
                         role: 'user',
                         content: item.prompt,
+                        attachment: meta?.attachment ? { name: meta.attachment.name } : undefined,
                     });
                 }
                 
@@ -173,7 +178,76 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
     const [selection, setSelection] = useState<Selection | null>(null);
 
     const viewerRef = useRef<CADViewerRef>(null);
-    const [engineStatus, setEngineStatus] = useState({ isCompiling: false, isExporting: false, isImported: false });
+    const [engineStatus, setEngineStatus] = useState<{
+        isCompiling: boolean;
+        isExporting: boolean;
+        isImported: boolean;
+        error?: any;
+    }>({ 
+        isCompiling: false, 
+        isExporting: false, 
+        isImported: false, 
+    });
+    const [isAutoRepairing, setIsAutoRepairing] = useState(false);
+    const lastRepairedCodeRef = useRef<string | null>(null);
+
+    // Manual repair helper
+    const handleRepair = useCallback(() => {
+        if (!engineStatus.error || isAutoRepairing || !cadScript) return;
+        setIsAutoRepairing(true);
+
+        const repairPromise = (async () => {
+            try {
+                const res = await fetch('/api/v1/repair', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        code: cadScript,
+                        error: `${engineStatus.error.message}\n${engineStatus.error.details || ''}`,
+                        sessionId: activeSessionId || sessionId || null,
+                        model: selectedModel,
+                        demoMode: isDemoMode,
+                    }),
+                });
+
+                if (!res.ok) {
+                    throw new Error('Repair request failed');
+                }
+
+                const data = await res.json();
+                if (!data.code) {
+                    throw new Error('No repaired code returned');
+                }
+
+                setCadScript(data.code);
+                const parsedParams = extractOpenScadParameters(data.code);
+                setParameters(parsedParams);
+
+                const repairMsg: Message = {
+                    id: `repair-${Date.now()}`,
+                    role: 'assistant',
+                    content: `🔧 **Manual Repair:** Triggered repair for compilation error: *"${engineStatus.error.message}"*. Syntax has been corrected.`,
+                };
+                setMessages((prev) => [...prev, repairMsg]);
+            } finally {
+                setIsAutoRepairing(false);
+            }
+        })();
+
+        toast.promise(repairPromise, {
+            loading: 'Attempting code repair...',
+            success: 'Repair succeeded!',
+            error: 'Repair failed. Please check the compiler errors.',
+        });
+    }, [
+        engineStatus.error,
+        isAutoRepairing,
+        cadScript,
+        activeSessionId,
+        sessionId,
+        selectedModel,
+        isDemoMode,
+    ]);
 
     // ── Generation ────────────────────────────────────────────────────────────
     const handleGenerate = async (e?: React.FormEvent, overridePrompt?: string) => {
@@ -200,6 +274,13 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
 
         const isEditing = cadScript.trim().length > 0;
 
+        let tempSessionId: string | undefined;
+        if (!isEditing) {
+            tempSessionId = `temp-${Date.now()}`;
+            setActiveSessionId(tempSessionId);
+            window.history.pushState(null, '', `/app/${tempSessionId}`);
+        }
+
         try {
             let res;
             if (isEditing) {
@@ -209,7 +290,7 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
                     targetPoint: targetPoint || null,
                     model: selectedModel,
                     demoMode: isDemoMode,
-                    sessionId: sessionId || null,
+                    sessionId: activeSessionId || sessionId || null,
                 };
                 res = await fetch('/api/v1/edit', {
                     method: 'POST',
@@ -272,17 +353,57 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
             setActiveTab('parameters');
             
             if (isEditing) {
-                if (sessionId) {
-                    mutate(`/api/history/session/${sessionId}`);
+                if (activeSessionId) {
+                    mutate(`/api/history/session/${activeSessionId}`);
                 }
             } else if (data.id && data.id !== 'demo-project') {
-                router.push(`/app/${data.id}`);
+                // Construct SWR session cache payload matching the exact Session type
+                const newSessionPayload = {
+                    id: data.id,
+                    shareToken: data.shareToken,
+                    title: activePrompt.length > 50 ? activePrompt.substring(0, 47) + '...' : activePrompt,
+                    userId: '',
+                    createdAt: data.createdAt,
+                    updatedAt: data.createdAt,
+                    historyItems: [
+                        {
+                            id: `init-${data.id}`,
+                            sessionId: data.id,
+                            actionType: 'GENERATE',
+                            prompt: activePrompt,
+                            openscadCode: data.code,
+                            patchDelta: null,
+                            isFullSnapshot: true,
+                            parametersJson: data.parameters,
+                            targetPoint: [],
+                            metaData: userMsg.attachment ? { attachment: { name: userMsg.attachment.name } } : null,
+                            createdAt: data.createdAt,
+                        }
+                    ]
+                };
+
+                // Seed SWR cache to prevent redundant history fetch
+                mutate(`/api/history/session/${data.id}`, newSessionPayload, false);
+
+                // Silently transition URL to the real database ID
+                window.history.replaceState(null, '', `/app/${data.id}`);
+
+                // Update activeSessionId
+                setActiveSessionId(data.id);
             }
             
             if (isDemoMode) setPromptCount(prev => prev + 1);
             setTargetPoint(null);
         } catch (err: any) {
             toast.error(err?.message || (isEditing ? 'Failed to modify CAD model' : 'Failed to generate CAD model'));
+            if (!isEditing) {
+                failedGenerationRef.current = true;
+                setPrompt(activePrompt);
+                setSelectedFile(userMsg.attachment?.file || null);
+                setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
+                setActiveSessionId(undefined);
+                window.history.replaceState(null, '', '/app');
+            }
         } finally {
             setIsGenerating(false);
         }
@@ -588,6 +709,8 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
                     targetPoint={targetPoint}
                     isDemoMode={isDemoMode}
                     onSelectPrompt={(p) => handleGenerate(undefined, p)}
+                    isAutoRepairing={isAutoRepairing}
+                    onRepair={handleRepair}
                 />
             </main>
 
@@ -612,7 +735,7 @@ export default function HitlWorkspace({ isDemoMode = false, sessionId }: { isDem
                 onExport={handleExport}
                 onDownloadScad={handleDownloadScad}
                 onShare={shareToken ? handleShare : undefined}
-                sessionId={sessionId}
+                sessionId={activeSessionId && !activeSessionId.startsWith('temp-') ? activeSessionId : undefined}
             >
                 <ParameterDrawer
                     parameters={parameters}

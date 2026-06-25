@@ -105,7 +105,7 @@
 
 'use client';
 
-import { useState, useEffect, memo } from 'react';
+import { useState, useEffect, memo, useMemo } from 'react';
 import { STLLoader } from 'three-stdlib';
 import * as THREE from 'three';
 import { Edges } from '@react-three/drei';
@@ -130,12 +130,25 @@ type Props = {
     id:  string;
     url: string;
     isSelected?: boolean;
+    color?: string;
     onMeshClick?: (point: [number, number, number] | null) => void;
 };
 
-export const StlMesh = memo(function StlMesh({ id, url, isSelected, onMeshClick }: Props) {
+export const StlMesh = memo(function StlMesh({ id, url, isSelected, color, onMeshClick }: Props) {
     const [hovered, setHovered] = useState(false);
     const [geo, setGeo] = useState<THREE.BufferGeometry | null>(null);
+
+    const baseColor = useMemo(() => new THREE.Color(color || '#94a3b8'), [color]);
+    const hoverColor = useMemo(() => {
+        const c = baseColor.clone();
+        // Lighten slightly by shifting HSL lightness
+        const hsl = { h: 0, s: 0, l: 0 };
+        c.getHSL(hsl);
+        c.setHSL(hsl.h, hsl.s, Math.min(hsl.l + 0.12, 1.0));
+        return c;
+    }, [baseColor]);
+
+    const selectionColor = useMemo(() => new THREE.Color(color || '#94a3b8'), [color]);
 
     useEffect(() => {
         let isCurrent = true;
@@ -176,13 +189,17 @@ export const StlMesh = memo(function StlMesh({ id, url, isSelected, onMeshClick 
             >
                 {isSelected ? (
                     <meshStandardMaterial 
-                        {...SELECTION_CONFIG}
+                        color={selectionColor}
+                        metalness={0.6}
+                        roughness={0.2}
+                        emissive={selectionColor}
+                        emissiveIntensity={0.25}
                         flatShading={true}
                     />
                 ) : (
                     <meshPhysicalMaterial 
                         {...BRUSHED_STEEL_CONFIG}
-                        color={hovered ? '#cbd5e1' : '#94a3b8'}
+                        color={hovered ? hoverColor : baseColor}
                         flatShading={true}
                     />
                 )}
