@@ -18,6 +18,7 @@ class ConcreteCADEngine(ICADEngine):
         export_to_step(shape, filename)
 
     def shape_to_step_bytes(self, shape: Any) -> bytes:
+        shape = self._ensure_brep_shape(shape)
         return build123d_to_step_bytes(shape)
 
     def shape_to_stl_bytes(self, shape: Any) -> bytes:
@@ -42,6 +43,7 @@ class ConcreteCADEngine(ICADEngine):
                 temp_path.unlink(missing_ok=True)
 
     def shape_to_dxf_bytes(self, shape: Any, dxf_mode: str) -> bytes:
+        shape = self._ensure_brep_shape(shape)
         dxf_shape = None
         if dxf_mode == "silhouette":
             with BuildSketch(Plane.XY):
@@ -109,4 +111,51 @@ class ConcreteCADEngine(ICADEngine):
                         path.unlink()
                 except Exception:
                     pass
+
+    def import_stl_to_stl(self, stl_bytes: bytes) -> tuple[bytes, Any]:
+        from build123d import import_stl
+        
+        with tempfile.NamedTemporaryFile(suffix=".stl", delete=False) as temp_stl:
+            temp_stl.write(stl_bytes)
+            temp_stl_path = Path(temp_stl.name)
+
+        try:
+            imported_shape = import_stl(str(temp_stl_path))
+            return stl_bytes, imported_shape
+        finally:
+            try:
+                if temp_stl_path.exists():
+                    temp_stl_path.unlink()
+            except Exception:
+                pass
+
+    def _ensure_brep_shape(self, shape: Any) -> Any:
+        from OCP.BRep import BRep_Tool
+        from OCP.TopLoc import TopLoc_Location
+        
+        loc = TopLoc_Location()
+        triangulation = BRep_Tool.Triangulation_s(shape.wrapped, loc)
+        if triangulation is not None:
+            # STL Triangulation mesh detected! Convert to B-Rep Compound using fast OCP builder
+            from OCP.gp import gp_Pnt
+            from OCP.BRepBuilderAPI import BRepBuilderAPI_MakePolygon, BRepBuilderAPI_MakeFace
+            from OCP.TopoDS import TopoDS_Compound
+            from OCP.BRep import BRep_Builder
+            from build123d import Compound
+            
+            nodes = [triangulation.Node(i) for i in range(1, triangulation.NbNodes() + 1)]
+            points = [gp_Pnt(n.X(), n.Y(), n.Z()) for n in nodes]
+            
+            builder = BRep_Builder()
+            comp = TopoDS_Compound()
+            builder.MakeCompound(comp)
+            
+            for i in range(1, triangulation.NbTriangles() + 1):
+                tri = triangulation.Triangle(i)
+                n1, n2, n3 = tri.Get()
+                poly = BRepBuilderAPI_MakePolygon(points[n1-1], points[n2-1], points[n3-1], True)
+                builder.Add(comp, BRepBuilderAPI_MakeFace(poly.Wire()).Face())
+                
+            return Compound(comp)
+        return shape
 

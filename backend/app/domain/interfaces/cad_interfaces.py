@@ -34,6 +34,11 @@ class ICADEngine(ABC):
         """Converts raw STEP file bytes to STL bytes and returns the imported shape."""
         pass
 
+    @abstractmethod
+    def import_stl_to_stl(self, stl_bytes: bytes) -> tuple[bytes, Any]:
+        """Imports raw STL file bytes and returns the imported shape/mesh."""
+        pass
+
 
 class ICAMEngine(ABC):
     """Agnostic interface for Computer-Aided Manufacturing (CAM) operations."""

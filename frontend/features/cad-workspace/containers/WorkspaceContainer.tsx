@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useSessionHistory } from '../hooks/useSessionHistory';
 import { useCadWorker } from '../hooks/useCadWorker';
 import { useWorkspaceEditor } from '../hooks/useWorkspaceEditor';
-import { useStepCAM } from '../hooks/useStepCAM';
+import { useStepCAM } from '@/features/cam';
 import { ChatPanelPresenter } from '../components/ChatPanelPresenter';
 import { EditorDrawerPresenter } from '../components/EditorDrawerPresenter';
 import { CADViewerPresenter } from '../components/CADViewerPresenter';
@@ -157,7 +157,24 @@ export default function WorkspaceContainer({ isDemoMode = false, sessionId }: Pr
             setDemoLimitReason('export');
             return;
         }
-        await viewerRef.current?.exportModel(format, dxfMode);
+        try {
+            const buffer = await viewerRef.current?.exportModel(format, dxfMode);
+            if (!buffer) return;
+
+            const mime = format === 'stl' ? 'application/octet-stream' : 'image/vnd.dxf';
+            const blob = new Blob([buffer], { type: mime });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `exported_model.${format}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            toast.success(`${format.toUpperCase()} Exported Successfully`);
+        } catch (err: any) {
+            toast.error(`Export failed: ${err.message || err}`);
+        }
     }, [isDemoMode, setDemoLimitReason]);
 
     const handleDownloadScad = useCallback(() => {

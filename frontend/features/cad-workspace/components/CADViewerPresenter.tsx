@@ -2,9 +2,10 @@
 
 import { useState, useCallback, useMemo, useEffect, useImperativeHandle, forwardRef, useRef } from 'react';
 import { Viewport } from './Viewport';
-import CamConfigModal, { CamConfig } from './CamConfigModal';
+import { CamConfigModal, CamConfig } from '@/features/cam';
 import { Share2, Download, ChevronDown, Layers, Box, Cpu } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
+import { toast } from 'sonner';
 import {
     DropdownMenu,
     DropdownMenuTrigger,
@@ -58,7 +59,7 @@ type CADViewerPresenterProps = {
     sourceAssetId: string | null;
     handleImportStep: (file: File) => Promise<void>;
     handleClearImport: () => void;
-    handleExportStep: () => Promise<void>;
+    handleExportStep: (compileCsgTree: () => Promise<string>) => Promise<void>;
     handleGenerateGCode: (config: CamConfig) => Promise<void>;
     isGeneratingGCode: boolean;
     isReadOnly?: boolean;
@@ -176,39 +177,41 @@ export const CADViewerPresenter = forwardRef<CADViewerRef, CADViewerPresenterPro
         return stlUrls;
     }, [stlUrls, importedStlUrl]);
 
+    const doExportModel = useCallback(async (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint', customScript?: string) => {
+        if (geometrySource === 'step' || geometrySource === 'stl') {
+            const csgReference = JSON.stringify({ type: 'step_reference', asset_id: sourceAssetId });
+            const url = format === 'stl' ? '/api/v1/export/stl' : '/api/v1/export/dxf';
+            const bodyObj: any = { csgTree: csgReference, demoMode: isDemoMode };
+            if (format === 'dxf') {
+                bodyObj.dxfMode = dxfMode;
+            }
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(bodyObj),
+            });
+            if (!res.ok) {
+                const errText = await res.text();
+                let errorMsg = errText;
+                try {
+                    const parsed = JSON.parse(errText);
+                    errorMsg = parsed.error || parsed.detail || parsed.message || errText;
+                } catch (e) {}
+                throw new Error(errorMsg || `Backend export of ${format.toUpperCase()} failed`);
+            }
+            return await res.arrayBuffer();
+        } else {
+            return await exportModel(format, dxfMode, customScript);
+        }
+    }, [geometrySource, sourceAssetId, isDemoMode, exportModel]);
+
     useImperativeHandle(ref, () => ({
         rebuild,
-        exportModel: async (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint', customScript?: string) => {
-            if (geometrySource === 'step') {
-                const csgReference = JSON.stringify({ type: 'step_reference', asset_id: sourceAssetId });
-                const url = format === 'stl' ? '/api/v1/export/stl' : '/api/v1/export/dxf';
-                const bodyObj: any = { csgTree: csgReference, demoMode: isDemoMode };
-                if (format === 'dxf') {
-                    bodyObj.dxfMode = dxfMode;
-                }
-                const res = await fetch(url, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(bodyObj),
-                });
-                if (!res.ok) {
-                    const errText = await res.text();
-                    let errorMsg = errText;
-                    try {
-                        const parsed = JSON.parse(errText);
-                        errorMsg = parsed.error || parsed.detail || parsed.message || errText;
-                    } catch (e) {}
-                    throw new Error(errorMsg || `Backend export of ${format.toUpperCase()} failed`);
-                }
-                return await res.arrayBuffer();
-            } else {
-                return await exportModel(format, dxfMode, customScript);
-            }
-        },
+        exportModel: doExportModel,
         respawn,
-    }), [geometrySource, sourceAssetId, isDemoMode, exportModel, rebuild, respawn]);
+    }), [rebuild, doExportModel, respawn]);
 
     const clearImportRef = useRef(handleClearImport);
     clearImportRef.current = handleClearImport;
@@ -235,13 +238,25 @@ export const CADViewerPresenter = forwardRef<CADViewerRef, CADViewerPresenterPro
             if (format === 'dxf' && dxfMode) {
                 exportScript = generateDxfWrapper(code, dxfMode);
             }
-            if (format === 'stl') {
-                await exportModel(format, dxfMode, exportScript);
-            } else {
-                await exportModel(format, dxfMode, exportScript);
+            try {
+                const buffer = await doExportModel(format, dxfMode, exportScript);
+                if (!buffer) return;
+
+                const mime = format === 'stl' ? 'application/octet-stream' : 'image/vnd.dxf';
+                const blob = new Blob([buffer], { type: mime });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `exported_model.${format}`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            } catch (err: any) {
+                toast.error(`Export failed: ${err.message || err}`);
             }
         },
-        [code, exportModel]
+        [code, doExportModel]
     );
 
     const handleDownloadScad = useCallback(() => {
@@ -305,7 +320,7 @@ export const CADViewerPresenter = forwardRef<CADViewerRef, CADViewerPresenterPro
                             </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-48 border-[#3C3C3C] bg-[#252526] p-1 shadow-2xl rounded-md">
-                            {geometrySource !== 'step' && (
+                            {geometrySource !== 'step' && geometrySource !== 'stl' && (
                                 <>
                                     <DropdownMenuItem onClick={handleDownloadScad} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
                                         <div className="flex items-center gap-2.5">
@@ -332,7 +347,7 @@ export const CADViewerPresenter = forwardRef<CADViewerRef, CADViewerPresenterPro
                                     </div>
                                 </div>
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={handleExportStep} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+                            <DropdownMenuItem onClick={() => handleExportStep(compileCsgTree)} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
                                 <div className="flex items-center gap-2.5">
                                     <div className="flex size-5 items-center justify-center rounded bg-blue-500/20">
                                         <Box size={11} className="text-blue-500" />

@@ -316,6 +316,7 @@ def _process_gcode(cam_request_dict: dict, step_file_path: str | None, temp_path
         shape = ShapeCache.get(asset_id)
         if shape is None:
             raise ValueError(f"STEP asset ID {asset_id} not found in cache or has expired.")
+        shape = cad_engine._ensure_brep_shape(shape)
         return cam_engine.generate_gcode(cam_request, step_path=shape)
 
     if not cam_request.csg_tree and step_file_path:
@@ -476,6 +477,34 @@ async def import_step_endpoint(file: UploadFile = File(...)) -> StreamingRespons
         raise HTTPException(
             status_code=500,
             detail={"error": {"message": f"STEP Import failed: {str(exc)}"}}
+        )
+
+
+@router.post("/import/stl", summary="Import and Settle STL Assets", description="Uploads raw STL geometries, registers them, and caches shape objects in session memory.")
+async def import_stl_endpoint(file: UploadFile = File(...)) -> StreamingResponse:
+    if not file.filename.lower().endswith(".stl"):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"message": "Invalid file format. Only .stl files are accepted."}}
+        )
+
+    try:
+        file_bytes = await file.read()
+        stl_bytes, shape = await asyncio.to_thread(cad_engine.import_stl_to_stl, file_bytes)
+        asset_id = str(uuid.uuid4())
+        ShapeCache.set(asset_id, shape)
+        return StreamingResponse(
+            io.BytesIO(stl_bytes),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f"attachment; filename=imported_{file.filename}",
+                "x-asset-id": asset_id
+            }
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"message": f"STL Import failed: {str(exc)}"}}
         )
 
 

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { workspaceApi } from '../api/workspaceApi';
+import { camApi } from '../api/camApi';
 import { toast } from 'sonner';
 
 type Config = {
@@ -26,7 +26,7 @@ export function useStepCAM({ isDemoMode }: Config) {
                 URL.revokeObjectURL(importedStlUrlRef.current);
             }
             if (sourceAssetIdRef.current) {
-                workspaceApi.teardownStep(sourceAssetIdRef.current);
+                camApi.teardownStep(sourceAssetIdRef.current);
             }
         };
     }, []);
@@ -34,7 +34,7 @@ export function useStepCAM({ isDemoMode }: Config) {
     // Stable reference — reads current values via refs, never re-creates
     const handleClearImport = useCallback(() => {
         if (sourceAssetIdRef.current) {
-            workspaceApi.teardownStep(sourceAssetIdRef.current);
+            camApi.teardownStep(sourceAssetIdRef.current);
         }
         if (importedStlUrlRef.current) {
             URL.revokeObjectURL(importedStlUrlRef.current);
@@ -49,10 +49,10 @@ export function useStepCAM({ isDemoMode }: Config) {
     const handleImportStep = useCallback(async (file: File) => {
         const importPromise = (async () => {
             if (sourceAssetId) {
-                workspaceApi.teardownStep(sourceAssetId);
+                camApi.teardownStep(sourceAssetId);
             }
 
-            const { assetId, buffer } = await workspaceApi.importStep(file, isDemoMode);
+            const { assetId, buffer } = await camApi.importStep(file, isDemoMode);
             if (assetId) {
                 setSourceAssetId(assetId);
                 setGeometrySource('step');
@@ -75,31 +75,47 @@ export function useStepCAM({ isDemoMode }: Config) {
         });
     }, [isDemoMode, sourceAssetId]);
 
+    const handleImportStl = useCallback(async (file: File) => {
+        const importPromise = (async () => {
+            if (sourceAssetId) {
+                camApi.teardownStep(sourceAssetId);
+            }
+
+            const { assetId, buffer } = await camApi.importStl(file, isDemoMode);
+            if (assetId) {
+                setSourceAssetId(assetId);
+                setGeometrySource('stl');
+            }
+
+            const blob = new Blob([buffer], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            
+            setImportedStlUrl(prev => {
+                if (prev) URL.revokeObjectURL(prev);
+                return url;
+            });
+            setIsImported(true);
+        })();
+
+        toast.promise(importPromise, {
+            loading: 'Uploading and parsing STL model…',
+            success: 'STL model imported successfully!',
+            error: (err) => `STL Import Failed: ${err.message || err}`,
+        });
+    }, [isDemoMode, sourceAssetId]);
+
     /** Unified import handler — routes STL files locally, STEP/STP files via backend. */
     const handleImport = useCallback(async (file: File) => {
         const ext = file.name.split('.').pop()?.toLowerCase();
 
         if (ext === 'stl') {
-            // STL: pure browser-side — File is a Blob, createObjectURL works directly
-            try {
-                const url = URL.createObjectURL(file);
-                setImportedStlUrl(prev => {
-                    if (prev) URL.revokeObjectURL(prev);
-                    return url;
-                });
-                setGeometrySource('stl');
-                setSourceAssetId(null);
-                setIsImported(true);
-                toast.success('STL model loaded successfully!');
-            } catch (err: any) {
-                toast.error(`STL Import Failed: ${err?.message || err}`);
-            }
+            await handleImportStl(file);
             return;
         }
 
         // STEP / STP: convert via backend
         await handleImportStep(file);
-    }, [handleImportStep]);
+    }, [handleImportStep, handleImportStl]);
 
     const handleExportStep = useCallback(async (compileCsgTree: () => Promise<string>) => {
         if (isDemoMode) {
@@ -110,13 +126,13 @@ export function useStepCAM({ isDemoMode }: Config) {
         const run = async () => {
             let buffer: ArrayBuffer;
 
-            if (geometrySource === 'step') {
-                if (!sourceAssetId) throw new Error('No active STEP file imported');
+            if (geometrySource === 'step' || geometrySource === 'stl') {
+                if (!sourceAssetId) throw new Error(`No active ${geometrySource.toUpperCase()} file imported`);
                 const csgTree = JSON.stringify({ type: 'step_reference', asset_id: sourceAssetId });
-                buffer = await workspaceApi.exportStep(csgTree, isDemoMode);
+                buffer = await camApi.exportStep(csgTree, isDemoMode);
             } else {
                 const csgTree = await compileCsgTree();
-                buffer = await workspaceApi.exportStep(csgTree, isDemoMode);
+                buffer = await camApi.exportStep(csgTree, isDemoMode);
             }
 
             const blob = new Blob([buffer], { type: 'application/step' });
@@ -152,7 +168,7 @@ export function useStepCAM({ isDemoMode }: Config) {
                 csgTree = await compileCsgTree();
             }
 
-            const data = await workspaceApi.exportGCode({
+            const data = await camApi.exportGCode({
                 ...config,
                 demoMode: isDemoMode,
                 csgTree,

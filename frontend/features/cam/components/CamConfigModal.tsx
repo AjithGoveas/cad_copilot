@@ -9,46 +9,7 @@ import {
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from 'sonner';
 
-export interface ToolConfig {
-    number: number;
-    type: 'endmill' | 'ballnose' | 'drill' | 'face' | 'turning_rough' | 'turning_finish';
-    diameter: number;
-    spindle_speed: number;
-    feed_rate: number;
-    plunge_rate: number;
-    description: string;
-    flute_length?: number;
-}
-
-export interface OperationConfig {
-    name: string;
-    strategy: 'surface' | 'profile' | 'pocket' | 'engrave' | 'drill' | 'face' | 'turn_rough' | 'turn_finish';
-    tool_number: number;
-    cutting_depth: number;
-    stepdown: number;
-    units: 'metric' | 'imperial';
-    corner_slowdown: number;
-}
-
-export interface StockConfig {
-    stock_type: 'block' | 'cylinder';
-    length_x?: number | null;
-    width_y?: number | null;
-    height_z?: number | null;
-    outer_diameter?: number | null;
-    inner_diameter?: number | null;
-    length_z?: number | null;
-}
-
-export interface CamConfig {
-    controller: string;
-    safe_z: number;
-    coolant: boolean;
-    resolution: number;
-    stock_configuration: StockConfig;
-    tools: ToolConfig[];
-    operations: OperationConfig[];
-}
+import type { ToolConfig, OperationConfig, StockConfig, CamConfig } from '../types/cam';
 
 interface CamConfigModalProps {
     isOpen: boolean;
