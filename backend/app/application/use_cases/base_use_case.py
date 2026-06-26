@@ -1,5 +1,20 @@
 from __future__ import annotations
 import re
+import logging
+from pathlib import Path
+
+# Setup logs directory
+LOG_DIR = Path(__file__).resolve().parents[3] / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+app_logger = logging.getLogger("app")
+app_logger.setLevel(logging.INFO)
+
+if not app_logger.handlers:
+    file_handler = logging.FileHandler(LOG_DIR / "app.log", encoding="utf-8")
+    formatter = logging.Formatter("[%(asctime)s] %(levelname)s [%(name)s]: %(message)s")
+    file_handler.setFormatter(formatter)
+    app_logger.addHandler(file_handler)
 
 # Regular expressions for post-gen repairs
 _CODE_FENCE_RE = re.compile(r"```(?:scad|openscad|text)?\s*(.*?)```", re.I | re.S)
@@ -13,6 +28,9 @@ _BOSL2_MODULES = re.compile(r'\b(?:cuboid|cyl|xcyl|ycyl|zcyl|prismoid|sphere|tor
 
 class UseCaseBase:
     """Base class providing standard normalization and script repair utilities."""
+    
+    def __init__(self) -> None:
+        self.logger = app_logger
     
     @staticmethod
     def _normalize_script(raw: str) -> str:

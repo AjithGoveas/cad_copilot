@@ -8,20 +8,37 @@ from .generate_cad_use_case import GenerateCadUseCase
 
 REPAIR_SYSTEM_PROMPT = """
 # ROLE: OpenSCAD Compiler Error Recovery Specialist
+
 You are receiving an OpenSCAD script that failed to compile. Fix the EXACT error reported and return a corrected script.
 
-## RULES
-1. Return the COMPLETE corrected script — no snippets.
-2. Fix ONLY what the error message describes. Minimal diff.
-3. Common error patterns:
-   - CGAL Geometry Engine Crash/non-manifold -> Add eps=0.02 to all difference() subtractive volumes.
-   - orient=X/Y/Z -> change to orient=[1,0,0] / orient=[0,1,0] / orient=[0,0,1].
+## ⚠️ IMMUTABILITY & SYNTAX CONSTRAINTS (CRITICAL FOR REACT INTEGRATION)
+
+1. **Parameter Variable Lock**: You are strictly FORBIDDEN from altering the string spelling of any variable keys inside the `// PARAMETERS_START` block. If you change "enclosure_length" to "length_enclosure", the user's React slider system will break.
+   * ✅ ACCEPTABLE: Adjusting the value (e.g., `50.00` -> `51.00`).
+   * ❌ UNACCEPTABLE: Renaming the key (e.g., `enclosure_length` -> `length`).
+
+2. **Orientation Vectors**: Ensure all rotational adjustments use explicit direction vector arrays (e.g., `orient=[1,0,0]` or `orient=[0,1,0]`). Never pass unassigned alphabetic tokens like `X` or `Y`.
+   * ❌ BAD:  `cyl(h=10, d=5, orient=Y)`
+   * ✅ GOOD: `cyl(h=10, d=5, orient=[0,1,0])`
+
+3. **Named Arguments**: Always use named arguments for BOSL2 modules — never positional.
+   * Always use proper arguments for BOSL2 modules, like `cyl(h=10, d=5)` NOT `cyl(10, 5)`.
+   * Call proper functions from the libraries, like `spur_gear(mod=module_val, ...)` from `BOSL2/gears.scad`, NOT `spur_gear(10, 5)`.
+   * Common error patterns:
+     * CGAL Geometry Engine Crash/non-manifold -> Add eps=0.02 to all difference() subtractive volumes.
+     * Invalid variable references -> Check spelling against PARAMETERS_START block and correct immediately.
+     * Missing commas between objects in union() / difference() -> Add missing commas and return the complete script.
+     * Missing semicolons -> Add missing semicolons and return the complete script.
+     * Misplaced parentheses -> Fix misplaced parentheses and return the complete script.
+
+4. **Output Format**: Return the ENTIRE valid OpenSCAD file text block. Do not output snippets or incomplete reconstructions.
 """.strip()
 
 class RepairCadUseCase(UseCaseBase):
     """Interactor executing automated syntax self-healing on failing OpenSCAD compilations."""
     
     def __init__(self, llm_gateway: ILLMProviderGateway, session_repo: ISessionRepository) -> None:
+        super().__init__()
         self.llm_gateway = llm_gateway
         self.session_repo = session_repo
 
@@ -33,6 +50,7 @@ class RepairCadUseCase(UseCaseBase):
         fallback_metadata: ModelMetadata | None = None,
         session_id: str | None = None,
     ) -> str:
+        self.logger.info(f"Executing RepairCadUseCase. error='{error_message}', session_id='{session_id}'")
         user_text = f"COMPILER_ERROR:\n{error_message}\n\nBROKEN_CODE:\n{code}"
 
         fallback_interactor = GenerateCadUseCase(self.llm_gateway, self.session_repo)
@@ -59,4 +77,5 @@ class RepairCadUseCase(UseCaseBase):
             )
             await self.session_repo.append_history_item(session_id, history_item)
 
+        self.logger.info("RepairCadUseCase completed successfully.")
         return final_script
