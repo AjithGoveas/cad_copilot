@@ -31,8 +31,8 @@ The frontend is designed to run heavy 3D CAD rendering locally in the browser, b
 
 To ensure sub-second compilation times, the application implements a background thread rendering system:
 
-- **Global Worker Singleton (`useCADEngine.ts`)**: To prevent massive memory spikes and garbage collection locks caused by spawning multiple WebAssembly threads, a single Web Worker is maintained globally.
-- **OpenSCAD WASM Compilation**: When parameters change or the editor script is modified, the script is debounced (default 600ms) and dispatched to the worker thread (`cad-worker.ts`). The worker compiles the geometry using standard OpenSCAD binaries compiled to WASM, returning an ArrayBuffer of STL mesh data.
+- **Global Worker Singleton (`useCadWorker.ts`)**: To prevent massive memory spikes and garbage collection locks caused by spawning multiple WebAssembly threads, a single Web Worker is maintained globally (managed under [useCadWorker.ts](features/cad-workspace/hooks/useCadWorker.ts)).
+- **OpenSCAD WASM Compilation**: When parameters change or the editor script is modified, the script is debounced (default 600ms) and dispatched to the worker thread ([cad-worker.ts](workers/cad-worker.ts)). The worker compiles the geometry using standard OpenSCAD binaries compiled to WASM, returning an ArrayBuffer of STL mesh data.
 - **Blob Object Management**: The returned ArrayBuffers are converted to transient browser Blob URLs, loaded via Three.js `STLLoader`, and rendered in the 3D canvas. Old Blob URLs are garbage-collected instantly to prevent memory leaks.
 
 ### 2. Proximity Click-to-Edit Matrix
@@ -47,13 +47,13 @@ When a user clicks on the 3D mesh, the viewport performs standard raycasting. In
 
 ## 🎨 Feature Highlights & Viewport Components
 
-### 👁️ 3D Viewport (`Viewport.tsx` & `StlMesh.tsx`)
+### 👁️ 3D Viewport ([Viewport.tsx](features/cad-workspace/components/Viewport.tsx) & [StlMesh.tsx](features/cad-workspace/components/StlMesh.tsx))
 
 - **Flat Shading & Physical Materials**: The geometry is rendered with flat-shading physical properties, presenting realistic brushed stainless steel finishes (`metalness: 1.0`, `roughness: 0.42`).
 - **Interactive Edge Outlines**: High-performance outlines (`<Edges />` from Drei) render on hover or selection, using a slight scale offset (`1.001`) to eliminate standard Z-fighting on co-planar faces.
 - **Radial Lighting Stage**: Built with City environments and contact shadows (`ContactShadows`) to elevate the premium workstation feel.
 
-### 📐 Dimension Overlay (`DimensionOverlay.tsx`)
+### 📐 Dimension Overlay ([DimensionOverlay.tsx](features/cad-workspace/components/DimensionOverlay.tsx))
 
 - **Concurrent Visualization**: Renders all model parameters concurrently as subtle gray annotations to let users see all editable constraints at once.
 - **Glassmorphic Billboards**: Custom 3D labels use Drei's `<Html />` billboards. Inactive dimensions display in a compact, subtle state (showing numeric values only) and transition with smooth scaling animations to full detailed parameter tags on hover or click.
@@ -85,7 +85,9 @@ frontend/
 │   │   ├── history/            # CAD design history fetching
 │   │   └── v1/
 │   │       ├── generate/       # Multipart form new model generation
-│   │       └── edit/           # JSON-based surgical model modification
+│   │       ├── edit/           # JSON-based surgical model modification
+│   │       ├── import/         # STEP & STL backend converters proxy
+│   │       └── export/         # STEP, STL, DXF, G-code exporters proxy
 │   ├── app/                    # Sub-route configurations
 │   │   ├── demo/               # Demo-restricted sandbox workstation
 │   │   ├── login/              # JetBrains-themed workstation auth login
@@ -94,21 +96,18 @@ frontend/
 │   ├── globals.css             # Tailwind base and workstation grid glows
 │   ├── layout.tsx              # Root HTML wrapper and SWR/NextAuth provider
 │   └── page.tsx                # Core workstation UI layout (Orchestrates main views)
-├── components/
-│   ├── ui/                     # Shared custom widgets (dropdowns, dialogs, buttons)
-│   ├── Viewport.tsx            # R3F Canvas context, lighting stage & controls
-│   ├── StlMesh.tsx             # Physical STL mesh loader, outlines & edge highlighting
-│   ├── DimensionOverlay.tsx    # Custom height/diameter visual measurement overlays
-│   ├── QuickEditOverlay.tsx    # Floating in-viewport auto-focusing parameter input
-│   ├── ChatPanel.tsx           # AI chat logs, prompt input, and target coordinate attachments
-│   ├── ChatBubble.tsx          # Dynamic message item with file/diff render options
-│   ├── CameraRig.tsx           # Auto-focus camera movements when active parameter changes
-│   ├── EditorDrawer.tsx        # Collapsible terminal console, history logs, and Monaco script code tab
-│   ├── ParameterDrawer.tsx     # Interactive properties list editor sidebar
-│   ├── ParameterInput.tsx      # Standardized form input matching OpenSCAD schema bounds
-│   └── HitlWorkspace.tsx       # Core React context state machine & event handlers
-├── hooks/
-│   └── useCADEngine.ts         # Singleton compiler hook managing the Web Worker lifecycle
+├── features/                   # 🧱 Modular Domain-Driven Feature Packages
+│   ├── cad-workspace/          # CAD Workstation package
+│   │   ├── components/         # Viewport, ParameterDrawer, StlMesh, etc.
+│   │   ├── containers/         # WorkspaceContainer (Main Coordinator)
+│   │   ├── hooks/              # useCadWorker, useWorkspaceEditor, useSessionHistory
+│   │   └── api/                # workspaceApi (generate, edit, repair CAD calls)
+│   └── cam/                    # CAM & Toolpath Configuration package
+│       ├── components/         # CamConfigModal
+│       ├── hooks/              # useStepCAM (handles STEP/STL imports & exports)
+│       ├── api/                # camApi (exposes import, export, and GCODE endpoints)
+│       └── types/              # cam.ts (centralized tool and CAM request definitions)
+├── components/                 # Shared generic UI components (Button, Dialog, etc.)
 ├── workers/
 │   └── cad-worker.ts           # Background Web Worker executing openscad-wasm scripts
 ├── lib/

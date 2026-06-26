@@ -37,18 +37,29 @@ cadvex/
     │   │   ├── auth/            # NextAuth endpoints
     │   │   └── v1/
     │   │       ├── generate/    # Proxies new blueprint generations
-    │   │       └── edit/        # Proxies surgical code modifications
+    │   │       ├── edit/        # Proxies surgical code modifications
+    │   │       ├── import/      # STEP & STL backend converters proxy
+    │   │       └── export/      # STEP, STL, DXF, G-code exporters proxy
     │   ├── app/
-    │   │   ├── demo/                # Demo-restricted sandbox workstation
-    │   │   ├── login/               # Workstation login route
-    │   │   ├── signup/              # Signup interface
-    │   │   └── view/                # Shared model views
+    │   │   ├── demo/            # Demo-restricted sandbox workstation
+    │   │   ├── login/           # Workstation login route
+    │   │   ├── signup/          # Signup interface
+    │   │   └── view/            # Shared model views
     │   ├── globals.css
     │   ├── layout.tsx
     │   └── page.tsx             # Main Workstation workspace page
-    ├── components/              # Viewport, Chat panel, Monaco, parameter inputs
-    ├── hooks/
-    │   └── useCADEngine.ts      # Singleton compiler hook managing Web Worker
+    ├── features/                # 🧱 Modular Domain-Driven Feature Packages
+    │   ├── cad-workspace/       # CAD Workstation package
+    │   │   ├── components/      # Viewport, ParameterDrawer, StlMesh, etc.
+    │   │   ├── containers/      # WorkspaceContainer (Main Coordinator)
+    │   │   ├── hooks/           # useCadWorker, useWorkspaceEditor, useSessionHistory
+    │   │   └── api/             # workspaceApi (generate, edit, repair CAD calls)
+    │   └── cam/                 # CAM & Toolpath Configuration package
+    │       ├── components/      # CamConfigModal
+    │       ├── hooks/           # useStepCAM (handles STEP/STL imports & exports)
+    │       ├── api/             # camApi (exposes import, export, and GCODE endpoints)
+    │       └── types/           # cam.ts (centralized tool and CAM request definitions)
+    ├── components/              # Shared generic UI components (Button, Dialog, etc.)
     ├── workers/
     │   └── cad-worker.ts        # Client-side Web Worker running OpenSCAD WASM
     ├── lib/

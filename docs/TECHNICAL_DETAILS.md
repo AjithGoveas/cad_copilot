@@ -83,7 +83,7 @@ If the resulting `distance` is within the `5.0` threshold, the parameter is sele
 
 ## 4. Hierarchical Matrix Transformation Stack Parser
 
-Extracting annotations from nested OpenSCAD scripts is handled by [inferAnnotations](file:///c:/Users/ajith/Videos/nano_test/cad_project/cad_copilot/frontend/lib/openscadParameters.ts#L339) using a stack-based matrix transformation parser:
+Extracting annotations from nested OpenSCAD scripts is handled by [inferAnnotations](../frontend/lib/openscadParameters.ts#L339) using a stack-based matrix transformation parser:
 
 1. **Tokenizer**: Tokenizes the module body to parse structure `translate(...)`, `rotate(...)`, `cylinder(...)`, `cube(...)`, `{`, `}`, and `;` in strict sequential order.
 2. **Current and Pending Frames**:
@@ -103,7 +103,7 @@ Extracting annotations from nested OpenSCAD scripts is handled by [inferAnnotati
 
 ## 5. WASM Engine Web Worker Singleton
 
-The background compilation system is managed in [useCADEngine.ts](file:///c:/Users/ajith/Videos/nano_test/cad_project/cad_copilot/frontend/hooks/useCADEngine.ts) and [cad-worker.ts](file:///c:/Users/ajith/Videos/nano_test/cad_project/cad_copilot/frontend/workers/cad-worker.ts):
+The background compilation system is managed in [useCadWorker.ts](../frontend/features/cad-workspace/hooks/useCadWorker.ts) and [cad-worker.ts](../frontend/workers/cad-worker.ts):
 
 * **Singleton Thread**: Spawns a single `Worker` instance globally. Mounting/unmounting hooks subscribe and unsubscribe listeners to a shared message hub rather than starting new worker processes, preventing RAM leakage.
 * **Transient Blobs**: The compiled STL ArrayBuffer is converted to a browser Blob:
