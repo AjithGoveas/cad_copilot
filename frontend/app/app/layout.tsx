@@ -1,7 +1,7 @@
 'use client';
 
 import { useParams, usePathname } from 'next/navigation';
-import HitlWorkspace from '@/components/HitlWorkspace';
+import WorkspaceContainer from '@/features/cad-workspace/containers/WorkspaceContainer';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const params = useParams();
@@ -9,6 +9,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const sessionId = params?.sessionId as string | undefined;
 
   const isAuthOrView = pathname?.includes('/login') || pathname?.includes('/signup') || pathname?.includes('/view');
+  const isDemo = pathname?.includes('/demo');
 
   if (isAuthOrView) {
     return <>{children}</>;
@@ -16,7 +17,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      <HitlWorkspace sessionId={sessionId} />
+      <WorkspaceContainer sessionId={sessionId} isDemoMode={isDemo} />
       {children}
     </>
   );

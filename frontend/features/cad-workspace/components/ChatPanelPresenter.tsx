@@ -5,7 +5,7 @@ import { Upload, X, Sparkles, Binary, LogOut, ChevronLeft, ChevronRight, Box, Ar
 import { Spinner } from '@/components/ui/spinner';
 import { ChatBubble } from './ChatBubble';
 import { signOut } from 'next-auth/react';
-import type { Message } from './HitlWorkspace';
+import type { Message } from '../types';
 
 type Props = {
     isOpen: boolean;
@@ -30,7 +30,7 @@ type Props = {
     children?: React.ReactNode;
 };
 
-export function ChatPanel({
+export function ChatPanelPresenter({
     isOpen, setIsOpen,
     messages, prompt, setPrompt,
     selectedModel, setSelectedModel, modelOptions,
@@ -118,7 +118,7 @@ export function ChatPanel({
                     </div>
                 </div>
 
-                {/* The "Proper" Composer Area */}
+                {/* Composer Area */}
                 <div className="shrink-0 px-4 pb-6 pt-2 bg-gradient-to-t from-[#09090b] via-[#09090b] to-transparent">
                     <div className="max-w-3xl mx-auto flex flex-col gap-3">
                         
@@ -128,7 +128,7 @@ export function ChatPanel({
                             onSubmit={onSubmit}
                             className="flex flex-col rounded-2xl border border-zinc-700/60 bg-zinc-900/50 shadow-sm focus-within:bg-zinc-800/60 focus-within:border-zinc-600 focus-within:ring-1 focus-within:ring-zinc-600 transition-all duration-200 overflow-hidden"
                         >
-                            {/* File and Target Attachment Pills inside Composer */}
+                            {/* File and Target Attachment Pills */}
                             {(selectedFile || targetPoint) && (
                                 <div className="flex flex-wrap gap-2 px-3 pt-3 pb-1">
                                     {selectedFile && (
@@ -181,7 +181,7 @@ export function ChatPanel({
                                 style={{ minHeight: '52px', maxHeight: '200px' }}
                             />
                             
-                            {/* Toolbar row under text */}
+                            {/* Toolbar row */}
                             <div className="flex items-center justify-between px-2 pb-2 pt-1">
                                 <label className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-700/50 hover:text-zinc-200 transition-colors" title="Attach file">
                                     <Paperclip size={16} />
@@ -215,7 +215,7 @@ export function ChatPanel({
                 </div>
             </div>
 
-            {/* Collapsed State Sidebar */}
+            {/* Collapsed State */}
             {!isOpen && (
                 <div className="absolute inset-0 flex flex-col items-center py-4 bg-[#09090b] border-r border-zinc-800 z-20">
                     <button onClick={() => setIsOpen(true)} className="flex size-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-all mb-6 shadow-sm">

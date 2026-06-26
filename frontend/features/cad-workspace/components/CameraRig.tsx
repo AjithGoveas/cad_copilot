@@ -157,4 +157,3 @@ export function CameraRig({ activeParameter, annotations, geometryInfo }: Camera
 
   return null;
 }
-

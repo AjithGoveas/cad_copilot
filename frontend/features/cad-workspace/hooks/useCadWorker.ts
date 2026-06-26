@@ -1,31 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-
-export type EngineErrorType = 'OutOfBounds' | 'CompileFailure' | 'Timeout' | 'Unknown' | 'Not3D';
-
-export type EngineError = {
-    errorType: EngineErrorType;
-    message:   string;
-    details:   string;
-};
-
-export type CADEngineConfig = {
-    script:      string;
-    enabled?:    boolean;
-    debounceMs?: number;
-};
-
-export type EngineStatus =
-    | 'idle'
-    | 'compiling'
-    | 'ready'
-    | 'error';
-
-const STATUS_LABELS: Record<EngineStatus, string> = {
-    idle:       'Awaiting Input…',
-    compiling:  'Compiling Geometry…',
-    ready:      'Engine Ready',
-    error:      'Kernel Exception',
-};
+import type { EngineError, EngineStatus } from '../types';
 
 type WorkerMessageListener = (e: MessageEvent) => void;
 type WorkerErrorListener = (e: ErrorEvent) => void;
@@ -57,14 +31,12 @@ class WorkerPoolManager {
 
     private spawn(index: number) {
         const worker = new Worker(
-            new URL('../workers/cad-worker.ts', import.meta.url),
+            new URL('../../../workers/cad-worker.ts', import.meta.url),
             { type: 'module' }
         );
         
         worker.onmessage = (e) => {
-            if (e.data.type === 'ready') {
-                return;
-            }
+            if (e.data.type === 'ready') return;
             
             if (e.data.type === 'compiled' || e.data.type === 'exported' || e.data.type === 'csg-compiled' || e.data.type === 'error') {
                 this.releaseWorker(worker);
@@ -130,7 +102,6 @@ class WorkerPoolManager {
     getWorker(taskId: number): Worker {
         this.init();
         
-        // Find an idle worker
         const idleEntry = this.workers.find(w => w && !w.isBusy);
         if (idleEntry) {
             idleEntry.isBusy = true;
@@ -138,7 +109,6 @@ class WorkerPoolManager {
             return idleEntry.worker;
         }
 
-        // If all busy, terminate the worker at nextWorkerIndex and respawn it
         const index = this.nextWorkerIndex;
         this.nextWorkerIndex = (this.nextWorkerIndex + 1) % this.poolSize;
 
@@ -174,6 +144,70 @@ function getPoolManager(): WorkerPoolManager {
     return poolManager;
 }
 
+// 128 MB RAM Bound Main-Thread LRU Cache for compiled part buffers
+class MainThreadLRUCache<K, V extends { parts: { id: string; buffer: ArrayBuffer; color?: string }[]; logs: string[] }> {
+    private maxBytes: number;
+    private currentBytes = 0;
+    private cache: Map<K, V>;
+
+    constructor(maxBytes = 128 * 1024 * 1024) {
+        this.maxBytes = maxBytes;
+        this.cache = new Map();
+    }
+
+    get(key: K): V | undefined {
+        const item = this.cache.get(key);
+        if (item !== undefined) {
+            this.cache.delete(key);
+            this.cache.set(key, item);
+        }
+        return item;
+    }
+
+    set(key: K, val: V): void {
+        const incomingSize = val.parts.reduce((sum, p) => sum + p.buffer.byteLength, 0);
+
+        while (this.currentBytes + incomingSize > this.maxBytes && this.cache.size > 0) {
+            const firstKey = this.cache.keys().next().value;
+            if (firstKey !== undefined) {
+                const evicted = this.cache.get(firstKey);
+                if (evicted) {
+                    this.currentBytes -= evicted.parts.reduce((sum, p) => sum + p.buffer.byteLength, 0);
+                }
+                this.cache.delete(firstKey);
+            }
+        }
+
+        if (this.cache.has(key)) {
+            const existing = this.cache.get(key);
+            if (existing) {
+                this.currentBytes -= existing.parts.reduce((sum, p) => sum + p.buffer.byteLength, 0);
+            }
+            this.cache.delete(key);
+        }
+
+        this.cache.set(key, val);
+        this.currentBytes += incomingSize;
+    }
+}
+
+const mainThreadCache = new MainThreadLRUCache<string, { parts: { id: string; buffer: ArrayBuffer; color?: string }[]; logs: string[] }>();
+
+async function computeScriptHash(text: string): Promise<string> {
+    try {
+        const msgUint8 = new TextEncoder().encode(text);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (e) {
+        let hash = 5381;
+        for (let i = 0; i < text.length; i++) {
+            hash = (hash * 33) ^ text.charCodeAt(i);
+        }
+        return (hash >>> 0).toString(16);
+    }
+}
+
 function getUniqueColors(script: string): string[] {
     const colorRegex = /\bcolor\s*\(\s*"([^"]+)"\s*\)/g;
     const colors = new Set<string>();
@@ -194,19 +228,31 @@ function prepareMultiColorScript(script: string, colors: string[]): string {
     return rewritten;
 }
 
-export function useCADEngine({
+export type CADWorkerConfig = {
+    script:      string;
+    enabled?:    boolean;
+    debounceMs?: number;
+};
+
+const STATUS_LABELS: Record<EngineStatus, string> = {
+    idle:       'Awaiting Input…',
+    compiling:  'Compiling Geometry…',
+    ready:      'Engine Ready',
+    error:      'Kernel Exception',
+};
+
+export function useCadWorker({
     script,
     enabled    = true,
     debounceMs = 300,
-}: CADEngineConfig) {
-
+}: CADWorkerConfig) {
     const [stlUrls,     setStlUrls]     = useState<Map<string, { url: string; color?: string }>>(new Map());
     const [status,      setStatus]      = useState<EngineStatus>('idle');
     const [engineError, setEngineError] = useState<EngineError | null>(null);
+    const [warnings,    setWarnings]    = useState<string[]>([]);
     const [isExporting, setIsExporting] = useState(false);
 
     const lastRequestIdRef = useRef<number>(0);
-    
     const pendingRequestsRef = useRef<Map<number, { 
         resolve: (data: any) => void, 
         reject: (reason?: any) => void 
@@ -222,6 +268,7 @@ export function useCADEngine({
         expectedCount: number;
         parts: { id: string; buffer: ArrayBuffer; color?: string }[];
         hasError: boolean;
+        logs: string[];
     } | null>(null);
 
     const flushPendingRequests = useCallback((reason: string) => {
@@ -235,10 +282,30 @@ export function useCADEngine({
         flushPendingRequests('Worker pool terminated.');
     }, [flushPendingRequests]);
 
+    const handleCompiledParts = useCallback((parts: { id: string; buffer: ArrayBuffer; color?: string }[]) => {
+        setStlUrls(prev => {
+            prev.forEach(item => URL.revokeObjectURL(item.url));
+            const next = new Map<string, { url: string; color?: string }>();
+            parts.forEach((p) => {
+                const blob = new Blob([p.buffer], { type: 'model/stl' });
+                next.set(p.id, {
+                    url: URL.createObjectURL(blob),
+                    color: p.color
+                });
+            });
+            return next;
+        });
+        setStatus('ready');
+    }, []);
+
+    const parseWarnings = useCallback((logs: string[]) => {
+        const warningLogs = logs.filter(log => log.toUpperCase().includes('WARNING:'));
+        setWarnings(warningLogs);
+    }, []);
+
     useEffect(() => {
         const handleMessage = (e: MessageEvent) => {
             const data = e.data;
-            
             if (data.type === 'ready') return;
 
             if (data.type === 'error' && (!data.id || data.id === lastRequestIdRef.current)) {
@@ -267,22 +334,21 @@ export function useCADEngine({
                 const state = compilationPartsRef.current;
                 if (state && state.requestId === data.id && !state.hasError) {
                     state.parts.push(...data.parts);
+                    if (data.logs) {
+                        state.logs.push(...data.logs);
+                    }
                     
                     if (state.parts.length >= state.expectedCount) {
-                        setStlUrls(prev => {
-                            prev.forEach(item => URL.revokeObjectURL(item.url));
-                            
-                            const next = new Map<string, { url: string; color?: string }>();
-                            state.parts.forEach((p) => {
-                                const blob = new Blob([p.buffer], { type: 'model/stl' });
-                                next.set(p.id, {
-                                    url: URL.createObjectURL(blob),
-                                    color: p.color
-                                });
-                             });
-                            return next;
+                        // Store the successfully compiled parts in main thread LRU Cache
+                        computeScriptHash(script).then(hash => {
+                            mainThreadCache.set(hash, {
+                                parts: state.parts.map(p => ({ ...p, buffer: p.buffer.slice(0) })),
+                                logs: [...state.logs]
+                            });
                         });
-                        setStatus('ready');
+                        
+                        handleCompiledParts(state.parts);
+                        parseWarnings(state.logs);
                     }
                 }
             }
@@ -306,15 +372,26 @@ export function useCADEngine({
             pm.removeListener(handleMessage);
             pm.removeErrorListener(handleError);
         };
-    }, [terminateWorker]);
+    }, [terminateWorker, handleCompiledParts, parseWarnings, script]);
 
-    const executeCompile = useCallback((codeToCompile: string) => {
+    const executeCompile = useCallback(async (codeToCompile: string) => {
+        // Check local LRU Cache first
+        const hash = await computeScriptHash(codeToCompile);
+        const cached = mainThreadCache.get(hash);
+        if (cached) {
+            handleCompiledParts(cached.parts.map(p => ({ ...p, buffer: p.buffer.slice(0) })));
+            parseWarnings(cached.logs);
+            setEngineError(null);
+            return;
+        }
+
         const pm = getPoolManager();
         const requestId = Date.now();
         lastRequestIdRef.current = requestId;
 
         setStatus('compiling');
         setEngineError(null);
+        setWarnings([]);
 
         pm.cancelObsoleteTasks(requestId);
 
@@ -325,7 +402,8 @@ export function useCADEngine({
                 requestId,
                 expectedCount: 1,
                 parts: [],
-                hasError: false
+                hasError: false,
+                logs: []
             };
             const worker = pm.getWorker(requestId);
             worker.postMessage({ type: 'compile', script: codeToCompile, id: requestId });
@@ -334,7 +412,8 @@ export function useCADEngine({
                 requestId,
                 expectedCount: colors.length,
                 parts: [],
-                hasError: false
+                hasError: false,
+                logs: []
             };
 
             const rewritten = prepareMultiColorScript(codeToCompile, colors);
@@ -350,7 +429,7 @@ export function useCADEngine({
                 });
             });
         }
-    }, []);
+    }, [handleCompiledParts, parseWarnings]);
 
     const exportModel = useCallback(async (
         format: 'stl' | 'dxf',
@@ -451,6 +530,7 @@ export function useCADEngine({
         statusText:    STATUS_LABELS[status] || 'Initialising…',
         engineError,
         error:         engineError?.message ?? null,
+        warnings,
         isRecompiling: status === 'compiling',
         isExporting,
         rebuild,

@@ -79,7 +79,7 @@ function ParameterInputInner({
     };
 
     const displayReadOnlyValue = useMemo(() => {
-        if (typeof displayValue === 'boolean') return displayValue ? 'true' : 'false';
+        if (typeof displayValue === 'boolean' ? true : false) return displayValue ? 'true' : 'false';
         return String(displayValue);
     }, [displayValue]);
 

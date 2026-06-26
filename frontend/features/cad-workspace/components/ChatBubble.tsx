@@ -51,7 +51,7 @@ export function ChatBubble({ role, content, attachment, uploadedFiles = [], onUp
                 {/* Message Content Container */}
                 <div className={`flex flex-col gap-2 w-full ${isUser ? 'items-end' : 'items-start'}`}>
                     
-                    {/* User Attachment / Context Chip */}
+                    {/* User Context Chip */}
                     {isUser && (
                         <div className="flex items-center gap-2 mb-1">
                             {attachment ? (
@@ -137,7 +137,7 @@ export function ChatBubble({ role, content, attachment, uploadedFiles = [], onUp
                         <div className={`relative transition-all duration-300 ${
                             isUser 
                                 ? 'bg-zinc-800 border border-zinc-700/50 text-zinc-100 rounded-3xl rounded-br-sm px-4 py-2.5 shadow-sm text-[14px]' 
-                                : 'bg-transparent text-zinc-200 rounded-lg py-1 text-[14px]' // TIGHTER PADDING FOR AI
+                                : 'bg-transparent text-zinc-200 rounded-lg py-1 text-[14px]'
                         }`}>
                             <div className="prose prose-invert prose-sm max-w-none break-words leading-normal">
                                 <ReactMarkdown

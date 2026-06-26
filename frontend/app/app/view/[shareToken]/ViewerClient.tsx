@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useCallback, useMemo } from 'react';
-import { CADViewer } from '@/components/CADViewer';
-import { ParameterDrawer } from '@/components/ParameterDrawer';
+import { CADViewerPresenter } from '@/features/cad-workspace/components/CADViewerPresenter';
+import { ParameterDrawer } from '@/features/cad-workspace/components/ParameterDrawer';
 import { extractOpenScadParameters } from '@/lib/openscadParameters';
 import { Box, Layers } from 'lucide-react';
+import { useCadWorker } from '@/features/cad-workspace/hooks/useCadWorker';
 
 type ViewerClientProps = {
 	prompt: string;
@@ -21,6 +22,21 @@ export default function ViewerClient({ prompt, scadCode, parametersJson }: Viewe
 	const [activeFeatureId, setActiveFeatureId] = useState<string | null>(null);
 	const [selection, setSelection] = useState<Selection | null>(null);
 	const [engineStatus, setEngineStatus] = useState({ isCompiling: false, isExporting: false, isImported: false });
+
+	const {
+		stlUrls,
+		statusText,
+		engineError,
+		isRecompiling,
+		isExporting,
+		rebuild,
+		respawn,
+		exportModel,
+		compileCsgTree,
+	} = useCadWorker({
+		script: scadCode,
+		enabled: !!scadCode,
+	});
 
 	const parameters = useMemo(() => {
 		if (parametersJson && typeof parametersJson === 'object' && Object.keys(parametersJson).length > 0) {
@@ -40,7 +56,7 @@ export default function ViewerClient({ prompt, scadCode, parametersJson }: Viewe
 	return (
 		<div className="relative flex h-screen w-full overflow-hidden bg-[#181818] text-[#D4D4D4] selection:bg-[#007ACC]/20">
 			
-			{/* ── Logo & Title Banner (top-left) ────────────────────────────────── */}
+			{/* Logo & Title Banner (top-left) */}
 			<div className="absolute top-6 left-6 z-10 flex flex-col gap-1 pointer-events-none">
 				<div className="pointer-events-auto flex items-center gap-2.5 rounded-md border border-[#3C3C3C] bg-[#252526]/80 backdrop-blur-md px-4 py-3 shadow-lg">
 					<div className="flex size-5 items-center justify-center rounded bg-[#007ACC]/10 border border-[#007ACC]/30 text-[#007ACC]">
@@ -56,9 +72,9 @@ export default function ViewerClient({ prompt, scadCode, parametersJson }: Viewe
 				</div>
 			</div>
 
-			{/* ── 3D Viewport Backdrop ─────────────────────────────────────────── */}
+			{/* 3D Viewport Backdrop */}
 			<div className="absolute inset-0 z-0">
-				<CADViewer
+				<CADViewerPresenter
 					code={scadCode}
 					activeFeatureId={activeFeatureId || selection?.id}
 					selection={selection}
@@ -73,15 +89,31 @@ export default function ViewerClient({ prompt, scadCode, parametersJson }: Viewe
 					onHoverParameter={setActiveFeatureId}
 					isGenerating={false}
 					showExport={false}
-					onStatusChange={(status) => setEngineStatus({
-						isCompiling: status.isCompiling,
-						isExporting: status.isExporting,
-						isImported: !!status.isImported
-					})}
+					isReadOnly={true}
+
+					stlUrls={stlUrls}
+					statusText={statusText}
+					engineError={engineError}
+					isRecompiling={isRecompiling}
+					isExporting={isExporting}
+					rebuild={rebuild}
+					respawn={respawn}
+					exportModel={exportModel}
+					compileCsgTree={compileCsgTree}
+
+					importedStlUrl={null}
+					isImported={false}
+					geometrySource="openscad"
+					sourceAssetId={null}
+					handleImportStep={async () => {}}
+					handleClearImport={() => {}}
+					handleExportStep={async () => {}}
+					handleGenerateGCode={async () => {}}
+					isGeneratingGCode={false}
 				/>
 			</div>
 
-			{/* ── Floating Parameters Panel (right) ─────────────────────────────── */}
+			{/* Floating Parameters Panel (right) */}
 			<div className="absolute right-6 top-6 bottom-6 w-[380px] z-10 flex flex-col rounded-md border border-[#3C3C3C] bg-[#252526]/90 backdrop-blur-xl shadow-2xl p-6 overflow-hidden">
 				<div className="flex items-center gap-2 mb-4 shrink-0">
 					<Layers size={14} className="text-[#007ACC]" />

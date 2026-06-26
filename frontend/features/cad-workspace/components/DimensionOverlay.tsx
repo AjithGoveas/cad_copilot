@@ -6,14 +6,12 @@ import { Vector3, Quaternion } from 'three';
 import { MoveVertical, Circle, Scaling } from 'lucide-react';
 import type { AnnotationEntry } from '@/lib/openscadParameters';
 
-// Re-export so callers keep a single source of truth
 export type { AnnotationEntry };
 
 type DimensionOverlayProps = {
     annotations: Record<string, AnnotationEntry>;
     activeParameter: string | null;
     geometryScale: number;
-    /** Raw OpenSCAD-space centroid of the loaded mesh (from Three.js <Center>). */
     geometryCenter: [number, number, number];
     onSelectParameter?: (key: string | null) => void;
     onHoverParameter?: (key: string | null) => void;
@@ -30,20 +28,6 @@ type DimensionProps = {
     onHover?: (hovered: boolean) => void;
 };
 
-// ---------------------------------------------------------------------------
-// Coordinate helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Convert a raw OpenSCAD-space point into Three.js world space.
- *
- * `inferAnnotations` emits coordinates in the OpenSCAD model coordinate frame.
- * Three.js `<Center>` offsets the mesh so its centroid sits at origin.
- * We replicate that same offset here so dimension markers align with the mesh.
- *
- * `scale` is kept at 1.0 (the mesh geometry is already at real-mm scale);
- * the parameter exists so future DPI / unit changes are one-liners.
- */
 const toWorld = (
     pt: [number, number, number],
     center: [number, number, number],
@@ -61,25 +45,11 @@ const getAlignmentQuaternion = (dir: Vector3): Quaternion => {
     const dot = Math.min(1, Math.max(-1, up.dot(dir)));
     const radians = Math.acos(dot);
     if (axis.lengthSq() < 1e-10) {
-        // dir is parallel to up – use identity or 180° flip
         return dot > 0 ? new Quaternion() : new Quaternion(1, 0, 0, 0);
     }
     return new Quaternion().setFromAxisAngle(axis, radians);
 };
 
-// ---------------------------------------------------------------------------
-// Annotation validity guard
-// ---------------------------------------------------------------------------
-
-/**
- * Returns true for annotations that have enough geometric data to render
- * a meaningful dimension.  Filters out:
- *   - eps-only or all-zero entries (flagged by the parser)
- *   - degenerate entries (p1≈p2, value≈0)
- *   - entries with explicit zero values
- *   - diameter annotations with no center
- *   - height annotations with no p1/p2
- */
 function isRenderable(a: AnnotationEntry): boolean {
     if (a.isEps || a.isDegenerate) return false;
 
@@ -90,22 +60,17 @@ function isRenderable(a: AnnotationEntry): boolean {
         const val = a.value ?? (a.radius ? a.radius * 2 : 0);
         if (!val || val <= 0) return false;
     } else {
-        // height
         if (!a.p1 || !a.p2) return false;
         const dist = Math.hypot(
             a.p2[0] - a.p1[0],
             a.p2[1] - a.p1[1],
             a.p2[2] - a.p1[2]
         );
-        if (dist < 1e-4) return false;                    // coincident endpoints
+        if (dist < 1e-4) return false;
         if (a.value !== undefined && a.value <= 0) return false;
     }
     return true;
 }
-
-// ---------------------------------------------------------------------------
-// Shared label chip
-// ---------------------------------------------------------------------------
 
 const DimensionLabel = ({
     label, value, unit, icon: Icon,
@@ -169,15 +134,10 @@ const DimensionLabel = ({
     );
 };
 
-// ---------------------------------------------------------------------------
-// Dimension sub-components
-// ---------------------------------------------------------------------------
-
 function HeightDimension({
     label, annotation, scale, center,
     isActive, hasAnyActive, onClick, onHover,
 }: DimensionProps) {
-    // At this point isRenderable() has already verified p1/p2 exist and are valid
     const p1 = annotation.p1!;
     const p2 = annotation.p2!;
 
@@ -186,10 +146,9 @@ function HeightDimension({
         const tP2 = toWorld(p2, center, scale);
         const mid = new Vector3().addVectors(tP1, tP2).multiplyScalar(0.5);
 
-        // Use the authoritative param value rather than back-computing from coords
         const displayMm = annotation.value !== undefined
             ? annotation.value
-            : tP1.distanceTo(tP2) / scale; // fallback: raw 3-D distance
+            : tP1.distanceTo(tP2) / scale;
 
         const direction = new Vector3().subVectors(tP2, tP1).normalize();
         const qP1 = getAlignmentQuaternion(direction.clone().negate());
@@ -201,7 +160,6 @@ function HeightDimension({
     const color = isActive ? '#60a5fa' : '#71717a';
     const opacity = isActive ? 0.95 : hasAnyActive ? 0.1 : 0.35;
     const arrowSize = isActive ? 0.08 : 0.04;
-    // Hitbox length: distance in world units
     const hitboxLen = wP1.distanceTo(wP2);
 
     return (
@@ -220,7 +178,6 @@ function HeightDimension({
                 <meshBasicMaterial color={color} transparent opacity={opacity} depthTest={false} />
             </mesh>
 
-            {/* Invisible hitbox along the axis */}
             <mesh
                 position={midpoint}
                 onClick={(e) => { e.stopPropagation(); onClick?.(); }}
@@ -253,7 +210,6 @@ function DiameterDimension({
 }: DimensionProps) {
     const c = annotation.center!;
     const axis = annotation.axis ?? [0, 0, 1];
-    // annotation.value is the diameter in mm (already validated by isRenderable)
     const diameterMm = annotation.value!;
     const radiusWorld = (diameterMm / 2) * scale;
 
@@ -264,8 +220,6 @@ function DiameterDimension({
 
     const { circlePoints, crosshairs, quat } = useMemo(() => {
         const dir = new Vector3(...axis).normalize();
-
-        // Build an orthonormal basis perpendicular to the cylinder axis
         const temp = Math.abs(dir.y) < 0.9 ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0);
         const u = new Vector3().crossVectors(dir, temp).normalize();
         const v = new Vector3().crossVectors(dir, u).normalize();
@@ -397,10 +351,6 @@ function ChamferDimension({
     );
 }
 
-// ---------------------------------------------------------------------------
-// Main export
-// ---------------------------------------------------------------------------
-
 export function DimensionOverlay({
     annotations, activeParameter, geometryScale, geometryCenter,
     onSelectParameter, onHoverParameter,
@@ -408,8 +358,6 @@ export function DimensionOverlay({
     if (!annotations) return null;
     const hasAnyActive = activeParameter !== null;
 
-    // Filter at render time as a second safety net (parser already prunes, but
-    // explicit PARAMETERS_JSON blocks bypass the parser, so we guard here too).
     const renderableEntries = useMemo(
         () => Object.entries(annotations).filter(([, a]) => isRenderable(a)),
         [annotations]

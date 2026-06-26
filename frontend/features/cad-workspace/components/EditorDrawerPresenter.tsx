@@ -1,53 +1,57 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { ChevronLeft, ChevronRight, Code2, Sliders, Play, Copy, Check, Download, History, AlertTriangle, Share2, Box } from 'lucide-react';
-import { type ReactNode, useState, memo, useCallback } from 'react';
-import useSWR, { mutate } from 'swr';
+import { ChevronLeft, ChevronRight, Code2, Sliders, Play, Copy, Check, Download, History, AlertTriangle } from 'lucide-react';
+import { type ReactNode, useState, memo } from 'react';
 import { Spinner } from '@/components/ui/spinner';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSeparator, DropdownMenuPortal, DropdownMenuSubTrigger } from './ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import type { Session } from '../types';
 
 const Editor = dynamic(() => import('@monaco-editor/react'), {
     ssr: false,
     loading: () => <div className="flex h-full items-center justify-center bg-[#1E1E1E]"><Spinner className="text-[#A6A6A6]" /></div>
 });
 
-const fetcher = (url: string) => fetch(url).then(res => res.json());
-
 type Tab = 'parameters' | 'code' | 'history';
 
 type Props = {
-    isOpen: boolean; setIsOpen: (v: boolean) => void;
-    activeTab: Tab; setActiveTab: (v: Tab) => void;
-    cadScript: string; onScriptChange: (v: string) => void;
-    onRebuild: () => void; isCompiling: boolean; isExporting?: boolean; hasScript: boolean;
+    isOpen: boolean; 
+    setIsOpen: (v: boolean) => void;
+    activeTab: Tab; 
+    setActiveTab: (v: Tab) => void;
+    cadScript: string; 
+    onScriptChange: (v: string) => void;
+    onRebuild: () => void; 
+    isCompiling: boolean; 
+    isExporting?: boolean; 
+    hasScript: boolean;
     selection?: { id: string; point: [number, number, number] } | null;
     onClearSelection?: () => void;
     onLoadSession?: (sessionId: string) => void;
     onLoadHistoryItem?: (code: string, params: any) => void;
     onExport?: (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => void;
-    onDownloadScad?: () => void; onShare?: () => void;
-    children?: ReactNode; isDemoMode?: boolean;
+    onDownloadScad?: () => void; 
+    onShare?: () => void;
+    children?: ReactNode; 
+    isDemoMode?: boolean;
     isImported?: boolean;
     sessionId?: string;
+
+    // Decoupled SWR items
+    historySessions: Session[];
+    activeSessionData?: Session;
+    isLoadingHistory: boolean;
+    isLoadingActiveSession: boolean;
+    prefetchSession: (id: string) => void;
 };
 
-export const EditorDrawer = memo(function EditorDrawer({
+export const EditorDrawerPresenter = memo(function EditorDrawerPresenter({
     isOpen, setIsOpen, activeTab, setActiveTab, cadScript, onScriptChange,
     onRebuild, isCompiling, isExporting, hasScript, onLoadSession, onLoadHistoryItem, onExport, onDownloadScad, onShare,
     children, isDemoMode, isImported = false, sessionId,
+    historySessions, activeSessionData, isLoadingHistory, isLoadingActiveSession, prefetchSession,
 }: Props) {
     const [isCopied, setIsCopied] = useState(false);
-    const { data: historySessions, isLoading: isLoadingHistory } = useSWR<any[]>(
-        activeTab === 'history' && !sessionId ? '/api/history' : null, fetcher, { revalidateOnFocus: false }
-    );
-    const { data: activeSessionData, isLoading: isLoadingActiveSession } = useSWR<any>(
-        activeTab === 'history' && sessionId ? `/api/history/session/${sessionId}` : null, fetcher, { revalidateOnFocus: false }
-    );
-
-    const prefetchSession = useCallback((targetSessionId: string) => {
-        mutate(`/api/history/session/${targetSessionId}`, fetcher(`/api/history/session/${targetSessionId}`), { revalidate: false });
-    }, []);
 
     const handleCopyCode = async () => {
         if (!cadScript) return;
@@ -70,7 +74,7 @@ export const EditorDrawer = memo(function EditorDrawer({
             </button>
 
             <div className={`flex flex-1 flex-col overflow-hidden transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
-                {/* ── Tabs Header ── */}
+                {/* Tabs Header */}
                 <header className="flex h-12 shrink-0 border-b border-[#3C3C3C] bg-[#252526] shadow-sm">
                     <button onClick={() => setActiveTab('parameters')} className={`flex items-center gap-2.5 px-5 text-[11.5px] font-medium transition-all duration-300 ${activeTab === 'parameters' ? 'border-b-2 border-[#007ACC] text-[#D4D4D4] bg-[#3C3C3C]/30' : 'text-[#A6A6A6] hover:text-[#D4D4D4] hover:bg-[#3C3C3C]/20 border-b-2 border-transparent'}`}>
                         <Sliders size={13} /> Parameters
@@ -87,7 +91,7 @@ export const EditorDrawer = memo(function EditorDrawer({
                     )}
                 </header>
 
-                {/* ── Scrollable Body Area ── */}
+                {/* Scrollable Body Area */}
                 <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar bg-[#252526]">
                     {activeTab === 'parameters' && (
                         <div className="p-3">{children}</div>
@@ -200,8 +204,8 @@ export const EditorDrawer = memo(function EditorDrawer({
                         </div>
                     )}
                 </div>
- 
-                {/* ── Sticky Footer (Safety & Rebuild) ── */}
+
+                {/* Sticky Footer (Safety & Rebuild) */}
                 <div className="shrink-0 flex flex-col p-4 border-t border-[#3C3C3C] bg-[#252526] gap-3 shadow-[0_-4px_12px_rgba(0,0,0,0.1)]">
                     <div className="flex items-start gap-2">
                         <AlertTriangle size={14} className="text-[#A6A6A6] shrink-0 mt-0.5" />
@@ -220,21 +224,17 @@ export const EditorDrawer = memo(function EditorDrawer({
 
             {!isOpen && (
                 <div className="absolute inset-0 flex flex-col items-center py-4 bg-[#1E1E1E] text-[#A6A6A6] z-20">
-                    {/* Active/Selectable Tab Icons */}
                     <div className="flex-1 flex flex-col items-center gap-4 w-full">
-                        {/* Parameters Tab Button */}
                         <button
                             onClick={() => { setActiveTab('parameters'); setIsOpen(true); }}
                             className={`group relative flex size-8 items-center justify-center rounded-md hover:scale-105 active:scale-95 transition-all cursor-pointer ${activeTab === 'parameters' ? 'bg-[#007ACC]/10 text-[#007ACC] border border-[#007ACC]/30' : 'hover:bg-[#3C3C3C] hover:text-[#D4D4D4]'}`}
                         >
                             <Sliders size={16} />
-                            {/* Modern Tooltip sliding in from left (right relative) */}
                             <span className="absolute right-11 scale-0 group-hover:scale-100 translate-x-2 group-hover:translate-x-0 transition-all duration-150 origin-right bg-[#1E1E1E] border border-[#3C3C3C] text-[#D4D4D4] text-[10px] rounded px-2 py-1 shadow-xl whitespace-nowrap z-50 pointer-events-none">
                                 Parameters
                             </span>
                         </button>
 
-                        {/* Code Tab Button */}
                         {!isDemoMode && (
                             <button
                                 onClick={() => { setActiveTab('code'); setIsOpen(true); }}
@@ -247,7 +247,6 @@ export const EditorDrawer = memo(function EditorDrawer({
                             </button>
                         )}
 
-                        {/* History Tab Button */}
                         {!isDemoMode && (
                             <button
                                 onClick={() => { setActiveTab('history'); setIsOpen(true); }}

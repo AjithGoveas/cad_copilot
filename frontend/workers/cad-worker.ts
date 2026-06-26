@@ -31,7 +31,8 @@ type CompiledMessage = {
     type: 'compiled'; 
     id: number; 
     parts: PartData[]; 
-    durationMs: number 
+    durationMs: number;
+    logs?: string[];
 };
 
 type ExportedMessage        = { type: 'exported'; id: number; data: ArrayBuffer; format: 'stl' | 'dxf'; durationMs: number };
@@ -89,8 +90,12 @@ async function ensureEngine(forceReload = false): Promise<OpenScadInstance> {
             const engine = await mod.createOpenSCAD({
                 print: (_text: string) => {},
                 printErr: (text: string) => {
+                    // Suppress harmless informational noise
                     if (text.includes('localization')) return;
+                    if (text.startsWith('TRACE:')) return;
+                    if (/Ignoring request to enable unknown feature/i.test(text)) return;
 
+                    // Suppress geometry stat lines (not errors)
                     const isStat = /Geometries|CGAL|rendering time|Top level object|Simple:|Vertices:|Halfedges:|Edges:|Halffacets:|Facets:|Volumes:/i.test(text);
                     if (isStat) return;
 
@@ -424,11 +429,11 @@ async function exportToFile(
 
         fs.writeFile(INPUT_PATH, script);
 
-        // --enable=manifold uses the highly parallelized, faster mesh evaluation kernel instead of old CGAL operations
-        // Manifold kernel does not support 2D projections (dxf blueprint mode), so we bypass it to prevent CGAL fallback overhead.
-        const args = format === 'dxf' && dxfMode === 'blueprint'
-            ? ['--enable=fast-csg', '--enable=lazy-union', '-o', outputPath, INPUT_PATH]
-            : ['--enable=manifold', '--enable=fast-csg', '--enable=lazy-union', '-o', outputPath, INPUT_PATH];
+        // Note: --enable=manifold and --enable=fast-csg are NOT supported by the current openscad-wasm build.
+        // Passing unknown feature flags causes "Ignoring request to enable unknown feature" warnings
+        // which can destabilize the WASM engine state and produce spurious parse errors.
+        // Only --enable=lazy-union is broadly supported and safe to use.
+        const args = ['-o', outputPath, '--enable=lazy-union', INPUT_PATH];
         const exitCode = instance.callMain(args);
 
         if (exitCode !== 0 || !fs.analyzePath(outputPath).exists) {
@@ -496,9 +501,10 @@ async function compileSingleColorOrAll(
     script: string,
     color?: string,
     partId?: string
-): Promise<{ parts: PartData[]; durationMs: number }> {
+): Promise<{ parts: PartData[]; durationMs: number; logs: string[] }> {
     const started = performance.now();
     const colors = getUniqueColors(script);
+    stderrCapture.length = 0;
 
     try {
         if (color && colors.includes(color)) {
@@ -512,10 +518,15 @@ async function compileSingleColorOrAll(
                     durationMs,
                     color
                 }],
-                durationMs: Math.round(performance.now() - started)
+                durationMs: Math.round(performance.now() - started),
+                logs: [...stderrCapture]
             };
         } else {
-            return compileToParts(script);
+            const result = await compileToParts(script);
+            return {
+                ...result,
+                logs: [...stderrCapture]
+            };
         }
     } catch (e: any) {
         throw Object.assign(new Error(`Geometry Engine Error: ${e.message}`), {
@@ -590,7 +601,7 @@ async function compileCsg(
 
         fs.writeFile(INPUT_PATH, script);
 
-        const exitCode = instance.callMain(['--enable=manifold', '--enable=fast-csg', '--enable=lazy-union', '-o', OUTPUT_PATH, INPUT_PATH]);
+        const exitCode = instance.callMain(['-o', OUTPUT_PATH, '--enable=lazy-union', INPUT_PATH]);
 
         if (exitCode !== 0 || !fs.analyzePath(OUTPUT_PATH).exists) {
             const details = stderrCapture.join('\n');
@@ -643,6 +654,7 @@ workerScope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
                             id: data.id,
                             parts: result.parts,
                             durationMs: result.durationMs,
+                            logs: result.logs,
                         } satisfies CompiledMessage,
                         result.parts.map(p => p.buffer)
                     );

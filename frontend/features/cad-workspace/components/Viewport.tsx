@@ -3,12 +3,12 @@
 import { Suspense, useState, useMemo, memo, useCallback, useRef, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Stage, ContactShadows, Center } from '@react-three/drei';
-import { MousePointer2, Cuboid, Upload } from 'lucide-react';
-import { StlMesh } from './StlMesh';
-import { DimensionOverlay } from './DimensionOverlay';
-import { CameraRig } from './CameraRig';
+import { MousePointer2, Cuboid, Upload, AlertCircle } from 'lucide-react';
+import { StlMesh } from '@/features/cad-workspace/components/StlMesh';
+import { DimensionOverlay } from '@/features/cad-workspace/components/DimensionOverlay';
+import { CameraRig } from '@/features/cad-workspace/components/CameraRig';
 import { findNearestParameter } from '@/lib/openscadParameters';
-import { QuickEditOverlay } from './QuickEditOverlay';
+import { QuickEditOverlay } from '@/features/cad-workspace/components/QuickEditOverlay';
 import styles from './Viewport.module.css';
 
 type Selection = { id: string; point: [number, number, number] };
@@ -22,12 +22,15 @@ type Props = {
     targetPoint?: [number, number, number] | null;
     onImportStep?: (file: File) => Promise<void>;
     onSelectPrompt?: (prompt: string) => void;
+    isReadOnly?: boolean;
+    isImported?: boolean;
 };
 
 export const Viewport = memo(function Viewport({ 
     stlUrls, statusText, isCompiling, selection, onMeshClick,
     annotations = {}, activeFeatureId = null, onSelectParameter, onHoverParameter, onParameterUpdate,
     targetPoint = null, onImportStep, onSelectPrompt,
+    isReadOnly = false, isImported = false,
 }: Props) {
     const [geometryCenter, setGeometryCenter] = useState<[number, number, number]>([0, 0, 0]);
     const [geometryScale, setGeometryScale] = useState<number>(1.0);
@@ -179,7 +182,7 @@ export const Viewport = memo(function Viewport({
                                     <StlMesh
                                         key={id} id={id} url={entry.url} color={entry.color}
                                         isSelected={selection?.id === id}
-                                        onMeshClick={(pt) => handleMeshClick(id, pt)}
+                                        onMeshClick={(pt: [number, number, number] | null) => handleMeshClick(id, pt)}
                                     />
                                 ))}
                             </group>
@@ -202,7 +205,7 @@ export const Viewport = memo(function Viewport({
                                 ]}
                                 parameterKey={quickEdit.key}
                                 annotation={annotations[quickEdit.key]}
-                                onUpdate={(key, val) => {
+                                onUpdate={(key: string, val: number) => {
                                     onParameterUpdate?.(key, val);
                                     setQuickEdit(null);
                                 }}
@@ -256,87 +259,99 @@ export const Viewport = memo(function Viewport({
             )}
 
             {/* Premium Empty State */}
-            {!hasGeometry && !isCompiling && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center p-6 z-10 overflow-y-auto">
-                    <div className="flex flex-col items-center max-w-xl text-center mb-8 pointer-events-none">
-                        <div className="relative flex size-14 items-center justify-center rounded-2xl bg-zinc-900/60 border border-zinc-800/80 shadow-xl backdrop-blur-sm animate-in zoom-in duration-1000 mb-4">
-                            <div className="absolute inset-0 rounded-2xl bg-[#007ACC]/5 animate-pulse" />
-                            <Cuboid size={24} strokeWidth={1.5} className="text-[#007ACC]" />
+            {!hasGeometry && !isImported && !isCompiling && (
+                isReadOnly ? (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center p-6 z-10 overflow-y-auto">
+                        <div className="flex flex-col items-center max-w-xl text-center pointer-events-none animate-in fade-in duration-700">
+                            <div className="relative flex size-14 items-center justify-center rounded-2xl bg-zinc-900/60 border border-zinc-800/80 shadow-xl backdrop-blur-sm mb-4">
+                                <div className="absolute inset-0 rounded-2xl bg-zinc-800/25 animate-pulse" />
+                                <AlertCircle size={24} strokeWidth={1.5} className="text-zinc-500" />
+                            </div>
+                            <h3 className="font-sans text-lg font-bold tracking-wide text-zinc-100 bg-clip-text text-transparent bg-gradient-to-r from-zinc-100 to-zinc-400">Empty Shared Workbench</h3>
+                            <p className="mt-2 font-sans text-xs text-zinc-400 leading-relaxed max-w-md">
+                                This shared workspace does not contain any compiled geometry. The source OpenSCAD script is empty or failed to build.
+                            </p>
                         </div>
-                        <h3 className="font-sans text-lg font-bold tracking-wide text-zinc-100 bg-clip-text text-transparent bg-gradient-to-r from-zinc-100 to-zinc-400">CADVΞX Workstation</h3>
-                        <p className="mt-2 font-sans text-xs text-zinc-400 leading-relaxed max-w-md">
-                            Welcome to your dynamic CAD workbench. Click any starter template below to instantly generate a parametric OpenSCAD model, or type your own instructions on the left.
-                        </p>
                     </div>
+                ) : (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center p-6 z-10 overflow-y-auto">
+                        <div className="flex flex-col items-center max-w-xl text-center mb-8 pointer-events-none">
+                            <div className="relative flex size-14 items-center justify-center rounded-2xl bg-zinc-900/60 border border-zinc-800/80 shadow-xl backdrop-blur-sm animate-in zoom-in duration-1000 mb-4">
+                                <div className="absolute inset-0 rounded-2xl bg-[#007ACC]/5 animate-pulse" />
+                                <Cuboid size={24} strokeWidth={1.5} className="text-[#007ACC]" />
+                            </div>
+                            <h3 className="font-sans text-lg font-bold tracking-wide text-zinc-100 bg-clip-text text-transparent bg-gradient-to-r from-zinc-100 to-zinc-400">CADVΞX Workstation</h3>
+                            <p className="mt-2 font-sans text-xs text-zinc-400 leading-relaxed max-w-md">
+                                Welcome to your dynamic CAD workbench. Click any starter template below to instantly generate a parametric OpenSCAD model, or type your own instructions on the left.
+                            </p>
+                        </div>
 
-                    {/* Starter Templates Grid */}
-                    <div className="grid grid-cols-2 gap-4 w-full max-w-xl mb-6 pointer-events-auto">
-                        {[
-                            {
-                                title: '🔩 Flange Bracket',
-                                desc: 'High-torque mounting bracket with counterbore holes',
-                                prompt: 'Generate a heavy-duty mounting flange bracket with 4 counterbore screw holes'
-                            },
-                            {
-                                title: '⚙️ Spur Gear',
-                                desc: 'Parametric spur gear with teeth and hub keyway',
-                                prompt: 'Create a parametric spur gear with 18 teeth, 3mm module, and central hub'
-                            },
-                            {
-                                title: '📦 Electronics Box',
-                                desc: 'Project enclosure with mounting lugs and vents',
-                                prompt: 'Design a custom electronics project enclosure with mounting lugs and ventilation slots'
-                            },
-                            {
-                                title: '🔗 Shaft Coupler',
-                                desc: 'Rigid coupler for linking motor shaft to lead screw',
-                                prompt: 'Model a rigid clamping shaft coupler for linking a 5mm motor shaft to an 8mm lead screw'
-                            }
-                        ].map((tpl) => (
-                            <button
-                                key={tpl.title}
-                                onClick={() => onSelectPrompt?.(tpl.prompt)}
-                                className="group flex flex-col items-start p-4 rounded-xl border border-zinc-800/80 bg-zinc-900/40 hover:bg-[#1E1E1E]/80 hover:border-[#007ACC]/45 transition-all duration-300 text-left hover:shadow-[0_4px_20px_rgba(0,122,204,0.08)] hover:-translate-y-0.5 active:scale-[0.98] cursor-pointer"
-                            >
-                                <span className="text-xs font-semibold text-zinc-200 group-hover:text-white transition-colors mb-1">{tpl.title}</span>
-                                <span className="text-[10px] text-zinc-500 leading-normal group-hover:text-zinc-400 transition-colors">{tpl.desc}</span>
-                            </button>
-                        ))}
-                    </div>
+                        {/* Starter Templates Grid */}
+                        <div className="grid grid-cols-2 gap-4 w-full max-w-xl mb-6 pointer-events-auto">
+                            {[
+                                {
+                                    title: '🔩 Flange Bracket',
+                                    desc: 'High-torque mounting bracket with counterbore holes',
+                                    prompt: 'Generate a heavy-duty mounting flange bracket with 4 counterbore screw holes'
+                                },
+                                {
+                                    title: '⚙️ Spur Gear',
+                                    desc: 'Parametric spur gear with teeth and hub keyway',
+                                    prompt: 'Create a parametric spur gear with 18 teeth, 3mm module, and central hub'
+                                },
+                                {
+                                    title: '📦 Electronics Box',
+                                    desc: 'Project enclosure with mounting lugs and vents',
+                                    prompt: 'Design a custom electronics project enclosure with mounting lugs and ventilation slots'
+                                },
+                                {
+                                    title: '🔗 Shaft Coupler',
+                                    desc: 'Rigid coupler for linking motor shaft to lead screw',
+                                    prompt: 'Model a rigid clamping shaft coupler for linking a 5mm motor shaft to an 8mm lead screw'
+                                }
+                            ].map((tpl) => (
+                                <button
+                                    key={tpl.title}
+                                    onClick={() => onSelectPrompt?.(tpl.prompt)}
+                                    className="group flex flex-col items-start p-4 rounded-xl border border-zinc-800/80 bg-zinc-900/40 hover:bg-[#1E1E1E]/80 hover:border-[#007ACC]/45 transition-all duration-300 text-left hover:shadow-[0_4px_20px_rgba(0,122,204,0.08)] hover:-translate-y-0.5 active:scale-[0.98] cursor-pointer"
+                                >
+                                    <span className="text-xs font-semibold text-zinc-200 group-hover:text-white transition-colors mb-1">{tpl.title}</span>
+                                    <span className="text-[10px] text-zinc-500 leading-normal group-hover:text-zinc-400 transition-colors">{tpl.desc}</span>
+                                </button>
+                            ))}
+                        </div>
 
-                    <div className="flex items-center gap-3 pointer-events-auto">
-                        <input
-                            type="file"
-                            ref={fileInputRef}
-                            onChange={handleFileChange}
-                            accept=".step,.stp"
-                            className="hidden"
-                        />
-                        {onImportStep && (
-                            <button
-                                onClick={handleImportClick}
-                                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-900/50 hover:bg-zinc-800/80 border border-zinc-800 hover:border-zinc-700 text-[11px] font-semibold text-zinc-300 hover:text-zinc-100 transition-all shadow-md active:scale-95 cursor-pointer"
-                            >
-                                <Upload size={12} className="text-[#007ACC]" />
-                                Import STEP File
-                            </button>
-                        )}
+                        <div className="flex items-center gap-3 pointer-events-auto">
+                            <input
+                                type="file"
+                                ref={fileInputRef}
+                                onChange={handleFileChange}
+                                accept=".step,.stp,.stl"
+                                className="hidden"
+                            />
+                            {onImportStep && (
+                                <button
+                                    onClick={handleImportClick}
+                                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-zinc-900/50 hover:bg-zinc-800/80 border border-zinc-800 hover:border-zinc-700 text-[11px] font-semibold text-zinc-300 hover:text-zinc-100 transition-all shadow-md active:scale-95 cursor-pointer"
+                                >
+                                    <Upload size={12} className="text-[#007ACC]" />
+                                    Import STEP / STL
+                                </button>
+                            )}
+                        </div>
                     </div>
-                </div>
+                )
             )}
 
-            {/* Premium Loading State / Transition Animation */}
+            {/* Premium Loading State */}
             {!hasGeometry && isCompiling && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center p-6 z-10 bg-[#09090b]/40 backdrop-blur-[2px] animate-in fade-in duration-500">
                     <div className="flex flex-col items-center max-w-md text-center">
                         <div className="relative flex size-24 items-center justify-center mb-6">
-                            {/* Inner spinning gradient border */}
                             <div className={`absolute inset-0 rounded-full bg-gradient-to-tr from-blue-500 via-purple-500 to-pink-500 p-[2px] shadow-[0_0_20px_rgba(139,92,246,0.25)] ${styles.geminiSpin}`}>
                                 <div className="h-full w-full rounded-full bg-[#09090b]" />
                             </div>
-                            {/* Soft glowing ambient drop shadow */}
                             <div className="absolute -inset-1 rounded-full bg-gradient-to-tr from-blue-500/10 via-purple-500/10 to-pink-500/10 blur-md" />
-                            {/* Bouncing wireframe cube in the center */}
                             <div className="relative animate-bounce duration-1000">
                                 <Cuboid size={28} strokeWidth={1.5} className="text-indigo-300 drop-shadow-[0_0_8px_rgba(129,140,248,0.5)]" />
                             </div>

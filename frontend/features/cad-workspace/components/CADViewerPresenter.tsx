@@ -2,12 +2,9 @@
 
 import { useState, useCallback, useMemo, useEffect, useImperativeHandle, forwardRef, useRef } from 'react';
 import { Viewport } from './Viewport';
-import { useCADEngine } from '@/hooks/useCADEngine';
 import CamConfigModal, { CamConfig } from './CamConfigModal';
-import { toast } from 'sonner';
-import { AlertCircle, Share2, Download, ChevronDown, Layers, Box, Cpu } from 'lucide-react';
+import { Share2, Download, ChevronDown, Layers, Box, Cpu } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
-import { extractStructuredAnnotations, OpenScadAnnotations } from '@/lib/openscadParameters';
 import {
     DropdownMenu,
     DropdownMenuTrigger,
@@ -18,7 +15,9 @@ import {
     DropdownMenuSubContent,
     DropdownMenuSeparator,
     DropdownMenuPortal
-} from './ui/dropdown-menu';
+} from '@/components/ui/dropdown-menu';
+import { extractStructuredAnnotations, OpenScadAnnotations } from '@/lib/openscadParameters';
+import type { EngineError } from '../types';
 
 export type CADViewerRef = {
     rebuild: () => void;
@@ -26,7 +25,7 @@ export type CADViewerRef = {
     respawn: () => void;
 };
 
-type CADViewerProps = {
+type CADViewerPresenterProps = {
     code: string;
     activeFeatureId?: string | null;
     selection?: { id: string; point: [number, number, number] } | null;
@@ -35,14 +34,34 @@ type CADViewerProps = {
     onHoverParameter?: (key: string | null) => void;
     isGenerating?: boolean;
     showExport?: boolean;
-    onStatusChange?: (status: { isCompiling: boolean; isExporting: boolean; isImported: boolean; error?: any }) => void;
     onShare?: () => void;
     onParameterUpdate?: (key: string, value: number) => void;
     targetPoint?: [number, number, number] | null;
     isDemoMode?: boolean;
     onSelectPrompt?: (prompt: string) => void;
-    isAutoRepairing?: boolean;
-    onRepair?: () => void;
+
+    // Decoupled CAD Worker state:
+    stlUrls: Map<string, { url: string; color?: string }>;
+    statusText: string;
+    engineError: EngineError | null;
+    isRecompiling: boolean;
+    isExporting: boolean;
+    rebuild: () => void;
+    respawn: () => void;
+    exportModel: (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint', customScript?: string) => Promise<ArrayBuffer>;
+    compileCsgTree: (customScript?: string) => Promise<string>;
+
+    // Decoupled STEP import state and handlers:
+    importedStlUrl: string | null;
+    isImported: boolean;
+    geometrySource: 'openscad' | 'step' | 'stl';
+    sourceAssetId: string | null;
+    handleImportStep: (file: File) => Promise<void>;
+    handleClearImport: () => void;
+    handleExportStep: () => Promise<void>;
+    handleGenerateGCode: (config: CamConfig) => Promise<void>;
+    isGeneratingGCode: boolean;
+    isReadOnly?: boolean;
 };
 
 const generateDxfWrapper = (originalCode: string, mode: 'silhouette' | 'section' | 'blueprint') => {
@@ -106,7 +125,7 @@ union() {
     return cleanCode + safeHeader + projectionWrapper;
 };
 
-export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADViewer(
+export const CADViewerPresenter = forwardRef<CADViewerRef, CADViewerPresenterProps>(function CADViewerPresenter(
     {
         code,
         activeFeatureId = null,
@@ -116,18 +135,12 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         onHoverParameter,
         isGenerating = false,
         showExport = true,
-        onStatusChange,
         onShare,
         onParameterUpdate,
         targetPoint = null,
         isDemoMode = false,
         onSelectPrompt,
-        isAutoRepairing = false,
-        onRepair,
-    },
-    ref
-) {
-    const {
+
         stlUrls,
         statusText,
         engineError,
@@ -137,19 +150,22 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         respawn,
         exportModel,
         compileCsgTree,
-    } = useCADEngine({
-        script: code,
-        enabled: !!code,
-    });
 
+        importedStlUrl,
+        isImported,
+        geometrySource,
+        sourceAssetId,
+        handleImportStep,
+        handleClearImport,
+        handleExportStep,
+        handleGenerateGCode,
+        isGeneratingGCode,
+        isReadOnly = false,
+    },
+    ref
+) {
     const [isCamModalOpen, setIsCamModalOpen] = useState(false);
     const [selectedController, setSelectedController] = useState<string>('fanuc');
-    const [isGeneratingGCode, setIsGeneratingGCode] = useState(false);
-
-    const [importedStlUrl, setImportedStlUrl] = useState<string | null>(null);
-    const [isImported, setIsImported] = useState(false);
-    const [geometrySource, setGeometrySource] = useState<'openscad' | 'step'>('openscad');
-    const [sourceAssetId, setSourceAssetId] = useState<string | null>(null);
 
     const displayStlUrls = useMemo(() => {
         if (importedStlUrl) {
@@ -159,88 +175,6 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         }
         return stlUrls;
     }, [stlUrls, importedStlUrl]);
-
-    const sourceAssetIdRef = useRef<string | null>(null);
-    const importedStlUrlRef = useRef<string | null>(null);
-
-    useEffect(() => {
-        sourceAssetIdRef.current = sourceAssetId;
-    }, [sourceAssetId]);
-
-    useEffect(() => {
-        importedStlUrlRef.current = importedStlUrl;
-    }, [importedStlUrl]);
-
-    useEffect(() => {
-        return () => {
-            if (importedStlUrlRef.current) {
-                URL.revokeObjectURL(importedStlUrlRef.current);
-            }
-            if (sourceAssetIdRef.current) {
-                fetch(`/api/v1/import/teardown/${sourceAssetIdRef.current}`, { method: 'POST' }).catch(() => {});
-            }
-        };
-    }, []);
-
-    const handleClearImport = useCallback(() => {
-        if (sourceAssetId) {
-            fetch(`/api/v1/import/teardown/${sourceAssetId}`, { method: 'POST' }).catch(() => {});
-        }
-        if (importedStlUrl) {
-            URL.revokeObjectURL(importedStlUrl);
-        }
-        setImportedStlUrl(null);
-        setIsImported(false);
-        setGeometrySource('openscad');
-        setSourceAssetId(null);
-    }, [importedStlUrl, sourceAssetId]);
-
-    const handleImportStep = useCallback(async (file: File) => {
-        const formData = new FormData();
-        formData.append('file', file);
-        if (isDemoMode) {
-            formData.append('demoMode', 'true');
-        }
-
-        const importPromise = (async () => {
-            if (sourceAssetId) {
-                fetch(`/api/v1/import/teardown/${sourceAssetId}`, { method: 'POST' }).catch(() => {});
-            }
-
-            const res = await fetch('/api/v1/import/step', {
-                method: 'POST',
-                body: formData,
-                cache: 'no-store',
-            });
-
-            if (!res.ok) {
-                const errText = await res.text();
-                throw new Error(errText || 'Import service failed');
-            }
-
-            const assetId = res.headers.get('x-asset-id');
-            if (assetId) {
-                setSourceAssetId(assetId);
-                setGeometrySource('step');
-            }
-
-            const buffer = await res.arrayBuffer();
-            const blob = new Blob([buffer], { type: 'application/octet-stream' });
-            const url = URL.createObjectURL(blob);
-            
-            setImportedStlUrl(prev => {
-                if (prev) URL.revokeObjectURL(prev);
-                return url;
-            });
-            setIsImported(true);
-        })();
-
-        toast.promise(importPromise, {
-            loading: 'Uploading and parsing STEP model...',
-            success: 'STEP model imported successfully!',
-            error: (err) => `STEP Import Failed: ${err.message || err}`,
-        });
-    }, [isDemoMode, sourceAssetId]);
 
     useImperativeHandle(ref, () => ({
         rebuild,
@@ -276,13 +210,16 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         respawn,
     }), [geometrySource, sourceAssetId, isDemoMode, exportModel, rebuild, respawn]);
 
+    const clearImportRef = useRef(handleClearImport);
+    clearImportRef.current = handleClearImport;
     const lastCodeRef = useRef(code);
     useEffect(() => {
         if (code !== lastCodeRef.current && code) {
-            handleClearImport();
+            clearImportRef.current();
         }
         lastCodeRef.current = code;
-    }, [code, handleClearImport]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [code]); // handleClearImport intentionally excluded — accessed via ref
 
     const [annotations, setAnnotations] = useState<OpenScadAnnotations>({});
     useEffect(() => {
@@ -292,91 +229,19 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         return () => clearTimeout(timer);
     }, [code]);
 
-    const statusCallbackRef = useRef(onStatusChange);
-    useEffect(() => {
-        statusCallbackRef.current = onStatusChange;
-    }, [onStatusChange]);
-
-    useEffect(() => {
-        statusCallbackRef.current?.({
-            isCompiling: isRecompiling,
-            isExporting,
-            isImported,
-            error: engineError,
-        });
-    }, [isRecompiling, isExporting, isImported, engineError]);
-
     const handleExport = useCallback(
         async (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => {
-            if (!code && geometrySource !== 'step') {
-                return;
+            let exportScript = code;
+            if (format === 'dxf' && dxfMode) {
+                exportScript = generateDxfWrapper(code, dxfMode);
             }
-            const label = format.toUpperCase();
-            const modeLabel = dxfMode ? ` (${dxfMode})` : '';
-
-            const run = async () => {
-                let buffer: ArrayBuffer;
-
-                if (geometrySource === 'step') {
-                    const csgReference = JSON.stringify({ type: 'step_reference', asset_id: sourceAssetId });
-                    const url = format === 'stl' ? '/api/v1/export/stl' : '/api/v1/export/dxf';
-                    const bodyObj: any = { csgTree: csgReference, demoMode: isDemoMode };
-                    if (format === 'dxf') {
-                        bodyObj.dxfMode = dxfMode;
-                    }
-
-                    const res = await fetch(url, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(bodyObj),
-                    });
-
-                    if (!res.ok) {
-                        const errText = await res.text();
-                        let errorMsg = errText;
-                        try {
-                            const parsed = JSON.parse(errText);
-                            errorMsg = parsed.error || parsed.detail || parsed.message || errText;
-                        } catch (e) {}
-                        throw new Error(errorMsg || `Backend export of ${label} failed`);
-                    }
-
-                    buffer = await res.arrayBuffer();
-                } else {
-                    let exportScript = code;
-
-                    if (format === 'dxf' && dxfMode) {
-                        exportScript = generateDxfWrapper(code, dxfMode);
-                    }
-
-                    buffer = await exportModel(format, dxfMode, exportScript);
-                }
-
-                const blob = new Blob([buffer], { type: 'application/octet-stream' });
-                const url = URL.createObjectURL(blob);
-
-                const filename = dxfMode === 'blueprint'
-                    ? `technical_blueprint.dxf`
-                    : `generated_model.${format}`;
-
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                setTimeout(() => URL.revokeObjectURL(url), 1000);
-            };
-
-            await toast.promise(run(), {
-                loading: `Exporting ${label}${modeLabel}…`,
-                success: `${label} Exported Successfully`,
-                error: (err) => `${label} Export Failed: ${err.message || err}`,
-            });
+            if (format === 'stl') {
+                await exportModel(format, dxfMode, exportScript);
+            } else {
+                await exportModel(format, dxfMode, exportScript);
+            }
         },
-        [code, exportModel, geometrySource, sourceAssetId, isDemoMode]
+        [code, exportModel]
     );
 
     const handleDownloadScad = useCallback(() => {
@@ -390,148 +255,18 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
         a.click();
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(url), 1000);
-        toast.success('SCAD File Downloaded');
     }, [code]);
-
-    const handleExportStep = useCallback(async () => {
-        if (!code && geometrySource !== 'step') {
-            return;
-        }
-
-        const run = async () => {
-            let res: Response;
-
-            if (geometrySource === 'step') {
-                const csgTree = JSON.stringify({ type: 'step_reference', asset_id: sourceAssetId });
-                res = await fetch('/api/v1/export/step', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        csgTree,
-                        demoMode: isDemoMode,
-                    }),
-                });
-            } else {
-                const csgTree = await compileCsgTree();
-                res = await fetch('/api/v1/export/step', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        csgTree,
-                        demoMode: isDemoMode,
-                    }),
-                });
-            }
-
-            if (!res.ok) {
-                const errText = await res.text();
-                throw new Error(errText || 'STEP service failed');
-            }
-
-            const buffer = await res.arrayBuffer();
-            const blob = new Blob([buffer], { type: 'application/step' });
-            const url = URL.createObjectURL(blob);
-
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `generated_model.step`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-        };
-
-        await toast.promise(run(), {
-            loading: 'Exporting STEP model…',
-            success: 'STEP Exported Successfully',
-            error: (err) => `STEP Export Failed: ${err.message || err}`,
-        });
-    }, [code, compileCsgTree, isDemoMode, geometrySource, sourceAssetId]);
 
     const handleOpenCamModal = useCallback((controller: string) => {
         setSelectedController(controller);
         setIsCamModalOpen(true);
     }, []);
 
-    const handleGenerateGCode = useCallback(async (config: CamConfig) => {
-        if (!code && geometrySource !== 'step') {
-            return;
-        }
-        setIsGeneratingGCode(true);
-        const controllerLabel = config.controller.toUpperCase();
-
-        const run = async () => {
-            const bodyObj: any = {
-                controller: config.controller,
-                safe_z: config.safe_z,
-                coolant: config.coolant,
-                resolution: config.resolution,
-                stock_configuration: config.stock_configuration,
-                tools: config.tools,
-                operations: config.operations,
-                demoMode: isDemoMode,
-            };
-
-            if (geometrySource === 'step') {
-                bodyObj.assetId = sourceAssetId;
-            } else {
-                bodyObj.csgTree = await compileCsgTree();
-            }
-
-            const res = await fetch('/api/v1/export/gcode', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(bodyObj),
-            });
-
-            if (!res.ok) {
-                const errData = await res.json();
-                throw new Error(errData.error?.message || errData.error || `G-code service failed`);
-            }
-
-            const data = await res.json();
-            const gcodeText = data.gcode;
-
-            if (!gcodeText) {
-                throw new Error("No G-code content returned from server.");
-            }
-
-            const blob = new Blob([gcodeText], { type: 'text/plain' });
-            const url = URL.createObjectURL(blob);
-
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `generated_model_${config.controller}.gcode`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-        };
-
-        try {
-            await toast.promise(run(), {
-                loading: `Generating ${controllerLabel} G-code…`,
-                success: `${controllerLabel} G-code Generated Successfully`,
-                error: (err) => `G-code Export Failed: ${err.message || err}`,
-            });
-            setIsCamModalOpen(false);
-        } catch (err) {
-        } finally {
-            setIsGeneratingGCode(false);
-        }
-    }, [code, compileCsgTree, isDemoMode, geometrySource, sourceAssetId]);
-
     return (
         <div className="relative flex flex-1 h-full w-full overflow-hidden bg-transparent">
             <Viewport
                 stlUrls={displayStlUrls}
-                statusText={isImported ? "Viewing STEP Import" : statusText}
+                statusText={isImported ? (geometrySource === 'stl' ? 'Viewing STL Import' : 'Viewing STEP Import') : statusText}
                 isCompiling={isImported ? false : (isRecompiling || isGenerating)}
                 selection={selection}
                 onMeshClick={onMeshClick}
@@ -543,6 +278,8 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                 targetPoint={targetPoint}
                 onImportStep={isDemoMode ? undefined : handleImportStep}
                 onSelectPrompt={onSelectPrompt}
+                isReadOnly={isReadOnly}
+                isImported={isImported}
             />
 
             {showExport && displayStlUrls.size > 0 && (
@@ -646,38 +383,6 @@ export const CADViewer = forwardRef<CADViewerRef, CADViewerProps>(function CADVi
                             </DropdownMenuItem>
                         </DropdownMenuContent>
                     </DropdownMenu>
-                </div>
-            )}
-
-            {engineError && !isAutoRepairing && (
-                <div className="absolute bottom-6 left-6 right-6 z-30">
-                    <div className="glass flex items-center justify-between rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-4 shadow-2xl backdrop-blur-2xl animate-in slide-in-from-bottom-4 duration-500">
-                        <div className="flex items-center gap-4">
-                            <div className="flex size-10 items-center justify-center rounded-xl bg-red-500/20 border border-red-500/40">
-                                <AlertCircle size={20} className="text-red-500" />
-                            </div>
-                            <div>
-                                <h4 className="text-xs font-bold uppercase tracking-widest text-red-500">Geometry Engine Error</h4>
-                                <p className="mt-1 text-xs text-red-200/60 font-medium">{engineError.message}</p>
-                            </div>
-                        </div>
-                        <div className="flex gap-2">
-                            {onRepair && (
-                                <button
-                                    onClick={onRepair}
-                                    className="rounded-lg bg-[#007ACC] px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-white transition-all hover:bg-[#005A9E] active:scale-95 shadow-md"
-                                >
-                                    Repair Code
-                                </button>
-                            )}
-                            <button
-                                onClick={respawn}
-                                className="rounded-lg bg-red-500 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-white transition-all hover:bg-red-400 active:scale-95"
-                            >
-                                Respawn Kernel
-                            </button>
-                        </div>
-                    </div>
                 </div>
             )}
 

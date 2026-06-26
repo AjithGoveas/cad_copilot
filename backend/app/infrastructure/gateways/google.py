@@ -101,10 +101,7 @@ class GoogleGateway(BaseLLMGateway):
         if metadata.maxTokens:
             generation_config["max_output_tokens"] = metadata.maxTokens
 
-        if metadata.supportsThinking:
-            generation_config["thinking_config"] = {
-                "thinking_budget": 2048
-            }
+
 
         payload = {
             "model": metadata.id,

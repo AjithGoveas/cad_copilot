@@ -2,7 +2,7 @@
 
 import { useMemo, useEffect, memo } from 'react';
 import { Target, X, Sliders } from 'lucide-react';
-import { ParameterInput } from './ParameterInput';
+import { ParameterInput } from '@/features/cad-workspace/components/ParameterInput';
 
 type ParameterDrawerProps = {
 	parameters: Record<string, any>;
@@ -69,7 +69,7 @@ function ParameterDrawerInner({
 									isFocused={selection?.id === key}
 									isHovered={activeFeatureId === key}
 									isReadOnly={isReadOnly}
-									onChange={(newVal) => onChangeParameter?.(key, newVal)}
+									onChange={(newVal: unknown) => onChangeParameter?.(key, newVal)}
 									onMouseEnter={() => onHoverParameter?.(key)}
 									onMouseLeave={() => onHoverParameter?.(null)}
 									onFocus={() => onHoverParameter?.(key)}
