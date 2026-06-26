@@ -50,7 +50,9 @@ export async function POST(req: NextRequest) {
             headers['Access-Control-Expose-Headers'] = 'x-asset-id';
         }
 
-        return new Response(backendRes.body, {
+        const buffer = await backendRes.arrayBuffer();
+
+        return new Response(buffer, {
             status: 200,
             headers,
         });

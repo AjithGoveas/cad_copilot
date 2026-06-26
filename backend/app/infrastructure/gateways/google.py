@@ -79,10 +79,8 @@ class GoogleGateway(BaseLLMGateway):
             input_payload = [
                 {
                     "type": "image",
-                    "inline_data": {
-                        "mime_type": mime_type,
-                        "data": base64.b64encode(image_bytes).decode("utf-8")
-                    }
+                    "mime_type": mime_type,
+                    "data": base64.b64encode(image_bytes).decode("utf-8")
                 },
                 {
                     "type": "text",
@@ -95,18 +93,18 @@ class GoogleGateway(BaseLLMGateway):
         generation_config: dict[str, Any] = {
             "temperature": 0.0,
         }
-        if response_json:
-            generation_config["response_mime_type"] = "application/json"
         
         if metadata.maxTokens:
             generation_config["max_output_tokens"] = metadata.maxTokens
-
-
+            
+        if metadata.supportsThinking:
+            generation_config["thinking_level"] = "high"
 
         payload = {
             "model": metadata.id,
             "input": input_payload,
-            "generation_config": generation_config
+            "generation_config": generation_config,
+            "store": False
         }
 
         if system_instruction:
