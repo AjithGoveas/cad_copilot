@@ -65,7 +65,6 @@ export default function WorkspaceContainer({ isDemoMode = false, sessionId }: Pr
         isGeneratingGCode,
         handleClearImport,
         handleImport,
-        handleExportStep: runExportStep,
         handleGenerateGCode: runGenerateGCode,
     } = useStepCAM({ isDemoMode });
 
@@ -195,13 +194,6 @@ export default function WorkspaceContainer({ isDemoMode = false, sessionId }: Pr
         toast.success('SCAD File Downloaded');
     }, [cadScript, isDemoMode, setDemoLimitReason]);
 
-    const handleExportStep = useCallback(async () => {
-        if (isDemoMode) {
-            setDemoLimitReason('export');
-            return;
-        }
-        await runExportStep(compileCsgTree);
-    }, [runExportStep, compileCsgTree, isDemoMode, setDemoLimitReason]);
 
     const handleGenerateGCode = useCallback(async (config: any) => {
         await runGenerateGCode(config, compileCsgTree);
@@ -338,7 +330,6 @@ export default function WorkspaceContainer({ isDemoMode = false, sessionId }: Pr
                     sourceAssetId={sourceAssetId}
                     handleImportStep={isDemoMode ? async () => {} : handleImport}
                     handleClearImport={handleClearImport}
-                    handleExportStep={handleExportStep}
                     handleGenerateGCode={handleGenerateGCode}
                     isGeneratingGCode={isGeneratingGCode}
                 />

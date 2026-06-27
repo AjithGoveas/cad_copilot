@@ -1,6 +1,38 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EngineError, EngineStatus } from '../types';
 
+/**
+ * Async inflate of a gzipped CSG payload. Returns the original string for
+ * uncompressed payloads (backward compatibility).
+ */
+async function inflateCsgPayload(data: any): Promise<string> {
+    if (data?.encoding === 'gzip+base64' && typeof data.csgTree === 'string') {
+        try {
+            const bytes = Uint8Array.from(atob(data.csgTree), (c) => c.charCodeAt(0));
+            if (typeof DecompressionStream !== 'undefined') {
+                const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+                const text = await new Response(stream).text();
+                return text;
+            }
+            // Last-resort fallback: ship pako on the main thread if available.
+            // (We don't ship pako by default — the worker is the canonical path.)
+            return atob(data.csgTree);
+        } catch (e) {
+            return data?.csgTree ?? '';
+        }
+    }
+    return data?.csgTree ?? '';
+}
+
+/**
+ * Heuristic: does this error look like a CGAL kernel crash or non-manifold
+ * geometry failure? Mirrors `classifyError` in cad-worker.ts.
+ */
+function isCgalClassifiedError(err: unknown): boolean {
+    const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+    return /cgal|non-manifold|z-fighting|pointer:|assertion|degenerate|unreachable|memory access|heap/.test(msg);
+}
+
 type WorkerMessageListener = (e: MessageEvent) => void;
 type WorkerErrorListener = (e: ErrorEvent) => void;
 
@@ -282,6 +314,15 @@ export function useCadWorker({
         flushPendingRequests('Worker pool terminated.');
     }, [flushPendingRequests]);
 
+    const cancelObsoleteRequests = useCallback((latestRequestId: number, reason: string) => {
+        pendingRequestsRef.current.forEach((val, reqId) => {
+            if (reqId < latestRequestId) {
+                val.reject(new Error(reason));
+                pendingRequestsRef.current.delete(reqId);
+            }
+        });
+    }, []);
+
     const handleCompiledParts = useCallback((parts: { id: string; buffer: ArrayBuffer; color?: string }[]) => {
         setStlUrls(prev => {
             prev.forEach(item => URL.revokeObjectURL(item.url));
@@ -436,13 +477,13 @@ export function useCadWorker({
         dxfMode?: 'silhouette' | 'section' | 'blueprint',
         customScript?: string
     ): Promise<ArrayBuffer> => {
-        terminateWorker();
-
         const codeToProcess = customScript || script;
         if (!codeToProcess) throw new Error('No script available to export');
 
         const pm = getPoolManager();
         const requestId = Date.now();
+        pm.cancelObsoleteTasks(requestId);
+        cancelObsoleteRequests(requestId, 'Export task superseded.');
         const worker = pm.getWorker(requestId);
 
         setIsExporting(true);
@@ -465,24 +506,24 @@ export function useCadWorker({
         } finally {
             setIsExporting(false);
         }
-    }, [script, terminateWorker]);
+    }, [script, cancelObsoleteRequests]);
 
-    const compileCsgTree = useCallback(async (customScript?: string): Promise<string> => {
-        terminateWorker();
-
+    const compileCsgTree = useCallback(async (customScript?: string): Promise<string | ArrayBuffer> => {
         const codeToProcess = customScript || script;
         if (!codeToProcess) throw new Error('No script available to compile CSG');
 
         const pm = getPoolManager();
         const requestId = Date.now();
+        pm.cancelObsoleteTasks(requestId);
+        cancelObsoleteRequests(requestId, 'CSG compilation task superseded.');
         const worker = pm.getWorker(requestId);
 
         setIsExporting(true);
 
         try {
-            return await new Promise<string>((resolve, reject) => {
+            const csgTree = await new Promise<string>((resolve, reject) => {
                 pendingRequestsRef.current.set(requestId, {
-                    resolve: (data) => resolve(data.csgTree),
+                    resolve: (data) => { inflateCsgPayload(data).then(resolve).catch(() => resolve(data?.csgTree ?? '')); },
                     reject
                 });
 
@@ -492,10 +533,26 @@ export function useCadWorker({
                     id: requestId
                 });
             });
+            return csgTree;
+        } catch (err: any) {
+            // STL fallback: if compileCsgTree crashed due to CGAL/non-manifold geometry,
+            // retry by exporting STL instead. The caller can detect ArrayBuffer return.
+            if (isCgalClassifiedError(err)) {
+                try {
+                    const stlBuffer = await exportModel('stl', undefined, codeToProcess);
+                    if (stlBuffer && stlBuffer.byteLength > 0) {
+                        return stlBuffer;
+                    }
+                } catch (fallbackErr: any) {
+                    // STL fallback also failed; surface the original CGAL error so user gets a useful message.
+                    throw err;
+                }
+            }
+            throw err;
         } finally {
             setIsExporting(false);
         }
-    }, [script, terminateWorker]);
+    }, [script, cancelObsoleteRequests, exportModel]);
 
     const rebuild = useCallback(() => {
         if (!script) return;

@@ -19,10 +19,26 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { extractStructuredAnnotations, OpenScadAnnotations } from '@/lib/openscadParameters';
 import type { EngineError } from '../types';
+import { camApi } from '../../cam/api/camApi';
+
+/**
+ * Coerce the result of `compileCsgTree` into a string suitable for the backend
+ * export endpoints. Normally this is the OpenSCAD CSG tree text. If the worker
+ * fell back to STL export (because CGAL crashed on the CSG compilation), this
+ * is an ArrayBuffer of STL bytes — we upload it as a temporary asset and
+ * return a `step_reference` JSON string the backend already understands.
+ */
+async function resolveCsgTreeForBackend(payload: string | ArrayBuffer, isDemoMode: boolean): Promise<string> {
+    if (typeof payload === 'string') {
+        return payload;
+    }
+    const assetId = await camApi.importStlFromBuffer(payload, isDemoMode);
+    return JSON.stringify({ type: 'step_reference', asset_id: assetId });
+}
 
 export type CADViewerRef = {
     rebuild: () => void;
-    exportModel: (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint', customScript?: string) => Promise<ArrayBuffer>;
+    exportModel: (format: 'stl' | 'dxf' | 'step', dxfMode?: 'silhouette' | 'section' | 'blueprint') => Promise<void>;
     respawn: () => void;
 };
 
@@ -59,72 +75,11 @@ type CADViewerPresenterProps = {
     sourceAssetId: string | null;
     handleImportStep: (file: File) => Promise<void>;
     handleClearImport: () => void;
-    handleExportStep: (compileCsgTree: () => Promise<string>) => Promise<void>;
     handleGenerateGCode: (config: CamConfig) => Promise<void>;
     isGeneratingGCode: boolean;
     isReadOnly?: boolean;
 };
 
-const generateDxfWrapper = (originalCode: string, mode: 'silhouette' | 'section' | 'blueprint') => {
-    const cleanCode = `
-module target_blueprint() {
-    ${originalCode}
-}
-`;
-
-    const safeHeader = `\n/* --- DXF EXPORT INJECTION --- */\n$fn = 32;\n\n`;
-
-    let projectionWrapper = '';
-    
-    if (mode === 'silhouette') {
-        projectionWrapper = `
-projection(cut = false) {
-    render() { target_blueprint(); }
-}`;
-    } else if (mode === 'section') {
-        projectionWrapper = `
-projection(cut = true) {
-    translate([0, 0, -0.01]) {
-        render() { target_blueprint(); }
-    }
-}`;
-    } else if (mode === 'blueprint') {
-        projectionWrapper = `
-offset_dist = 120;
-
-union() {
-    projection(cut = false) {
-        render() { target_blueprint(); }
-    }
-    
-    translate([offset_dist, 0, 0]) {
-        projection(cut = false) {
-            rotate([54.7356, 0, 45]) {
-                render() { target_blueprint(); }
-            }
-        }
-    }
-    
-    translate([0, -offset_dist, 0]) {
-        projection(cut = false) {
-            rotate([90, 0, 0]) {
-                render() { target_blueprint(); }
-            }
-        }
-    }
-    
-    translate([offset_dist, -offset_dist, 0]) {
-        projection(cut = false) {
-            rotate([90, 0, 90]) {
-                render() { target_blueprint(); }
-            }
-        }
-    }
-}`;
-    }
-
-    return cleanCode + safeHeader + projectionWrapper;
-};
 
 export const CADViewerPresenter = forwardRef<CADViewerRef, CADViewerPresenterProps>(function CADViewerPresenter(
     {
@@ -158,7 +113,6 @@ export const CADViewerPresenter = forwardRef<CADViewerRef, CADViewerPresenterPro
         sourceAssetId,
         handleImportStep,
         handleClearImport,
-        handleExportStep,
         handleGenerateGCode,
         isGeneratingGCode,
         isReadOnly = false,
@@ -167,6 +121,7 @@ export const CADViewerPresenter = forwardRef<CADViewerRef, CADViewerPresenterPro
 ) {
     const [isCamModalOpen, setIsCamModalOpen] = useState(false);
     const [selectedController, setSelectedController] = useState<string>('fanuc');
+    const [localExportLoading, setLocalExportLoading] = useState(false);
 
     const displayStlUrls = useMemo(() => {
         if (importedStlUrl) {
@@ -177,41 +132,102 @@ export const CADViewerPresenter = forwardRef<CADViewerRef, CADViewerPresenterPro
         return stlUrls;
     }, [stlUrls, importedStlUrl]);
 
-    const doExportModel = useCallback(async (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint', customScript?: string) => {
-        if (geometrySource === 'step' || geometrySource === 'stl') {
-            const csgReference = JSON.stringify({ type: 'step_reference', asset_id: sourceAssetId });
-            const url = format === 'stl' ? '/api/v1/export/stl' : '/api/v1/export/dxf';
-            const bodyObj: any = { csgTree: csgReference, demoMode: isDemoMode };
-            if (format === 'dxf') {
-                bodyObj.dxfMode = dxfMode;
+    const handleExport = useCallback(
+        async (format: 'stl' | 'dxf' | 'step', dxfMode?: 'silhouette' | 'section' | 'blueprint') => {
+            if (format === 'step' && isDemoMode) {
+                toast.error('Exporting STEP is disabled in demo mode.');
+                return;
             }
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(bodyObj),
-            });
-            if (!res.ok) {
-                const errText = await res.text();
-                let errorMsg = errText;
-                try {
-                    const parsed = JSON.parse(errText);
-                    errorMsg = parsed.error || parsed.detail || parsed.message || errText;
-                } catch (e) {}
-                throw new Error(errorMsg || `Backend export of ${format.toUpperCase()} failed`);
+
+            setLocalExportLoading(true);
+
+            const run = async () => {
+                let buffer: ArrayBuffer;
+
+                const isImportedFlow = geometrySource === 'step' || geometrySource === 'stl';
+
+                if (isImportedFlow) {
+                    // RULES 2 & 3: Import STEP/STL -> All exports are processed on the backend using the cached shape reference
+                    if (!sourceAssetId) {
+                        throw new Error(`No active ${geometrySource.toUpperCase()} file found in cache.`);
+                    }
+
+                    const csgReference = JSON.stringify({ type: 'step_reference', asset_id: sourceAssetId });
+
+                    if (format === 'stl') {
+                        buffer = await camApi.exportStl(csgReference, isDemoMode);
+                    } else if (format === 'dxf') {
+                        buffer = await camApi.exportDxf(csgReference, dxfMode ?? 'silhouette', isDemoMode);
+                    } else {
+                        buffer = await camApi.exportStep(csgReference, isDemoMode);
+                    }
+                } else {
+                    // RULE 1: Normal generation (OpenSCAD script)
+                    if (format === 'stl') {
+                        // STL goes to the browser-side OpenSCAD compiler
+                        buffer = await exportModel(format, dxfMode, code);
+                    } else if (format === 'dxf') {
+                        // DXF goes to the backend parser/compiler.
+                        // `compileCsgTree` may fall back to STL upload if CGAL crashes;
+                        // in that case the returned value is an ArrayBuffer of STL bytes
+                        // and we route through `/import/stl` -> asset_id -> existing DXF path.
+                        const csgTreeOrStl = await compileCsgTree(code);
+                        const csgTree = await resolveCsgTreeForBackend(csgTreeOrStl, isDemoMode);
+                        buffer = await camApi.exportDxf(csgTree, dxfMode ?? 'silhouette', isDemoMode);
+                    } else {
+                        // STEP goes to the backend parser/compiler (with CGAL → STL fallback).
+                        const csgTreeOrStl = await compileCsgTree(code);
+                        const csgTree = await resolveCsgTreeForBackend(csgTreeOrStl, isDemoMode);
+                        buffer = await camApi.exportStep(csgTree, isDemoMode);
+                    }
+                }
+
+                if (!buffer || buffer.byteLength === 0) {
+                    throw new Error('Export returned empty data');
+                }
+
+                // Determine MIME type and filename
+                let mime = 'application/octet-stream';
+                let filename = `exported_model.${format}`;
+
+                if (format === 'step') {
+                    mime = 'application/step';
+                    filename = 'model.step';
+                } else if (format === 'dxf') {
+                    mime = 'image/vnd.dxf';
+                    filename = dxfMode ? `model_${dxfMode}.dxf` : 'model.dxf';
+                }
+
+                const blob = new Blob([buffer], { type: mime });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            };
+
+            try {
+                const label = format.toUpperCase() + (dxfMode ? ` (${dxfMode})` : '');
+                await toast.promise(run(), {
+                    loading: `Exporting ${label} model…`,
+                    success: `${label} Exported Successfully`,
+                    error: (err) => `Export Failed: ${err.message || err}`,
+                });
+            } finally {
+                setLocalExportLoading(false);
             }
-            return await res.arrayBuffer();
-        } else {
-            return await exportModel(format, dxfMode, customScript);
-        }
-    }, [geometrySource, sourceAssetId, isDemoMode, exportModel]);
+        },
+        [code, geometrySource, sourceAssetId, isDemoMode, exportModel, compileCsgTree]
+    );
 
     useImperativeHandle(ref, () => ({
         rebuild,
-        exportModel: doExportModel,
+        exportModel: handleExport,
         respawn,
-    }), [rebuild, doExportModel, respawn]);
+    }), [rebuild, handleExport, respawn]);
 
     const clearImportRef = useRef(handleClearImport);
     clearImportRef.current = handleClearImport;
@@ -231,33 +247,6 @@ export const CADViewerPresenter = forwardRef<CADViewerRef, CADViewerPresenterPro
         }, 500);
         return () => clearTimeout(timer);
     }, [code]);
-
-    const handleExport = useCallback(
-        async (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint') => {
-            let exportScript = code;
-            if (format === 'dxf' && dxfMode) {
-                exportScript = generateDxfWrapper(code, dxfMode);
-            }
-            try {
-                const buffer = await doExportModel(format, dxfMode, exportScript);
-                if (!buffer) return;
-
-                const mime = format === 'stl' ? 'application/octet-stream' : 'image/vnd.dxf';
-                const blob = new Blob([buffer], { type: mime });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `exported_model.${format}`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                setTimeout(() => URL.revokeObjectURL(url), 1000);
-            } catch (err: any) {
-                toast.error(`Export failed: ${err.message || err}`);
-            }
-        },
-        [code, doExportModel]
-    );
 
     const handleDownloadScad = useCallback(() => {
         if (!code) return;
@@ -311,10 +300,10 @@ export const CADViewerPresenter = forwardRef<CADViewerRef, CADViewerPresenterPro
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <button 
-                                disabled={isExporting} 
+                                disabled={isExporting || localExportLoading} 
                                 className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#252526]/80 hover:bg-[#3C3C3C] border border-[#3C3C3C] shadow-lg backdrop-blur-md text-[11px] font-medium text-[#D4D4D4] transition-colors disabled:opacity-50"
                             >
-                                {isExporting ? <Spinner className="size-3.5 text-[#007ACC]" /> : <Download size={13} className="text-[#007ACC]" />}
+                                {isExporting || localExportLoading ? <Spinner className="size-3.5 text-[#007ACC]" /> : <Download size={13} className="text-[#007ACC]" />}
                                 Export
                                 <ChevronDown size={11} className="text-[#A6A6A6] ml-0.5" />
                             </button>
@@ -347,44 +336,48 @@ export const CADViewerPresenter = forwardRef<CADViewerRef, CADViewerPresenterPro
                                     </div>
                                 </div>
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleExportStep(compileCsgTree)} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
-                                <div className="flex items-center gap-2.5">
-                                    <div className="flex size-5 items-center justify-center rounded bg-blue-500/20">
-                                        <Box size={11} className="text-blue-500" />
-                                    </div>
-                                    <div className="flex flex-col">
-                                        <span>Parametric CAD Sheet</span>
-                                        <span className="text-[9px] text-white/60">.STEP Model</span>
-                                    </div>
-                                </div>
-                            </DropdownMenuItem>
-                            <DropdownMenuSub>
-                                <DropdownMenuSubTrigger className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
-                                    <div className="flex items-center gap-2.5">
-                                        <div className="flex size-5 items-center justify-center rounded bg-emerald-500/20">
-                                            <Layers size={11} className="text-emerald-500" />
+                            {geometrySource !== 'stl' && (
+                                <>
+                                    <DropdownMenuItem onClick={() => handleExport('step')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+                                        <div className="flex items-center gap-2.5">
+                                            <div className="flex size-5 items-center justify-center rounded bg-blue-500/20">
+                                                <Box size={11} className="text-blue-500" />
+                                            </div>
+                                            <div className="flex flex-col">
+                                                <span>Parametric CAD Sheet</span>
+                                                <span className="text-[9px] text-white/60">.STEP Model</span>
+                                            </div>
                                         </div>
-                                        <div className="flex flex-col text-left">
-                                            <span>2D Vector Drawing</span>
-                                            <span className="text-[9px] text-white/60">.DXF Outline</span>
-                                        </div>
-                                    </div>
-                                </DropdownMenuSubTrigger>
-                                <DropdownMenuPortal>
-                                    <DropdownMenuSubContent alignOffset={-5} className="min-w-32 border-[#3C3C3C] bg-[#252526] p-1 shadow-2xl rounded-md">
-                                        <DropdownMenuItem onClick={() => handleExport('dxf', 'silhouette')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
-                                            Top-Down Silhouette
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem onClick={() => handleExport('dxf', 'section')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
-                                            Cross-Section Slice
-                                        </DropdownMenuItem>
-                                        <DropdownMenuSeparator className="bg-[#3C3C3C]" />
-                                        <DropdownMenuItem onClick={() => handleExport('dxf', 'blueprint')} className="text-[11px] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer font-bold text-emerald-400">
-                                            Multi-View Sheet
-                                        </DropdownMenuItem>
-                                    </DropdownMenuSubContent>
-                                </DropdownMenuPortal>
-                            </DropdownMenuSub>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSub>
+                                        <DropdownMenuSubTrigger className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+                                            <div className="flex items-center gap-2.5">
+                                                <div className="flex size-5 items-center justify-center rounded bg-emerald-500/20">
+                                                    <Layers size={11} className="text-emerald-500" />
+                                                </div>
+                                                <div className="flex flex-col text-left">
+                                                    <span>2D Vector Drawing</span>
+                                                    <span className="text-[9px] text-white/60">.DXF Outline</span>
+                                                </div>
+                                            </div>
+                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuPortal>
+                                            <DropdownMenuSubContent alignOffset={-5} className="min-w-32 border-[#3C3C3C] bg-[#252526] p-1 shadow-2xl rounded-md">
+                                                <DropdownMenuItem onClick={() => handleExport('dxf', 'silhouette')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+                                                    Top-Down Silhouette
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem onClick={() => handleExport('dxf', 'section')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
+                                                    Cross-Section Slice
+                                                </DropdownMenuItem>
+                                                <DropdownMenuSeparator className="bg-[#3C3C3C]" />
+                                                <DropdownMenuItem onClick={() => handleExport('dxf', 'blueprint')} className="text-[11px] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer font-bold text-emerald-400">
+                                                    Multi-View Sheet
+                                                </DropdownMenuItem>
+                                            </DropdownMenuSubContent>
+                                        </DropdownMenuPortal>
+                                    </DropdownMenuSub>
+                                </>
+                            )}
                             <DropdownMenuItem onClick={() => handleOpenCamModal('fanuc')} className="text-[11px] text-[#D4D4D4] focus:bg-[#007ACC] rounded-md py-1.5 cursor-pointer">
                                 <div className="flex items-center gap-2.5">
                                     <div className="flex size-5 items-center justify-center rounded bg-orange-500/20">

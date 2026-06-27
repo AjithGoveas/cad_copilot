@@ -51,8 +51,36 @@ export const camApi = {
 
         const assetId = res.headers.get('x-asset-id');
         const buffer = await res.arrayBuffer();
-        
+
         return { assetId, buffer };
+    },
+
+    async importStlFromBuffer(buffer: ArrayBuffer, demoMode: boolean): Promise<string> {
+        // Upload an in-memory STL buffer to the backend, return its asset_id
+        // for use as a `step_reference` in subsequent STEP/DXF exports.
+        const formData = new FormData();
+        const blob = new Blob([buffer], { type: 'application/octet-stream' });
+        formData.append('file', blob, 'fallback.stl');
+        if (demoMode) {
+            formData.append('demoMode', 'true');
+        }
+
+        const res = await fetch('/api/v1/import/stl', {
+            method: 'POST',
+            body: formData,
+            cache: 'no-store',
+        });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(errText || 'STL fallback import failed');
+        }
+
+        const assetId = res.headers.get('x-asset-id');
+        if (!assetId) {
+            throw new Error('STL fallback import returned no asset_id');
+        }
+        return assetId;
     },
 
     async teardownStep(assetId: string) {
@@ -70,7 +98,52 @@ export const camApi = {
 
         if (!res.ok) {
             const errText = await res.text();
-            throw new Error(errText || 'STEP export service failed');
+            let errorMsg = errText;
+            try {
+                const parsed = JSON.parse(errText);
+                errorMsg = parsed.error || parsed.detail || parsed.message || errText;
+            } catch (e) {}
+            throw new Error(errorMsg || 'STEP export service failed');
+        }
+
+        return res.arrayBuffer();
+    },
+
+    async exportStl(csgTree: string, demoMode: boolean) {
+        const res = await fetch('/api/v1/export/stl', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ csgTree, demoMode }),
+        });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            let errorMsg = errText;
+            try {
+                const parsed = JSON.parse(errText);
+                errorMsg = parsed.error || parsed.detail || parsed.message || errText;
+            } catch (e) {}
+            throw new Error(errorMsg || 'STL export service failed');
+        }
+
+        return res.arrayBuffer();
+    },
+
+    async exportDxf(csgTree: string, dxfMode: 'silhouette' | 'section' | 'blueprint', demoMode: boolean) {
+        const res = await fetch('/api/v1/export/dxf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ csgTree, dxfMode, demoMode }),
+        });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            let errorMsg = errText;
+            try {
+                const parsed = JSON.parse(errText);
+                errorMsg = parsed.error || parsed.detail || parsed.message || errText;
+            } catch (e) {}
+            throw new Error(errorMsg || 'DXF export service failed');
         }
 
         return res.arrayBuffer();

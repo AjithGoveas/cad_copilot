@@ -36,7 +36,7 @@ type CompiledMessage = {
 };
 
 type ExportedMessage        = { type: 'exported'; id: number; data: ArrayBuffer; format: 'stl' | 'dxf'; durationMs: number };
-type CsgCompiledMessage     = { type: 'csg-compiled'; id: number; csgTree: string };
+type CsgCompiledMessage     = { type: 'csg-compiled'; id: number; csgTree: string; encoding?: 'gzip+base64' };
 
 type ErrorMessage = {
     type: 'error';
@@ -582,7 +582,7 @@ async function compileToParts(
 
 async function compileCsg(
     script: string
-): Promise<string> {
+): Promise<{ payload: string; encoding: 'gzip+base64' | 'raw' }> {
     let fs: FS | undefined;
     const INPUT_PATH = '/input.scad';
     const OUTPUT_PATH = '/output.csg';
@@ -611,8 +611,8 @@ async function compileCsg(
             ) as Error & { details?: string; classified?: ErrorMessage['errorType'] };
         }
 
-        const csgTree = fs.readFile(OUTPUT_PATH, { encoding: 'utf8' }) as string;
-        return csgTree;
+        const csgTreeRaw = fs.readFile(OUTPUT_PATH, { encoding: 'utf8' }) as string;
+        return await compressCsgTree(csgTreeRaw);
 
     } catch (err: unknown) {
         throw normaliseThrown(err);
@@ -630,6 +630,38 @@ async function compileCsg(
                 } catch (e) {}
             }
         }
+    }
+}
+
+/**
+ * Gzip + base64-encode a CSG tree string. BOSL2/MCAD-expanded CSG trees are
+ * typically 70–85% token repetition (`group()`, `multmatrix(...)`, etc.) so
+ * gzip yields ~5–10× reduction, dramatically shrinking the worker→backend
+ * payload.
+ *
+ * Returns the inflated string with `encoding: 'raw'` if `CompressionStream`
+ * is unavailable in this Worker (legacy browser fallback).
+ */
+async function compressCsgTree(text: string): Promise<{ payload: string; encoding: 'gzip+base64' | 'raw' }> {
+    if (typeof CompressionStream === 'undefined') {
+        return { payload: text, encoding: 'raw' };
+    }
+    try {
+        const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+        const buffer = await new Response(stream).arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        // Chunked base64 to avoid call-stack overflow on large inputs.
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+            binary += String.fromCharCode.apply(
+                null,
+                Array.from(bytes.subarray(i, i + chunk))
+            );
+        }
+        return { payload: btoa(binary), encoding: 'gzip+base64' };
+    } catch {
+        return { payload: text, encoding: 'raw' };
     }
 }
 
@@ -685,11 +717,12 @@ workerScope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
             case 'compile-csg': {
                 try {
-                    const csgTree = await compileCsg(data.script);
+                    const { payload, encoding } = await compileCsg(data.script);
                     workerScope.postMessage({
                         type: 'csg-compiled',
                         id: data.id,
-                        csgTree,
+                        csgTree: payload,
+                        encoding: encoding === 'gzip+base64' ? 'gzip+base64' : undefined,
                     } satisfies CsgCompiledMessage);
                 } catch (err: unknown) {
                     handleWorkerError(err, data.id);

@@ -117,43 +117,6 @@ export function useStepCAM({ isDemoMode }: Config) {
         await handleImportStep(file);
     }, [handleImportStep, handleImportStl]);
 
-    const handleExportStep = useCallback(async (compileCsgTree: () => Promise<string>) => {
-        if (isDemoMode) {
-            toast.error('Exporting STEP is disabled in demo mode.');
-            return;
-        }
-
-        const run = async () => {
-            let buffer: ArrayBuffer;
-
-            if (geometrySource === 'step' || geometrySource === 'stl') {
-                if (!sourceAssetId) throw new Error(`No active ${geometrySource.toUpperCase()} file imported`);
-                const csgTree = JSON.stringify({ type: 'step_reference', asset_id: sourceAssetId });
-                buffer = await camApi.exportStep(csgTree, isDemoMode);
-            } else {
-                const csgTree = await compileCsgTree();
-                buffer = await camApi.exportStep(csgTree, isDemoMode);
-            }
-
-            const blob = new Blob([buffer], { type: 'application/step' });
-            const url = URL.createObjectURL(blob);
-
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `generated_model.step`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-        };
-
-        await toast.promise(run(), {
-            loading: 'Exporting STEP model…',
-            success: 'STEP Exported Successfully',
-            error: (err) => `STEP Export Failed: ${err.message || err}`,
-        });
-    }, [geometrySource, sourceAssetId, isDemoMode]);
-
     const handleGenerateGCode = useCallback(async (config: any, compileCsgTree: () => Promise<string>) => {
         setIsGeneratingGCode(true);
         const controllerLabel = config.controller.toUpperCase();
@@ -212,7 +175,6 @@ export function useStepCAM({ isDemoMode }: Config) {
         handleClearImport,
         handleImport,
         handleImportStep,
-        handleExportStep,
         handleGenerateGCode,
     };
 }

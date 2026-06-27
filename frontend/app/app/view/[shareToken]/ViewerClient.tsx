@@ -107,7 +107,6 @@ export default function ViewerClient({ prompt, scadCode, parametersJson }: Viewe
 					sourceAssetId={null}
 					handleImportStep={async () => {}}
 					handleClearImport={() => {}}
-					handleExportStep={async () => {}}
 					handleGenerateGCode={async () => {}}
 					isGeneratingGCode={false}
 				/>

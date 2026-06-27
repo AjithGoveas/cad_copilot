@@ -9,10 +9,14 @@ import re
 import uuid
 from typing import Any
 import time
+import logging
+
+logger = logging.getLogger("app")
+
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 # Domain, Use Case, and Infrastructure layer imports
 from app.domain.models import ModelMetadata, GenerateResponse, StepRequest, GCodeResponse, CAMJobRequest, DxfExportRequest
@@ -304,8 +308,16 @@ async def export_step_stream(request: StepRequest) -> StreamingResponse:
             media_type="application/step",
             headers={"Content-Disposition": "attachment; filename=model.step"}
         )
-    except Exception as exc:
+    except HTTPException:
+        raise
+    except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception(f"[export-step] Exception occurred: {exc}")
+        logger.error(f"[export-step] CSG tree payload:\n{request.csg_tree}")
+        raise HTTPException(status_code=500, detail=f"STEP export failed: {exc}")
 
 
 def _process_gcode(cam_request_dict: dict, step_file_path: str | None, temp_path_str: str | None) -> dict:
@@ -514,18 +526,32 @@ async def import_teardown_endpoint(asset_id: str):
     return {"status": "evicted"}
 
 
+def _process_export_dxf(csg_tree: str, dxf_mode: str) -> bytes:
+    is_ref, asset_id = is_step_reference(csg_tree)
+    if is_ref and asset_id:
+        shape = ShapeCache.get(asset_id)
+        if shape is None:
+            raise ValueError(f"STEP asset ID {asset_id} not found in cache or has expired.")
+    else:
+        shape = cad_engine.parse_csg(csg_tree)
+    return cad_engine.shape_to_dxf_bytes(shape, dxf_mode)
+
+
+def _process_export_stl(csg_tree: str) -> bytes:
+    is_ref, asset_id = is_step_reference(csg_tree)
+    if is_ref and asset_id:
+        shape = ShapeCache.get(asset_id)
+        if shape is None:
+            raise ValueError(f"STEP asset ID {asset_id} not found in cache or has expired.")
+    else:
+        shape = cad_engine.parse_csg(csg_tree)
+    return cad_engine.shape_to_stl_bytes(shape)
+
+
 @router.post("/export-stl", summary="Export Cached Shape to STL", description="Retrieves registered shape assets from cache and generates raw STL files.")
 async def export_stl_endpoint(request: StepRequest) -> StreamingResponse:
     try:
-        is_ref, asset_id = is_step_reference(request.csg_tree)
-        if not is_ref or not asset_id:
-            raise HTTPException(status_code=400, detail="Invalid step reference for STL export.")
-            
-        shape = ShapeCache.get(asset_id)
-        if shape is None:
-            raise HTTPException(status_code=404, detail="STEP asset ID not found in cache.")
-
-        stl_bytes = await asyncio.to_thread(cad_engine.shape_to_stl_bytes, shape)
+        stl_bytes = await asyncio.to_thread(_process_export_stl, request.csg_tree)
         return StreamingResponse(
             io.BytesIO(stl_bytes),
             media_type="application/octet-stream",
@@ -533,22 +559,20 @@ async def export_stl_endpoint(request: StepRequest) -> StreamingResponse:
         )
     except HTTPException:
         raise
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
+        logger.exception(f"[export-stl] Exception occurred: {exc}")
+        logger.error(f"[export-stl] CSG tree payload:\n{request.csg_tree}")
         raise HTTPException(status_code=500, detail=f"STL export failed: {exc}")
 
 
 @router.post("/export-dxf", summary="Export Cached Shape to DXF", description="Projects registered shape assets to 2D sections or blueprints, exporting DXF files.")
 async def export_dxf_endpoint(request: DxfExportRequest) -> StreamingResponse:
     try:
-        is_ref, asset_id = is_step_reference(request.csg_tree)
-        if not is_ref or not asset_id:
-            raise HTTPException(status_code=400, detail="Invalid step reference for DXF export.")
-            
-        shape = ShapeCache.get(asset_id)
-        if shape is None:
-            raise HTTPException(status_code=404, detail="STEP asset ID not found in cache.")
-
-        dxf_bytes = await asyncio.to_thread(cad_engine.shape_to_dxf_bytes, shape, request.dxf_mode)
+        dxf_bytes = await asyncio.to_thread(_process_export_dxf, request.csg_tree, request.dxf_mode)
         return StreamingResponse(
             io.BytesIO(dxf_bytes),
             media_type="application/octet-stream",
@@ -556,5 +580,11 @@ async def export_dxf_endpoint(request: DxfExportRequest) -> StreamingResponse:
         )
     except HTTPException:
         raise
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
+        logger.exception(f"[export-dxf] Exception occurred: {exc}")
+        logger.error(f"[export-dxf] CSG tree payload:\n{request.csg_tree}")
         raise HTTPException(status_code=500, detail=f"DXF export failed: {exc}")
