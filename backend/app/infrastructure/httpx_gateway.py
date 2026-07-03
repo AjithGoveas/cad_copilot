@@ -9,6 +9,7 @@ from app.infrastructure.gateways import (
     DeepSeekGateway,
     AnthropicGateway,
     OllamaGateway,
+    OpenRouterGateway,
 )
 
 class UniversalHTTPXGateway(ILLMProviderGateway):
@@ -19,6 +20,7 @@ class UniversalHTTPXGateway(ILLMProviderGateway):
         self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "")
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "")
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
         self.ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
         # Instantiate sub-gateways
@@ -28,6 +30,7 @@ class UniversalHTTPXGateway(ILLMProviderGateway):
             "deepseek": DeepSeekGateway(self.deepseek_api_key),
             "anthropic": AnthropicGateway(self.anthropic_api_key),
             "ollama": OllamaGateway(self.ollama_host),
+            "openrouter": OpenRouterGateway(self.openrouter_api_key)
         }
 
     async def generate_parametric_cad(

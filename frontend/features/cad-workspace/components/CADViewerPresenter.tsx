@@ -32,6 +32,7 @@ async function resolveCsgTreeForBackend(payload: string | ArrayBuffer, isDemoMod
     if (typeof payload === 'string') {
         return payload;
     }
+    toast.warning('CSG compilation failed — exporting from mesh. Quality may be reduced.');
     const assetId = await camApi.importStlFromBuffer(payload, isDemoMode);
     return JSON.stringify({ type: 'step_reference', asset_id: assetId });
 }

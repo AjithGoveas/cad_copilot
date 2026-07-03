@@ -4,6 +4,7 @@ from .openai import OpenAIGateway
 from .deepseek import DeepSeekGateway
 from .anthropic import AnthropicGateway
 from .ollama import OllamaGateway
+from .openrouter import OpenRouterGateway
 
 __all__ = [
     "BaseLLMGateway",
@@ -12,4 +13,5 @@ __all__ = [
     "DeepSeekGateway",
     "AnthropicGateway",
     "OllamaGateway",
+    "OpenRouterGateway"
 ]

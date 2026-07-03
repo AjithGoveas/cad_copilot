@@ -1,7 +1,7 @@
 export interface ModelMetadata {
     id: string;
     name: string;
-    vendor: 'google' | 'deepseek' | 'anthropic' | 'openai' | 'ollama';
+    vendor: 'google' | 'deepseek' | 'anthropic' | 'openai' | 'ollama' | 'openrouter';
     tier: 'flash' | 'pro' | 'ultra';
     maxTokens: number;
     supportsThinking: boolean;
@@ -85,7 +85,18 @@ export const MODEL_REGISTRY: ModelMetadata[] = [
         fallbackModelId: 'gemini-3.1-flash-lite',
         description: 'Gemma 4 31B model running locally/cloud via Ollama endpoints.',
         badge: 'local',
-    }
+    },
+    {
+        id: "google/gemini-3.5-flash",
+        name: 'Gemini 3.5 Flash (OpenRouter)',
+        vendor: 'openrouter',
+        tier: 'flash',
+        maxTokens: 32000,
+        supportsThinking: true,
+        fallbackModelId: 'gemini-3.1-flash-lite',
+        description: 'Google next-gen reasoning model optimized for code and speed.',
+        badge: 'thinking',
+    },
 ];
 
 export function getModelById(id: string): ModelMetadata | undefined {

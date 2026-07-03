@@ -2,7 +2,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from build123d import Plane, BuildSketch, project, ExportDXF, Location, Rotation, Compound, Mode, Face, export_stl
+from build123d import Plane, BuildSketch, project, ExportDXF, Location, Rotation, Compound, Mode, Face, export_stl, Vector
 
 from app.domain.interfaces.cad_interfaces import ICADEngine
 from app.infrastructure.cad.csg_parser import CSGParser, export_to_step
@@ -43,54 +43,90 @@ class ConcreteCADEngine(ICADEngine):
             if temp_path and temp_path.exists():
                 temp_path.unlink(missing_ok=True)
 
+    def _project_to_outline(self, shape: Any) -> Compound | None:
+        try:
+            with BuildSketch(Plane.XY):
+                result = project(shape.edges(), mode=Mode.PRIVATE)
+            if result is not None:
+                proj_edges = result.edges()
+                if proj_edges:
+                    return Compound(proj_edges)
+        except Exception:
+            pass
+        try:
+            with BuildSketch(Plane.XY):
+                result = project(shape.faces(), mode=Mode.PRIVATE)
+            if result is not None:
+                proj_edges = result.edges()
+                if proj_edges:
+                    return Compound(proj_edges)
+        except Exception:
+            pass
+        return None
+
     def shape_to_dxf_bytes(self, shape: Any, dxf_mode: str) -> bytes:
         shape = self._ensure_brep_shape(shape)
-        dxf_shape = None
+
         if dxf_mode == "silhouette":
-            with BuildSketch(Plane.XY):
-                dxf_shape = project(shape.edges(), mode=Mode.PRIVATE)
+            dxf_shape = self._project_to_outline(shape)
         elif dxf_mode == "section":
             bb = shape.bounding_box()
             z_center = (bb.min.Z + bb.max.Z) / 2.0
             if abs(z_center) < 1e-5:
                 z_center = 0.01
             section_plane = Plane.XY.offset(z_center)
-            section_profile = shape.intersect(Face.make_rect(10000, 10000, section_plane))
-            with BuildSketch(Plane.XY):
-                dxf_shape = project(section_profile.edges(), mode=Mode.PRIVATE)
+            section_shape = shape.intersect(Face.make_rect(10000, 10000, section_plane))
+            dxf_shape = self._project_to_outline(section_shape)
         elif dxf_mode == "blueprint":
-            bb = shape.bounding_box()
-            max_dim = max(
-                bb.max.X - bb.min.X,
-                bb.max.Y - bb.min.Y,
-                bb.max.Z - bb.min.Z
-            )
-            offset_dist = max(120.0, max_dim * 2.5)
-            
-            with BuildSketch(Plane.XY):
-                top_view = project(shape.edges(), mode=Mode.PRIVATE)
-                
-                iso_rotated = Rotation(0, 0, 45) * Rotation(54.7356, 0, 0) * shape
-                iso_view = Location((offset_dist, 0, 0)) * project(iso_rotated.edges(), mode=Mode.PRIVATE)
-                
-                front_rotated = Rotation(90, 0, 0) * shape
-                front_view = Location((0, -offset_dist, 0)) * project(front_rotated.edges(), mode=Mode.PRIVATE)
-                
-                right_rotated = Rotation(0, 0, 90) * Rotation(90, 0, 0) * shape
-                right_view = Location((offset_dist, -offset_dist, 0)) * project(right_rotated.edges(), mode=Mode.PRIVATE)
-                
-                dxf_shape = Compound([top_view, iso_view, front_view, right_view])
+            target_size = 100.0
+            spacing = target_size * 1.6
+
+            top = self._project_to_outline(shape)
+
+            iso_rot = Rotation(0, 0, 45) * Rotation(54.7356, 0, 0) * shape
+            iso = self._project_to_outline(iso_rot)
+
+            front_rot = Rotation(90, 0, 0) * shape
+            front = self._project_to_outline(front_rot)
+
+            right_rot = Rotation(0, 0, 90) * Rotation(90, 0, 0) * shape
+            right = self._project_to_outline(right_rot)
+
+            raw_views = [v for v in [top, iso, front, right] if v is not None]
+            if not raw_views:
+                dxf_shape = None
+            else:
+                scaled_views = []
+                for v in raw_views:
+                    bb = v.bounding_box()
+                    w = bb.max.X - bb.min.X
+                    h = bb.max.Y - bb.min.Y
+                    max_dim = max(w, h, 0.001)
+                    scale = target_size / max_dim
+                    sv = v.scale(scale)
+                    sbb = sv.bounding_box()
+                    cx = (sbb.min.X + sbb.max.X) / 2.0
+                    cy = (sbb.min.Y + sbb.max.Y) / 2.0
+                    centered = Location((-cx, -cy, 0)) * sv
+                    scaled_views.append(centered)
+
+                positions = [(0, 0), (spacing, 0), (0, -spacing), (spacing, -spacing)]
+                positioned = [
+                    Location((px, py, 0)) * sv
+                    for sv, (px, py) in zip(scaled_views, positions)
+                ]
+                dxf_shape = Compound(positioned)
         else:
-            with BuildSketch(Plane.XY):
-                dxf_shape = project(shape.edges(), mode=Mode.PRIVATE)
+            dxf_shape = self._project_to_outline(shape)
 
         temp_path = None
         try:
             with tempfile.NamedTemporaryFile(suffix=".dxf", delete=False) as tf:
                 temp_path = Path(tf.name)
-            
+
             exporter = ExportDXF()
-            exporter.add_shape(dxf_shape)
+            if dxf_shape is not None:
+                exporter.add_shape(dxf_shape)
             exporter.write(str(temp_path))
             with open(temp_path, "rb") as f:
                 return f.read()
@@ -145,6 +181,9 @@ class ConcreteCADEngine(ICADEngine):
                     temp_stl_path.unlink()
             except Exception:
                 pass
+
+    def ensure_brep_shape(self, shape: Any) -> Any:
+        return self._ensure_brep_shape(shape)
 
     def _ensure_brep_shape(self, shape: Any) -> Any:
         from build123d import Compound

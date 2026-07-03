@@ -39,6 +39,11 @@ class ICADEngine(ABC):
         """Imports raw STL file bytes and returns the imported shape/mesh."""
         pass
 
+    @abstractmethod
+    def ensure_brep_shape(self, shape: Any) -> Any:
+        """Converts a triangulated mesh shape to a B-Rep shape if needed."""
+        pass
+
 
 class ICAMEngine(ABC):
     """Agnostic interface for Computer-Aided Manufacturing (CAM) operations."""

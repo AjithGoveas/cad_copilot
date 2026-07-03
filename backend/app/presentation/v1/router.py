@@ -64,11 +64,19 @@ class RepairRequestSchema(BaseModel):
 # ---------------------------------------------------------------------------
 class ShapeCache:
     _cache: dict[str, dict[str, Any]] = {}
+    _TTL: float = 1800.0
+
+    @classmethod
+    def _stale(cls, entry: dict[str, Any]) -> bool:
+        return time.time() - entry["last_accessed"] > cls._TTL
 
     @classmethod
     def get(cls, asset_id: str) -> Any:
         entry = cls._cache.get(asset_id)
         if entry:
+            if cls._stale(entry):
+                cls.evict(asset_id)
+                return None
             entry["last_accessed"] = time.time()
             return entry["shape"]
         return None
@@ -320,7 +328,7 @@ async def export_step_stream(request: StepRequest) -> StreamingResponse:
         raise HTTPException(status_code=500, detail=f"STEP export failed: {exc}")
 
 
-def _process_gcode(cam_request_dict: dict, step_file_path: str | None, temp_path_str: str | None) -> dict:
+def _process_gcode(cam_request_dict: dict, step_file_path: str | None) -> dict:
     cam_request = CAMJobRequest(**cam_request_dict)
 
     is_ref, asset_id = is_step_reference(cam_request.csg_tree)
@@ -328,7 +336,7 @@ def _process_gcode(cam_request_dict: dict, step_file_path: str | None, temp_path
         shape = ShapeCache.get(asset_id)
         if shape is None:
             raise ValueError(f"STEP asset ID {asset_id} not found in cache or has expired.")
-        shape = cad_engine._ensure_brep_shape(shape)
+        shape = cad_engine.ensure_brep_shape(shape)
         return cam_engine.generate_gcode(cam_request, step_path=shape)
 
     if not cam_request.csg_tree and step_file_path:
@@ -342,10 +350,7 @@ def _process_gcode(cam_request_dict: dict, step_file_path: str | None, temp_path
         raise ValueError("Either 'csg_tree' or 'step_file_path' must be provided.")
 
     shape = cad_engine.parse_csg(cam_request.csg_tree)
-    if temp_path_str:
-        cad_engine.export_step(shape, temp_path_str)
-
-    return cam_engine.generate_gcode(cam_request, step_path=temp_path_str)
+    return cam_engine.generate_gcode(cam_request, step_path=shape)
 
 
 @router.post("/gcode", response_model=GCodeResponse, summary="Generate CAM G-code Pathways", description="Performs 3D feature recognition (holes, slots, profiles) on raw shapes to construct optimized tool paths and output industrial G-code blocks.")
@@ -408,23 +413,16 @@ async def generate_gcode(
                 detail={"error": {"message": f"Invalid JSON body: {exc}"}}
             )
     try:
-        if not cam_request.csg_tree and cam_request.step_file_path:
-            pass
-        else:
-            if not cam_request.csg_tree:
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"message": "Either 'csg_tree' or 'step_file_path' must be provided."}}
-                )
-            if not temp_path:
-                with tempfile.NamedTemporaryFile(suffix=".step", delete=False) as tf:
-                    temp_path = pathlib.Path(tf.name)
+        if not cam_request.csg_tree and not cam_request.step_file_path:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"message": "Either 'csg_tree' or 'step_file_path' must be provided."}}
+            )
 
         result = await asyncio.to_thread(
             _process_gcode,
             cam_request.model_dump(),
             cam_request.step_file_path,
-            str(temp_path) if temp_path else None
         )
 
         gcode_content = result.get("gcode", "")

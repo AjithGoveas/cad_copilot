@@ -1,7 +1,7 @@
 'use client';
 
-import { type FormEvent, useEffect, useRef } from 'react';
-import { Upload, X, Sparkles, Binary, LogOut, ChevronLeft, ChevronRight, Box, ArrowUp, Paperclip, Target, FileText, Image } from 'lucide-react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { Upload, X, Sparkles, Binary, LogOut, ChevronLeft, ChevronRight, ChevronDown, Box, ArrowUp, Paperclip, Target, FileText, Image, BrainCircuit, Zap } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { ChatBubble } from './ChatBubble';
 import { signOut } from 'next-auth/react';
@@ -15,7 +15,7 @@ type Props = {
     setPrompt: (v: string) => void;
     selectedModel: string;
     setSelectedModel: (v: string) => void;
-    modelOptions: { value: string; label: string; badge?: string }[];
+    modelOptions: { value: string; label: string; badge?: string; vendor?: string }[];
 
     selectedFile: File | null;
     onFileChange: (f: File | null) => void;
@@ -41,12 +41,55 @@ export function ChatPanelPresenter({
     children,
 }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+    const [dropdownOpen, setDropdownOpen] = useState(false);
+    const dropRef = useRef<HTMLDivElement>(null);
+    const [dragOver, setDragOver] = useState(false);
+
+    useEffect(() => {
+        const handleClick = (e: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+                setDropdownOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, []);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
     const canSubmit = !isGenerating && prompt.trim().length > 0;
+
+    const acceptTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
+    const acceptExtensions = '.png,.jpg,.jpeg,.webp,.heic,.heif,.pdf';
+    const isValidDropFile = (file: File) =>
+        acceptTypes.includes(file.type) || /\.(png|jpe?g|webp|heic|heif|pdf)$/i.test(file.name);
+
+    const handleDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(true);
+    };
+
+    const handleDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (dropRef.current && !dropRef.current.contains(e.relatedTarget as Node)) {
+            setDragOver(false);
+        }
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(false);
+        const file = e.dataTransfer.files?.[0];
+        if (file && isValidDropFile(file)) {
+            onFileChange(file);
+        }
+    };
 
     return (
         <aside
@@ -77,17 +120,36 @@ export function ChatPanelPresenter({
                         </span>
                     </div>
                     <div className="flex items-center gap-3">
-                        <select
-                            value={selectedModel}
-                            onChange={(e) => setSelectedModel(e.target.value)}
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 font-sans text-[12px] text-zinc-300 focus:outline-none focus:ring-1 focus:ring-blue-500/50 cursor-pointer shadow-sm hover:bg-zinc-800 transition-colors"
-                        >
-                            {modelOptions.map((o) => (
-                                <option key={o.value} value={o.value}>
-                                    {o.badge === 'thinking' ? '🧠 ' : o.badge === 'fast' ? '⚡ ' : ''}{o.label}
-                                </option>
-                            ))}
-                        </select>
+                        <div className="relative" ref={dropdownRef}>
+                            <button
+                                onClick={() => setDropdownOpen(!dropdownOpen)}
+                                className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 font-sans text-[12px] text-zinc-300 focus:outline-none focus:ring-1 focus:ring-blue-500/50 cursor-pointer shadow-sm hover:bg-zinc-800 transition-colors"
+                            >
+                                {(() => {
+                                    const current = modelOptions.find(o => o.value === selectedModel);
+                                    if (current?.badge === 'thinking') return <BrainCircuit size={14} className="text-blue-400" />;
+                                    if (current?.badge === 'fast') return <Zap size={14} className="text-amber-400" />;
+                                    return null;
+                                })()}
+                                <span>{modelOptions.find(o => o.value === selectedModel)?.label ?? selectedModel}</span>
+                                <ChevronDown size={12} className="text-zinc-500" />
+                            </button>
+                            {dropdownOpen && (
+                                <div className="absolute top-full right-0 mt-1.5 w-52 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl z-50 py-1 overflow-hidden">
+                                    {modelOptions.map((o) => (
+                                        <button
+                                            key={o.value}
+                                            onClick={() => { setSelectedModel(o.value); setDropdownOpen(false); }}
+                                            className={`flex items-center gap-2.5 w-full px-3 py-2.5 text-[12px] text-left hover:bg-zinc-800 transition-colors ${o.value === selectedModel ? 'text-blue-400 bg-blue-500/5' : 'text-zinc-300'}`}
+                                        >
+                                            {o.badge === 'thinking' ? <BrainCircuit size={14} className="text-blue-400 shrink-0" /> : o.badge === 'fast' ? <Zap size={14} className="text-amber-400 shrink-0" /> : null}
+                                            <span className="truncate">{o.label}</span>
+                                            {o.vendor === 'openrouter' && <span className="ml-auto text-[10px] text-zinc-600 shrink-0">OpenRouter</span>}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
 
                         <button onClick={() => signOut({ callbackUrl: '/app/login' })} className="flex size-10 items-center justify-center rounded-xl text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition-all">
                             <LogOut size={18} />
@@ -119,7 +181,22 @@ export function ChatPanelPresenter({
                 </div>
 
                 {/* Composer Area */}
-                <div className="shrink-0 px-4 pb-6 pt-2 bg-gradient-to-t from-[#09090b] via-[#09090b] to-transparent">
+                <div
+                    ref={dropRef}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    className="relative shrink-0 px-4 pb-6 pt-2 bg-gradient-to-t from-[#09090b] via-[#09090b] to-transparent"
+                >
+                    {dragOver && (
+                        <div className="absolute inset-0 z-50 mx-4 mb-6 rounded-2xl border-2 border-dashed border-blue-500/60 bg-blue-500/5 flex items-center justify-center backdrop-blur-sm">
+                            <div className="flex flex-col items-center gap-2 text-blue-400">
+                                <Upload size={28} />
+                                <span className="font-sans text-[13px] font-medium">Drop file to attach</span>
+                                <span className="font-sans text-[11px] text-blue-400/60">Supports images &amp; PDFs</span>
+                            </div>
+                        </div>
+                    )}
                     <div className="max-w-3xl mx-auto flex flex-col gap-3">
                         
                         {children}
@@ -185,7 +262,12 @@ export function ChatPanelPresenter({
                             <div className="flex items-center justify-between px-2 pb-2 pt-1">
                                 <label className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-700/50 hover:text-zinc-200 transition-colors" title="Attach file">
                                     <Paperclip size={16} />
-                                    <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => onFileChange(e.target.files?.[0] ?? null)} />
+                                    <input
+                                        type="file"
+                                        accept={acceptExtensions}
+                                        className="hidden"
+                                        onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
+                                    />
                                 </label>
 
                                 <button

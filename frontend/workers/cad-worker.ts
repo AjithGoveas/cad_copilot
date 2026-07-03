@@ -741,7 +741,8 @@ function handleWorkerError(err: unknown, id?: number) {
     const details   = e.details  ?? stderrCapture.join('\n');
     const errorType = e.classified ?? classifyError(message, details);
 
-    if (errorType === 'CompileFailure' && (message.includes('CGAL') || message.includes('pointer:'))) {
+    const isWasmCorruption = message.includes('pointer:') || /out of memory|stack overflow|abort\(|unreachable/i.test(message);
+    if (isWasmCorruption) {
         enginePromise = null;
     }
 

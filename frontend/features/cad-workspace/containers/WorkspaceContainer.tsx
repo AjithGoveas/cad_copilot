@@ -39,7 +39,7 @@ export default function WorkspaceContainer({ isDemoMode = false, sessionId }: Pr
     const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
     const modelValueOptions = useMemo(() =>
-        MODEL_REGISTRY.map(m => ({ value: m.id, label: m.name, badge: m.badge })),
+        MODEL_REGISTRY.map(m => ({ value: m.id, label: m.name, badge: m.badge, vendor: m.vendor })),
     []);
 
     const viewerRef = useRef<any>(null);

@@ -117,7 +117,7 @@ export function useStepCAM({ isDemoMode }: Config) {
         await handleImportStep(file);
     }, [handleImportStep, handleImportStl]);
 
-    const handleGenerateGCode = useCallback(async (config: any, compileCsgTree: () => Promise<string>) => {
+    const handleGenerateGCode = useCallback(async (config: any, compileCsgTree: () => Promise<string | ArrayBuffer>) => {
         setIsGeneratingGCode(true);
         const controllerLabel = config.controller.toUpperCase();
 
@@ -128,7 +128,13 @@ export function useStepCAM({ isDemoMode }: Config) {
             if (geometrySource === 'step') {
                 assetId = sourceAssetId;
             } else {
-                csgTree = await compileCsgTree();
+                const csgResult = await compileCsgTree();
+                if (typeof csgResult === 'string') {
+                    csgTree = csgResult;
+                } else {
+                    // STL fallback — upload as cached asset and reference by asset_id
+                    assetId = await camApi.importStlFromBuffer(csgResult, isDemoMode);
+                }
             }
 
             const data = await camApi.exportGCode({
