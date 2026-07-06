@@ -67,7 +67,7 @@ type CADViewerPresenterProps = {
     rebuild: () => void;
     respawn: () => void;
     exportModel: (format: 'stl' | 'dxf', dxfMode?: 'silhouette' | 'section' | 'blueprint', customScript?: string) => Promise<ArrayBuffer>;
-    compileCsgTree: (customScript?: string) => Promise<string>;
+    compileCsgTree: (customScript?: string) => Promise<string | ArrayBuffer>;
 
     // Decoupled STEP import state and handlers:
     importedStlUrl: string | null;
