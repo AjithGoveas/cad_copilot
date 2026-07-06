@@ -1,0 +1,46 @@
+@keyframes premiumSpin {
+    0% {
+        transform: rotate(0deg) scale(1) translate3d(0, 0, 0);
+    }
+    50% {
+        transform: rotate(180deg) scale(1.02) translate3d(0, 0, 0);
+    }
+    100% {
+        transform: rotate(360deg) scale(1) translate3d(0, 0, 0);
+    }
+}
+
+@keyframes premiumGradientText {
+    0% {
+        background-position: 0% 50%;
+    }
+    50% {
+        background-position: 100% 50%;
+    }
+    100% {
+        background-position: 0% 50%;
+    }
+}
+
+.geminiSpin {
+    animation: premiumSpin 4.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    will-change: transform;
+    backface-visibility: hidden;
+}
+
+.geminiGradientText {
+    background: linear-gradient(
+        90deg, 
+        #60a5fa 0%, 
+        #a78bfa 30%, 
+        #f472b6 50%, 
+        #a78bfa 70%, 
+        #60a5fa 100%
+    );
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: premiumGradientText 5s ease infinite;
+    will-change: background-position;
+    transform: translate3d(0, 0, 0);
+}

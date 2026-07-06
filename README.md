@@ -1,251 +1,156 @@
-# CAD Copilot Monorepo
+# 📐 CADVΞX — Multi-Vendor AI Parametric CAD Workstation
 
-CAD Copilot is a full-stack Docs/Image-to-CAD system.
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.136.1-009688.svg?style=flat&logo=FastAPI)](https://fastapi.tiangolo.com)
+[![Next.js](https://img.shields.io/badge/Next.js-16.2.6-black.svg?style=flat&logo=next.js)](https://nextjs.org)
+[![React](https://img.shields.io/badge/React-19.2.4-black.svg?style=flat&logo=react)](https://react.dev)
+[![Three.js](https://img.shields.io/badge/Three.js-0.184.0-black.svg?style=flat&logo=three.js)](https://threejs.org)
+[![Prisma](https://img.shields.io/badge/Prisma-7.0.0-2D3748.svg?style=flat&logo=prisma)](https://prisma.io)
 
-It combines:
+CADVEX is an advanced, production-grade AI-assisted CAD workstation that compiles natural language prompts, hand-drawn sketches, and 2D engineering blueprints (PDF/Image) directly into precise, parameterized 3D design models. 
 
-- A Next.js workspace UI (chat, parameter editing, code editing, STL preview)
-- A FastAPI AI engine (Gemini-powered build123d code generation and render execution)
-- PostgreSQL + Prisma for session persistence
+By pairing **multi-vendor LLM reasoning engines (Google, OpenAI, DeepSeek, Anthropic, and local Ollama)** with a **client-side WebAssembly OpenSCAD compilation kernel**, CADVEX enables engineers to generate, inspect, and surgically edit CAD models in real time without heavy server dependencies.
 
-The platform generates a parameterized Python CAD script, lets users edit parameters and raw code, and re-renders STL/STEP artifacts on demand.
+---
 
-## High-Level Architecture
+## ⚡ Core Philosophy & Capabilities
 
-- web-ui: Next.js app that provides the user interface and BFF API routes
-- ai-engine: FastAPI service that runs LLM code generation and CAD rendering
-- postgres: persistence layer used by Prisma in web-ui
+Traditional CAD workflows require intensive manual drafting, while standard text-to-3D generators output un-editable, dense triangle meshes. CADVEX approaches 3D modeling as **Parametric Code Synthesis** (using OpenSCAD code blocks). It generates human-readable, mathematically exact, and easily adjustable engineering code.
 
-Data flow:
+### 🔍 1. Multimodal Blueprint Auditing
+Upload an engineering drawing, blueprint (multi-page PDF/PNG/JPEG), or sketch. The backend parses the visual data, extracts coordinate structures, feature dimensions, and tolerances, returning a structured JSON feature map. All visual audits are stored in an **MD5-keyed caching database** to bypass redundant visual API calls.
 
-1. User submits prompt + image/PDF in UI
-2. web-ui POST /api/generate proxies multipart request to ai-engine /api/v1/generate
-3. ai-engine streams SSE tokens while building the CAD script
-4. UI receives final script + parsed PARAMETERS
-5. User edits parameters and/or code, then clicks Sync to Engine
-6. web-ui POST /api/render proxies JSON to ai-engine /api/v1/render
-7. ai-engine writes STL/STEP into ai-engine/outputs and returns artifact URLs
-8. UI loads latest STL into Three.js viewer and exposes download buttons
+### 🌐 2. Client-Side WASM OpenSCAD Kernel
+All 3D rendering happens directly in the user's browser. Utilizing a global singleton WebAssembly worker instance (compiled from OpenSCAD via `openscad-wasm` v0.0.4), CADVEX compiles code changes and returns 3D STL geometry instantly in the browser. This eliminates rendering roundtrips and scales without server-side rendering costs.
 
-## Repository Structure
+### 📐 3. Proximity-Based "Quick Edit"
+Click directly on cylindrical walls, circular holes, or planar faces of the 3D viewport. The viewport runs a spatial proximity algorithm matching the click coordinate to parameter ranges:
+* **Hierarchical Matrix Parsing**: An in-browser sequential tokenizer and `Matrix4` stack parser walks the OpenSCAD syntax to resolve nested rotations and translations. This guarantees that dimension overlays (such as diameter rings and height lines) map perfectly to physical CAD features, even on rotated branches (like in a T-pipe).
+* **Diameters / Cylinders**: Shortest distance from selection to the infinite central axis line minus the feature's radius.
+* **Heights / Extrusions**: Point-to-plane distance along the extrusion direction to the top or bottom flat faces.
+Matches spawn a premium floating editor canvas directly inside the viewport for instant adjustments.
 
-```text
-cad_copilot/
-├── docker-compose.yml
-├── README.md
-├── docs/
-│   ├── PROJECT.md
-│   └── technical_details.md
-├── ai-engine/
-│   ├── app/
-│   │   ├── main.py
-│   │   ├── api/v1/router.py
-│   │   ├── models/schemas.py
-│   │   └── services/
-│   │       ├── llm_codegen.py
-│   │       └── parameter_render.py
-│   ├── outputs/
-│   ├── requirements.txt
-│   └── .env
-└── web-ui/
-    ├── app/
-    │   ├── page.tsx
-    │   ├── layout.tsx
-    │   └── api/
-    │       ├── generate/route.ts
-    │       └── render/route.ts
-    ├── components/
-    │   ├── HitlWorkspace.tsx
-    │   └── ui/sonner.tsx
-    ├── prisma/schema.prisma
-    ├── package.json
-    └── lib/prisma.ts
+### 📍 4. Spatial Target Context Injection
+Drop a glowing visual crosshair marker anywhere on the empty 3D model surface. The coordinates are added as a spatial target attachment chip in the chat composer. When you send a message (e.g. *"add a screw boss here"*), these absolute `[x, y, z]` coordinates are silently sent as system context, positioning the AI's edit right at the clicked spot.
+
+### 💾 5. Zero Local Output Persistence
+CAD assemblies and DXF blueprints are generated in memory and served as byte streams (`StreamingResponse`), eliminating server-side file system pollution, volume bloat, and file storage synchronization issues.
+
+---
+
+## 🏗️ System Architecture
+
+CADVEX splits roles cleanly between backend AI intelligence, local CAD/CAM compilers, and client-side execution:
+
+```mermaid
+graph TD
+    User([User Prompt / Drawing]) -->|POST /api/v1/generate| BFF[Next.js BFF Proxy]
+    BFF -->|JSON/Form Payload| FastAPI[FastAPI Router v1]
+    
+    FastAPI -->|Invoke| GenUC[GenerateCadUseCase]
+    FastAPI -->|Invoke| EditUC[EditCadUseCase]
+    FastAPI -->|Invoke| RepairUC[RepairCadUseCase]
+    
+    GenUC -->|REST Requests| Gateway[UniversalHTTPXGateway]
+    EditUC -->|REST Requests| Gateway
+    RepairUC -->|REST Requests| Gateway
+    
+    Gateway -->|HTTP Pools| Models[LLM Providers: Google / OpenAI / DeepSeek / Anthropic / Ollama]
+    
+    GenUC -->|Compile/Export| CAD[ConcreteCADEngine]
+    FastAPI -->|CNC Features Slicing| CAM[ConcreteCAMEngine]
+    
+    FastAPI -->|Byte Streams & G-code| BFF
+    BFF -->|Code + Parameters| Client[Web Workspace]
+    Client -->|WASM Worker Singleton| Viewport[3D R3F Viewport]
+    
+    Viewport -->|Mesh Click Proximity| QuickEdit[Floating Overlay]
+    Viewport -->|Mesh Empty Click| TargetMarker[Target Marker]
+    TargetMarker -->|Coordinate injection| BFF
 ```
 
-## Core Features
+### 🐍 Backend Clean Architecture Layout (`/backend`)
+The backend is structured under a strict Layered Architecture layout:
+* **`app/domain/`**: Pure entities (`ModelMetadata`, `Session`, `HistoryItem`) and contracts (`ISessionRepository`, `ILLMProviderGateway`, `ICADEngine`, `ICAMEngine`).
+* **`app/application/`**: Interactors (`GenerateCadUseCase`, `EditCadUseCase`, `RepairCadUseCase`) executing prompts, code normalization, and cascading fallbacks.
+* **`app/infrastructure/`**: Concrete adapters (`UniversalHTTPXGateway` connection pool, `PrismaSessionRepository` mock log, and `cad/` engines wrapping `build123d` and OpenCascade `OCP`).
+* **`app/presentation/`**: Controller endpoints (`presentation/v1/router.py`) customized with a premium Monokai dark mode Swagger docs configuration.
 
-- Prompt + image/PDF to build123d script generation
-- Real-time script streaming over SSE
-- Auto-parse of top-level PARAMETERS dictionary
-- Live parameter drawer editing
-- Monaco Editor code tab for manual Python script edits
-- Re-render pipeline using edited parameters and code
-- STL visualization with react-three-fiber + STLLoader
-- STEP/STL artifact downloads from UI
-- Toast-based status/error feedback with Sonner
-- Session persistence in PostgreSQL via Prisma
+### ⚛️ Frontend Next.js Workspace (`/frontend`)
+The client interface is built using Next.js 16 (App Router), React 19, TailwindCSS v4, and Prisma ORM:
+* **`app/`**: Workspace routing handlers and API proxies.
+* **`components/`**: Monaco code editor wrapper, properties sidebar, chat dialogue, and Three.js / React Three Fiber CAD canvas.
+* **`workers/`**: Singleton background WebAssembly OpenSCAD workers.
+* **`prisma/`**: PostgreSQL database connector schemas (`schema.prisma` mapping User, Session, and HistoryItem records).
 
-## Prerequisites
+---
 
-- Python 3.11+ recommended
-- Node.js 20+ recommended
-- npm 10+ recommended
-- Docker Desktop (for PostgreSQL via docker-compose)
+## 💾 Volume and Storage Management
 
-## Environment Variables
+To prevent anonymous volume leakage and disk bloat, development caching uses named Docker volumes:
+* `cadvex_postgres_data` / `cadvex_postgres_data_prod`: Stores PostgreSQL database tables and structures.
+* `cadvex_backend_venv`: Caches python virtual environments inside the development container.
+* `cadvex_backend_pycache`: Caches compiled python bytecode.
+* `cadvex_backend_logs` / `cadvex_backend_logs_prod`: Exposes and persists transaction log files (`/app/logs/prisma_repository.log`) on the host system.
+* `cadvex_frontend_node_modules`: Caches node library dependencies.
+* `cadvex_frontend_next`: Caches Next.js build chunks.
 
-This repository includes safe environment templates:
+---
 
-- ai-engine/.env.example
-- web-ui/.env.example
+## 🚦 Getting Started
 
-Create real env files from them before running the apps.
+### 1) Run with Docker (Recommended)
 
-Windows (PowerShell):
+#### Development Mode (With Hot Reloading)
+1. Configure your `.env` files in `/backend/.env` and `/frontend/.env`.
+2. Spin up the containers:
+   ```bash
+   docker compose up --build
+   ```
+3. Open `http://localhost:3000` to start editing. Code edits in `/backend` or `/frontend` will trigger live reloads.
 
-```powershell
-Copy-Item ai-engine/.env.example ai-engine/.env
-Copy-Item web-ui/.env.example web-ui/.env
-```
+#### Production Mode (Optimized & Secure)
+1. Run the production-targeted orchestration:
+   ```bash
+   docker compose -f docker-compose.prod.yml up --build -d
+   ```
+This automatically runs database migrations (`db-migrate`) before spawning the optimized standalone Next.js client (`frontend`) and the production-ready FastAPI backend (`backend`).
 
-macOS/Linux:
+---
 
+### 2) Run Manually (Local Host)
+
+#### Prerequisites
+* **Node.js 20+**
+* **Python 3.13+**
+* **Docker Desktop** (For PostgreSQL database container)
+
+#### Step 1: Database Setup
+Start the local PostgreSQL container from the root directory:
 ```bash
-cp ai-engine/.env.example ai-engine/.env
-cp web-ui/.env.example web-ui/.env
+docker compose up postgres -d
 ```
 
-### ai-engine/.env
-
-Required:
-
-- GOOGLE_API_KEY: Gemini API key
-
-Optional tuning:
-
-- GENAI_MODEL (example: gemini-3.1-flash-preview)
-- GENAI_MAX_RETRIES (default code fallback: 5)
-- GENAI_RETRY_BASE_DELAY (default code fallback: 1.5)
-- GENAI_MAX_RETRY_DELAY (default code fallback: 60)
-
-### web-ui/.env
-
-Required:
-
-- FASTAPI_URL=http://127.0.0.1:8000/api/v1
-- DATABASE_URL=postgresql://cad_user:cad_pass@localhost:5432/cad_db?schema=public
-- NEXT_PUBLIC_FASTAPI_URL=http://127.0.0.1:8000/api/v1
-
-Note:
-
-- If you prefer `.env.local`, copy the same keys there as well.
-
-## Quick Start (Local Development)
-
-### 1) Start PostgreSQL
-
-From repo root:
-
+#### Step 2: FastAPI AI Backend Setup
+Configure the environment and dependencies:
 ```bash
-docker compose up -d
-```
-
-### 2) Start ai-engine
-
-```bash
-cd ai-engine
-cp .env.example .env  # Windows: Copy-Item .env.example .env
+cd backend
+cp .env.example .env  # Configure your model keys
 python -m venv .venv
-# Windows
-. .venv/Scripts/activate
-# macOS/Linux
-# source .venv/bin/activate
+# Activate venv:
+# Windows (PowerShell): .venv\Scripts\Activate.ps1
+# macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Health check:
-
+#### Step 3: Next.js Frontend Setup
+Initialize database schemas and start the development server:
 ```bash
-curl http://127.0.0.1:8000/health
-```
-
-### 3) Start web-ui 
-
-```bash
-cd web-ui
-cp .env.example .env  # Windows: Copy-Item .env.example .env
+cd ../frontend
+cp .env.example .env
 npm install
 npm run prisma:generate
 npm run prisma:push
 npm run dev
 ```
-
-Open:
-
-- http://localhost:3000
-
-## API Summary
-
-### ai-engine
-
-- POST /api/v1/generate
-    - multipart/form-data
-    - fields: prompt, image, model_name
-    - response: text/event-stream
-    - events: status, token, done, error
-
-- POST /api/v1/render
-    - JSON body:
-        - python_script: string
-        - parameters: object
-        - session_id: string (optional)
-    - response: JSON RenderResponse with artifacts
-
-- GET /outputs/{file}
-    - static artifact serving for STL/STEP
-
-### web-ui BFF routes
-
-- POST /api/generate
-    - validates input, creates CadSession, proxies SSE upstream
-
-- POST /api/render
-    - normalizes legacy payloads, proxies render request, stores artifact URLs in CadSession
-
-## Typical User Workflow
-
-1. Upload image/PDF and write prompt
-2. Choose model and click Generate CAD Script
-3. Wait for streamed script completion
-4. Adjust parameters in Parameters tab and/or edit code in Code Engine tab
-5. Click Sync to Engine
-6. View updated STL in viewport
-7. Download STL/STEP artifacts
-
-## Troubleshooting
-
-### App does not start
-
-- Check Python venv activation and dependency install
-- Check Node modules are installed in web-ui
-- Ensure Docker PostgreSQL is running
-
-### Generate fails immediately
-
-- Verify GOOGLE_API_KEY is set and valid
-- Verify selected model has quota
-- Check ai-engine logs for upstream model errors
-
-### Render succeeds but geometry looks old
-
-- The frontend appends cache-busting query params per sync to force fresh fetch
-- If still stale, verify session_id and output files in ai-engine/outputs
-
-### /api/render returns 500
-
-- Validate generated script defines top-level PARAMETERS
-- Validate script has build_model(params) and returns an exportable shape
-- Check stderr in ai-engine logs for kernel/runtime errors
-
-## Security and Operational Notes
-
-- Never commit real API keys to source control
-- Restrict CORS in production (currently permissive for local dev)
-- Place ai-engine behind auth/rate limiting before public exposure
-- Add structured logging/metrics for generate/render latency and failures
-
-## Additional Documentation
-
-- Product/project narrative: docs/PROJECT.md
-- Deep implementation details: docs/technical_details.md
+Navigate to `http://localhost:3000` to start editing.

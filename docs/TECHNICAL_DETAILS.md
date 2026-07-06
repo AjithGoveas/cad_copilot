@@ -1,270 +1,115 @@
-# Technical Details
+# Technical Specifications & Data Contracts
+
+Detailed technical specifications, request flows, and internal mechanisms of CADVEX.
+
+---
+
+## 1. System Boundaries & Communication
+
+### 1.1 `frontend` (Next.js Application)
+* **Client Workspace**: Renders the Monaco editor, property inputs, chat dialogue, and Three.js canvas.
+* **OpenSCAD Web Worker**: Evaluates OpenSCAD scripts inside a background thread singleton, returning STL models as ArrayBuffers.
+* **BFF (Backend-For-Frontend)**: Provides proxy endpoints mapping client JSON requests to python FastAPI schemas and handles prisma database persistence.
+
+### 1.2 `backend` (FastAPI Application)
+* **HTTPX Client Gateway**: Manages raw HTTP REST connection pool calls to Google, OpenAI, DeepSeek, Anthropic, and Ollama.
+* **Orchestration Use Cases**: Interactors (`GenerateCadUseCase`, `EditCadUseCase`, `RepairCadUseCase`) executing the multi-stage visual audits, code synthesis, spatial injection edits, and compile recovery.
+* **CAD/CAM Concrete Engines**: Low-level parsing (`csg_parser.py`, `gcode_generator.py`) and file formatting adapters (`cad_engine.py`, `cam_engine.py`) wrapped in Clean Architecture interfaces.
+
+---
+
+## 2. API Endpoints & Proxies
+
+### 2.1 Generation Flow (`POST /api/v1/generate`)
+1. User uploads a file (PDF/Image) and description in the UI.
+2. Next.js proxy route `/api/v1/generate` logs a `Project` entry in PostgreSQL via Prisma.
+3. Next.js forwards the `FormData` to the FastAPI backend's `/api/v1/generate` endpoint, along with the `model_metadata` and optional `fallback_metadata` JSON configurations.
+4. FastAPI validates the payload and invokes `GenerateCadUseCase`.
+5. The use case checks the MD5-keyed global `_BLUEPRINT_CACHE`:
+   - **Cache Hit**: Returns the pre-audited Stage 1 feature map instantly.
+   - **Cache Miss**: Uploads the drawing to visual LLM endpoints, waits for active processing, runs the Stage 1 vision analysis, and caches the feature map.
+6. The use case calls the `UniversalHTTPXGateway` to synthesize OpenSCAD code. If the request encounters rate limits or errors, it falls back to compile the prompt via `fallback_metadata`.
+7. FastAPI returns the generated OpenSCAD script and parsed top-level parameters to Next.js.
+7. Next.js updates the database record with the generated script and returns the payload to the browser.
+8. The browser registers the script and compiles the geometry locally using the Web Worker.
+
+### 2.2 Refinement Flow (`POST /api/v1/edit`)
+1. The user types a modification prompt in the workspace chat (e.g. *"drill a slot on this face"*).
+2. If the user clicked a blank area on the mesh previously, a `targetPoint` is active in the state.
+3. Next.js proxies a JSON request body to FastAPI's `/api/v1/edit` endpoint:
+   ```json
+   {
+     "prompt": "drill a slot on this face",
+     "current_code": "$fn = 32;\n...",
+     "target_point": [10.5, -4.2, 15.0],
+     "model": "gemini-3.1-flash-lite"
+   }
+   ```
+4. FastAPI appends the spatial target coordinate message context to the prompt and instructs Gemini to surgically modify the code.
+5. The updated script is sanitized (capping `$fn = 32`, checking `eps = 0.02`), and returned back to the Next.js BFF proxy.
+6. The browser receives the updated code, updates the Monaco editor, clears the target marker, and re-renders the viewport.
+
+---
+
+## 3. Viewport Proximity Click Calculations
+
+When the user clicks the 3D STL mesh, raycasting identifies the click position `clickPoint = [x, y, z]`. The application iterates over the parsed parameters (`annotations`) using these proximity rules:
+
+### 3.1 Cylinder & Hole Selection (Diameters)
+For features annotated with `type: 'diameter'` (circular holes, pins, tubes):
+1. Locate the feature's world center (`center`) and axis vector (`axis`).
+2. Calculate the distance from `clickPoint` to the central axis line:
+   $$\vec{v} = \text{clickPoint} - \text{center}$$
+   $$\text{proj} = \vec{v} \cdot \text{axis}$$
+   $$\text{pointOnAxis} = \text{center} + \text{proj} \times \text{axis}$$
+   $$\text{distToAxis} = \text{distanceTo}(\text{clickPoint}, \text{pointOnAxis})$$
+3. Subtract the scaled radius to check distance to the cylinder outer wall:
+   $$\text{distance} = |\text{distToAxis} - \text{radius}|$$
+
+### 3.2 Extrusion Selection (Heights)
+For features annotated with `type: 'height'` (prismatic blocks, step shoulders):
+1. Locate boundary coordinates `p1` and `p2`.
+2. Extract the extrusion axis direction:
+   $$\text{axisDir} = \text{normalize}(\text{p2} - \text{p1})$$
+3. Calculate point-to-plane distance for the base and top capping planes:
+   $$\text{distPlane1} = |(\text{clickPoint} - \text{p1}) \cdot \text{axisDir}|$$
+   $$\text{distPlane2} = |(\text{clickPoint} - \text{p2}) \cdot \text{axisDir}|$$
+4. Set distance to the closest cap:
+   $$\text{distance} = \min(\text{distPlane1}, \text{distPlane2})$$
+
+If the resulting `distance` is within the `5.0` threshold, the parameter is selected for editing.
+
+---
+
+## 4. Hierarchical Matrix Transformation Stack Parser
+
+Extracting annotations from nested OpenSCAD scripts is handled by [inferAnnotations](../frontend/lib/openscadParameters.ts#L339) using a stack-based matrix transformation parser:
+
+1. **Tokenizer**: Tokenizes the module body to parse structure `translate(...)`, `rotate(...)`, `cylinder(...)`, `cube(...)`, `{`, `}`, and `;` in strict sequential order.
+2. **Current and Pending Frames**:
+   - `currentTransform`: Holds the current scope matrix.
+   - `pendingTransform`: Composes upcoming inline modifiers.
+3. **Control Actions**:
+   - On `{`: Pushes the current scope to a `Matrix4` stack. Compiles pending modifiers into the new scope frame: `currentTransform = currentTransform * pendingTransform`, and resets `pendingTransform` to identity.
+   - On `}`: Pops the state from the stack, restoring scope.
+   - On `;`: Resets inline modifiers (`pendingTransform = identity`).
+   - On `translate(...)` / `rotate(...)`: Multiplies the translation/rotation matrix directly into `pendingTransform`.
+4. **Coordinate Mapping**:
+   - On primitives (`cylinder`/`cube`), the final world matrix is compiled: `totalTransform = currentTransform * pendingTransform`.
+   - The matrix is decomposed (`totalTransform.decompose(position, quaternion, scale)`) to retrieve exact translations and orientations.
+   - Cylinder centers and height bounds are projected along the world-space axis, resolving rotated branches perfectly.
+
+---
 
-This document captures implementation-level behavior for CAD Copilot.
+## 5. WASM Engine Web Worker Singleton
 
-## 1. System Boundaries
-
-### 1.1 web-ui (Next.js)
+The background compilation system is managed in [useCadWorker.ts](../frontend/features/cad-workspace/hooks/useCadWorker.ts) and [cad-worker.ts](../frontend/workers/cad-worker.ts):
 
-Responsibilities:
-
-- Client UI/UX (chat, parameter drawer, code editor, viewer)
-- API proxy and normalization layer (BFF)
-- Session persistence through Prisma
-
-Key files:
-
-- web-ui/components/HitlWorkspace.tsx
-- web-ui/app/api/generate/route.ts
-- web-ui/app/api/render/route.ts
-- web-ui/prisma/schema.prisma
-
-### 1.2 ai-engine (FastAPI)
-
-Responsibilities:
-
-- Generate build123d scripts using Gemini
-- Parse and enforce parameter replacement
-- Execute script and export STL/STEP
-- Serve artifacts via static files
-
-Key files:
-
-- ai-engine/app/main.py
-- ai-engine/app/api/v1/router.py
-- ai-engine/app/services/llm_codegen.py
-- ai-engine/app/services/parameter_render.py
-- ai-engine/app/models/schemas.py
-
-## 2. End-to-End Request Flows
-
-## 2.1 Generate Flow (Prompt + Upload -> Script)
-
-1. Browser submits multipart form to web-ui POST /api/generate
-2. web-ui validates prompt and upload MIME
-3. web-ui creates CadSession row in Postgres (prompt only at first)
-4. web-ui proxies request to ai-engine /api/v1/generate with accept: text/event-stream
-5. ai-engine validates MIME (image/\* or PDF)
-6. ai-engine LLMCodegenService streams tokens from Gemini
-7. ai-engine emits SSE events:
-    - status
-    - token
-    - done (script + parameters)
-    - error (if exception)
-8. web-ui forwards stream transparently back to browser
-9. frontend assembles final script and initializes parameter drawer
-
-SSE framing:
-
-```text
-event: token
-data: {"chunk":"..."}
-
-```
-
-## 2.2 Render Flow (Edited Params/Code -> STL/STEP)
-
-1. Browser calls web-ui POST /api/render with:
-    - python_script
-    - parameters
-    - session_id
-2. web-ui normalizes payload variants via toFastApiRenderRequest
-3. web-ui proxies strict JSON to ai-engine /api/v1/render
-4. ai-engine render endpoint determines job_id and output_basename
-5. ParameterRenderService:
-    - parses script AST
-    - overwrites top-level PARAMETERS with merged values
-    - appends render harness
-    - executes temp render script in subprocess
-    - verifies output files exist
-6. ai-engine returns artifact URLs under response.artifacts
-7. web-ui normalizes top-level stl_url and step_url for frontend convenience
-8. frontend updates STL/STEP URLs with cache bust query suffix and refreshes viewer
-
-## 3. Data Contracts
-
-### 3.1 ai-engine RenderRequest
-
-From ai-engine/app/models/schemas.py:
-
-- python_script: string, min length 1
-- parameters: object
-- session_id: optional string
-
-### 3.2 ai-engine RenderResponse
-
-- session_id: string
-- status: SUCCESS
-- artifacts:
-    - step_file_path
-    - stl_file_path
-    - step_url
-    - stl_url
-    - script_url
-    - python_script
-    - parameters[]
-
-### 3.3 web-ui CadSession model
-
-From web-ui/prisma/schema.prisma:
-
-- id (cuid)
-- prompt
-- pythonScript
-- parameters (Json)
-- stlUrl
-- stepUrl
-- createdAt
-- updatedAt
-
-## 4. ai-engine Internals
-
-## 4.1 main.py
-
-- Loads ai-engine/.env at startup (lazy import of python-dotenv)
-- Creates output directory if missing
-- Mounts /outputs as StaticFiles
-- Adds permissive CORS for development
-
-## 4.2 llm_codegen.py
-
-Current behavior:
-
-- Single primary model per request
-- Retry loop with exponential backoff for retryable errors
-- Parses retryDelay hints from upstream message text
-- Normalizes raw script response by stripping markdown fences and non-code prefixes
-
-Important prompt constraints enforced in SYSTEM_INSTRUCTION include:
-
-- Mandatory top-level PARAMETERS
-- Direct API style for build123d
-- Defensive edge selection and fillet/chamfer try/except policy
-- Safer dimensional math guidance for positive heights
-
-## 4.3 parameter_render.py
-
-Pipeline:
-
-1. Parse script AST
-2. Locate top-level PARAMETERS assignment or annotated assignment
-3. Merge existing defaults with edited runtime parameters
-4. Unparse modified AST back to Python source
-5. Append RENDER_HARNESS for export_step/export_stl
-6. Run subprocess with OUTPUT_DIR and OUTPUT_BASENAME environment variables
-7. Validate output files exist
-
-Failure modes:
-
-- PARAMETERS missing -> ValueError
-- Subprocess non-zero -> RuntimeError with stdout/stderr
-- Missing outputs after run -> RuntimeError
-
-## 5. web-ui Internals
-
-## 5.1 HitlWorkspace state model
-
-Critical state:
-
-- pythonScript + pythonScriptRef
-- parameters
-- sessionId
-- stlUrl/stepUrl
-- isGenerating/isRecompiling
-
-pythonScriptRef is used to avoid stale closure issues during sync requests.
-
-## 5.2 Artifact freshness strategy
-
-Frontend appends cache bust token when setting artifact URLs after render sync.
-This avoids stale STL/STEP loads when filenames are reused by session.
-
-## 5.3 Download strategy
-
-Downloads are performed via fetch -> blob -> object URL -> synthetic anchor click.
-This is robust for cross-origin/static file scenarios where direct download links can be inconsistent.
-
-## 5.4 Toast feedback
-
-Sonner is mounted globally in layout and used for:
-
-- successful artifact readiness
-- partial artifact generation
-- render failures
-- download success/failure
-
-## 6. BFF Proxy Notes
-
-## 6.1 /api/generate
-
-- Creates CadSession before upstream call
-- Preserves stream mode by returning upstream ReadableStream directly
-- Sets x-session-id header for frontend correlation
-
-## 6.2 /api/render
-
-- Supports script/python_script and session_id/output_basename legacy inputs
-- Normalizes artifacts.stl_url and artifacts.step_url to top-level response keys
-- Upserts CadSession metadata via updateMany then create fallback
-
-## 7. Performance Characteristics
-
-Main latency contributors:
-
-- LLM generation token time
-- Python subprocess start-up for render
-- build123d kernel operations and export I/O
-
-Current optimization choices:
-
-- no-store on upstream fetches
-- SSE pass-through without buffering in Next.js route
-- single-model retry strategy to reduce branchy fallback overhead
-- static artifact serving through FastAPI
-
-## 8. Reliability and Risk Areas
-
-- LLM output remains probabilistic; invalid geometry/scripts are possible
-- Render subprocess execution has no sandbox isolation beyond process boundary
-- CORS is broad for development; harden before production
-- DATABASE and FASTAPI_URL configuration drift can break BFF pathing
-
-## 9. Production Hardening Recommendations
-
-1. Add request IDs and structured logs across web-ui BFF and ai-engine
-2. Add metrics for:
-    - generate latency
-    - render latency
-    - model/provider error categories
-3. Add authentication and per-user rate limits
-4. Add queue-based render worker if concurrent load increases
-5. Add artifact retention/cleanup policy in ai-engine/outputs
-6. Add integration tests for SSE contract and render payload normalization
-
-## 10. Useful Local Verification Commands
-
-From repo root:
-
-```bash
-docker compose up -d
-```
-
-ai-engine:
-
-```bash
-cd ai-engine
-uvicorn app.main:app --reload
-```
-
-web-ui:
-
-```bash
-cd web-ui
-npm run dev
-```
-
-Health check:
-
-```bash
-curl http://127.0.0.1:8000/health
-```
+* **Singleton Thread**: Spawns a single `Worker` instance globally. Mounting/unmounting hooks subscribe and unsubscribe listeners to a shared message hub rather than starting new worker processes, preventing RAM leakage.
+* **Transient Blobs**: The compiled STL ArrayBuffer is converted to a browser Blob:
+  ```typescript
+  const blob = new Blob([buffer], { type: 'model/stl' });
+  const url = URL.createObjectURL(blob);
+  ```
+  Whenever a compile finishes, the previous Blob URL is explicitly revoked (`URL.revokeObjectURL(oldUrl)`) to free up memory immediately.
+* **Debounced Compile**: Variable inputs compile with a default 600ms debounce to prevent thread blocking while users are dragging sliders or typing.
